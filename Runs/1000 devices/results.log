@@ -1,0 +1,49 @@
+Number of federated learning rounds: 1000
+Mean Clustering rate at iteration t=1: 91.1
+Mean Clustering rate at iteration t=200: 88.74
+NOTE: IT IS CONSIDERED THAT A CLUSTER IS MADE OF AT LEAST 2 DEVICES.
+
+
+Error of model 1 at iteration t=1: 5.028
+Error of model 1 at iteration t=200: 0.6591
+Error of model 1 with D2D clustering at iteration t=1: 5.02
+Error of model 1 with D2D clustering at iteration t=200: 0.04333
+
+Error of model 2 at iteration t=1: 5.025
+Error of model 2 at iteration t=200: 0.005071
+Error of model 2 with D2D clustering at iteration t=1: 4.594
+Error of model 2 with D2D clustering at iteration t=200: 3.294e-07
+
+Error of model 3 at iteration t=1: 4.872
+Error of model 3 at iteration t=200: 3.756e-11
+Error of model 3 with D2D clustering at iteration t=1: 4.783
+Error of model 3 with D2D clustering at iteration t=200: 5.607e-16
+
+
+Model 1 total of uploads at iteration t=1: 1
+Model 1 total of uploads at iteration t=200: 200
+Model 1 total of clusterheads uploads with D2D clustering at iteration t=1: 1
+Model 1 total of clusterheads uploads with D2D clustering at iteration t=200: 200
+Model 1 total of uploads with D2D clustering at iteration t=1: 1
+Model 1 total of uploads with D2D clustering at iteration t=200: 493
+
+Model 2 total of uploads at iteration t=1: 1
+Model 2 total of uploads at iteration t=200: 735
+Model 2 total of clusterheads uploads with D2D clustering at iteration t=1: 6
+Model 2 total of clusterheads uploads with D2D clustering at iteration t=200: 737
+Model 2 total of uploads with D2D clustering at iteration t=1: 10
+Model 2 total of uploads with D2D clustering at iteration t=200: 1815
+
+Model 3 total of uploads at iteration t=1: 4
+Model 3 total of uploads at iteration t=200: 617
+Model 3 total of clusterheads uploads with D2D clustering at iteration t=1: 3
+Model 3 total of clusterheads uploads with D2D clustering at iteration t=200: 541
+Model 3 total of uploads with D2D clustering at iteration t=1: 6
+Model 3 total of uploads with D2D clustering at iteration t=200: 2185
+
+
+The gain from model 1 after using D2D arrangement at iteration t "200" is: 93.426365109990 %
+The gain from model 2 after using D2D arrangement at iteration t "200" is: 99.993505113636 %
+The gain from model 3 after using D2D arrangement at iteration t "200" is: 99.998507087675 %
+The PostScript backend does not support transparency; partially transparent artists will be rendered opaque.
+The PostScript backend does not support transparency; partially transparent artists will be rendered opaque.

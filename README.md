@@ -1,11 +1,10 @@
 # Clustering-For-Federated-Learning-With-ALOHA
 
-This repository contains all the codes that was created to generate the results of the Master's Thesis document entitled "HIERARCHICAL FEDERATED LEARNING WITH DISTRIBUTED CLUSTERING AND MULTICHANNEL ALOHA", from which a paper with the same name was published.
+This repository contains all the codes that was created to generate the results of the Master's Thesis document entitled "A distributed D2D clustering algorithm tailored for hierarchical federated learning in a multichannel ALOHA network".
 
-The document can be found in: "TODO"
-The article can found in: "TODO"
+The document can be found in: "https://repositorio.utfpr.edu.br/jspui/handle/1/34706"
 
-Choi's reference article can be found in: "TODO"
+Choi's reference article can be found in: "https://arxiv.org/abs/1912.06273"
 
 ## Table of Contents
 - [Introduction](#introduction)

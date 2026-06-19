@@ -1,8 +1,9 @@
-pandas
-scipy
-matplotlib
-numpy
-seaborn
-numba
-tqdm
-scikit-learn
+numpy>=2.0,<2.3
+pandas==2.2.3
+scipy>=1.14,<1.17
+matplotlib==3.9.4
+seaborn==0.13.2
+tqdm==4.66.5
+scikit-learn==1.5.2
+jax==0.10.2
+jaxlib==0.10.2

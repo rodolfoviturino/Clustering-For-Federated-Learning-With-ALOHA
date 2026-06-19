@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+Runs/
+Figures/
+*.eps
+*.png
+
+.venv/
+venv/
+env/

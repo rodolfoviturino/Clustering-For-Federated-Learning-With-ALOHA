@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Use this file only on Linux GPU runtimes such as Google Colab.
+# Native Windows supports JAX CPU wheels, but JAX's CUDA wheels are Linux-only.
+jax[cuda13]==0.10.2

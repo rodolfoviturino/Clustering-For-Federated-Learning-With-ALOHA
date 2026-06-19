@@ -43,6 +43,15 @@ SCENARIOS = (
     "optimized_aloha_d2d",
 )
 
+CLUSTER_QUALITY_METRICS = (
+    "number_of_clusters",
+    "singleton_count",
+    "non_singleton_cluster_count",
+    "clustered_devices_count",
+    "mean_cluster_size",
+    "mean_non_singleton_cluster_size",
+)
+
 
 def _require_jax():
     if jax is None:
@@ -81,6 +90,49 @@ def _configure_precision(args):
     return jnp.float64 if enable_x64 else jnp.float32
 
 
+def _cluster_quality_vector(clusters, dtype):
+    """Return scalar structural metrics for one clustered deployment.
+
+    The clustering rate tells us how many devices are not singletons, but it
+    does not tell us whether those clustered devices form useful aggregates.
+    These metrics let each run report both coverage and quality:
+
+    * number of active cluster rows, equal to the CH count used by D2D ALOHA;
+    * singleton count, which drives the clustered-device percentage;
+    * number of non-singleton D2D clusters;
+    * number of devices inside those non-singleton clusters;
+    * average size across all active clusters;
+    * average size only among non-singleton clusters.
+    """
+    active_sizes = jnp.where(clusters.cluster_mask, clusters.cluster_sizes, 0).astype(dtype)
+    non_singleton_mask = clusters.cluster_mask & (clusters.cluster_sizes > 1)
+    non_singleton_sizes = jnp.where(non_singleton_mask, clusters.cluster_sizes, 0).astype(dtype)
+
+    number_of_clusters = clusters.number_of_clusters.astype(dtype)
+    singleton_count = clusters.singleton_count.astype(dtype)
+    non_singleton_cluster_count = jnp.sum(non_singleton_mask).astype(dtype)
+    clustered_devices_count = jnp.sum(non_singleton_sizes).astype(dtype)
+    total_devices = jnp.sum(active_sizes).astype(dtype)
+
+    mean_cluster_size = total_devices / jnp.maximum(number_of_clusters, 1.0)
+    mean_non_singleton_cluster_size = clustered_devices_count / jnp.maximum(
+        non_singleton_cluster_count,
+        1.0,
+    )
+
+    return jnp.asarray(
+        [
+            number_of_clusters,
+            singleton_count,
+            non_singleton_cluster_count,
+            clustered_devices_count,
+            mean_cluster_size,
+            mean_non_singleton_cluster_size,
+        ],
+        dtype=dtype,
+    )
+
+
 def run_gpu_sweep(args):
     """Run a batched JAX sweep and return aggregate metric rows."""
     _require_jax()
@@ -104,7 +156,12 @@ def run_gpu_sweep(args):
             clustering_mode=args.clustering_mode,
             strategy=args.clustering_strategy,
             tile_size=args.tile_size,
+            repair_passes=args.repair_passes,
+            initial_cluster_size=args.initial_cluster_size,
+            rotation_repair_passes=args.rotation_repair_passes,
+            merge_passes=args.merge_passes,
         )
+        cluster_quality = _cluster_quality_vector(clusters, compute_dtype)
         trace = error_calculator_trace_jax(
             number_of_mobile_devices__k=args.devices,
             data_dimension__L=args.data_dimension,
@@ -126,12 +183,19 @@ def run_gpu_sweep(args):
             trace.successful_uploads,
             trace.successful_clusterhead_uploads,
             trace.clusterized_devices_rate,
+            cluster_quality,
         )
 
     # JIT compiles one batched program specialized to the experiment dimensions.
     batched_runner = jax.jit(jax.vmap(run_one_round))
     started = time.perf_counter()
-    error_norms, uploads, clusterhead_uploads, cluster_rates = batched_runner(seeds)
+    (
+        error_norms,
+        uploads,
+        clusterhead_uploads,
+        cluster_rates,
+        cluster_quality,
+    ) = batched_runner(seeds)
     jax.block_until_ready(error_norms)
     elapsed_seconds = time.perf_counter() - started
 
@@ -139,9 +203,16 @@ def run_gpu_sweep(args):
     uploads = np.asarray(uploads)
     clusterhead_uploads = np.asarray(clusterhead_uploads)
     cluster_rates = np.asarray(cluster_rates)
+    cluster_quality = np.asarray(cluster_quality)
 
     rows = []
     cluster_rate_mean, cluster_rate_ci95 = _confidence_interval_95(cluster_rates)
+    cluster_quality_summary = {}
+    for metric_index, metric_name in enumerate(CLUSTER_QUALITY_METRICS):
+        mean, ci95 = _confidence_interval_95(cluster_quality[:, metric_index])
+        cluster_quality_summary[f"{metric_name}_mean"] = mean
+        cluster_quality_summary[f"{metric_name}_ci95"] = ci95
+
     for checkpoint_index, checkpoint in enumerate(checkpoints):
         row = {
             "t": int(checkpoint),
@@ -150,6 +221,7 @@ def run_gpu_sweep(args):
             "clustering_mode": args.clustering_mode,
             "clusterized_devices_rate_mean": cluster_rate_mean,
             "clusterized_devices_rate_ci95": cluster_rate_ci95,
+            **cluster_quality_summary,
         }
         for scenario_index, scenario_name in enumerate(SCENARIOS):
             mean, ci95 = _confidence_interval_95(
@@ -174,7 +246,8 @@ def run_gpu_sweep(args):
         rows.append(row)
 
     dense_strategy_note = (
-        "candidate CH absorbs closest unassigned devices within R_D2D up to Cmax; "
+        "pair-first dense D2D formation, local singleton join repair, "
+        "local pair CH-rotation repair, and local CH-to-CH merge repair up to Cmax; "
         "geometric mode ranks CHs by one-hop degree"
     )
     grid_strategy_note = "cell_side = R_D2D / sqrt(2)"
@@ -192,6 +265,11 @@ def run_gpu_sweep(args):
         "gradient_normalization": "by_k" if args.normalize_by_k else "thesis_unscaled",
         "precision": getattr(args, "precision", "float32"),
         "jax_enable_x64": getattr(args, "precision", "float32") == "float64",
+        "repair_passes": int(args.repair_passes),
+        "rotation_repair_passes": int(args.rotation_repair_passes),
+        "merge_passes": int(args.merge_passes),
+        "initial_cluster_size": int(args.initial_cluster_size),
+        "cluster_quality_metrics": list(CLUSTER_QUALITY_METRICS),
         "clustering_strategy_note": (
             dense_strategy_note
             if args.clustering_strategy == "dense"
@@ -307,6 +385,42 @@ def build_parser():
         ),
     )
     parser.add_argument("--tile-size", type=int, default=1024)
+    parser.add_argument(
+        "--repair-passes",
+        type=int,
+        default=1,
+        help=(
+            "Number of local singleton join-repair passes for dense clustering. "
+            "Each pass allows reachable singletons to join nearby CHs with spare Cmax."
+        ),
+    )
+    parser.add_argument(
+        "--initial-cluster-size",
+        type=int,
+        default=2,
+        help=(
+            "Initial dense D2D cluster size before local repair. The default 2 "
+            "matches D2D-SRC pair formation; larger values greedily fill clusters earlier."
+        ),
+    )
+    parser.add_argument(
+        "--rotation-repair-passes",
+        type=int,
+        default=1,
+        help=(
+            "Number of local CH-rotation repair passes for size-2 clusters. "
+            "A pair can rotate CH to its member when that member can absorb a singleton."
+        ),
+    )
+    parser.add_argument(
+        "--merge-passes",
+        type=int,
+        default=1,
+        help=(
+            "Number of local CH-to-CH merge passes after singleton/rotation repair. "
+            "A merge is accepted only when the target CH can cover the union and Cmax holds."
+        ),
+    )
     parser.add_argument("--uniform-area", action="store_true")
     parser.add_argument("--d2d-member-compute-probability", type=float, default=1.0)
     parser.add_argument("--d2d-member-link-success-probability", type=float, default=1.0)

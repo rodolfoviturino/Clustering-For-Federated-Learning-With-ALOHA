@@ -9,6 +9,18 @@ This document records the simulation defaults after the code cleanup.
   - `theta ~ U(0, 2*pi)`.
 - D2D-SRC clusters are one-hop from every member to the cluster head.
 - Cluster size is capped by `Cmax`.
+- Dense JAX geometric clustering forms local pairs first by default. This is a
+  local D2D request/accept stage, not a BS-side global assignment.
+- Dense JAX clustering may run local singleton join-repair passes. A singleton
+  can join only a directly reachable CH with spare capacity; this models local
+  D2D control messages, not BS-side global orchestration.
+- Dense JAX clustering may run local CH-rotation repair for two-device clusters.
+  A member becomes CH only when it directly reaches both the old CH and the
+  singleton being admitted.
+- Dense JAX clustering may run local CH-to-CH merge repair after singleton and
+  rotation repair. A source D2D cluster can merge into a target D2D cluster
+  only when the target CH can directly cover every source member and the union
+  still fits within `Cmax`.
 - First-tier HFL aggregation at the CH is a sum of member updates.
 - The thesis figure code applies the BS update as an unscaled SGD step:
   `w <- w - u1 * gradient`.
@@ -55,4 +67,4 @@ member-to-CH availability.
 - CH access utilities can be normalized by cluster size or combined with
   freshness, energy, or channel quality. The current default intentionally keeps
   the thesis aggregate-norm policy.
-- CH rotation and energy-aware CH selection are not implemented in this cleanup.
+- Energy-aware CH selection is not implemented in this cleanup.

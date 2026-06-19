@@ -135,8 +135,18 @@ Dense strategy:
 - ranks candidate CHs by the selected clustering mode;
 - in `geometric` mode, ranks CHs by one-hop degree and then device ID, using
   only the D2D radius graph;
-- lets each available CH absorb the closest still-unassigned devices within
-  `R_D2D`, up to `Cmax`;
+- forms initial local pairs by default (`--initial-cluster-size 2`), matching
+  the D2D-SRC pair-formation stage;
+- then lets CHs absorb reachable singletons through local repair, up to `Cmax`;
+- runs local singleton repair passes after the greedy phase: a singleton can
+  join only a CH it reaches directly and only if that CH has spare capacity;
+- runs local CH-rotation repair for two-device clusters: if a singleton reaches
+  the member but not the current CH, the member may become CH and admit it;
+- reruns singleton join repair after CH rotations so newly promoted CHs can
+  accept additional reachable singletons;
+- runs local CH-to-CH merge repair after singleton/rotation repair: two
+  non-singleton clusters may merge only when the target CH can cover the whole
+  union and the merged cluster remains within `Cmax`;
 - preserves one-hop CH coverage directly from the radius test;
 - is more expensive than grid clustering, but gives a clustering-rate behavior
   much closer to the old D2D-SRC notebook.
@@ -178,6 +188,27 @@ Modes:
 `neighbor_counts_tiled_jax(coords, R_D2D, tile_size)` is available for profiling
 and utility scoring. It compares all devices against fixed-size candidate tiles
 on the accelerator.
+
+The dense repair pass is intentionally distributed-style.  It is equivalent to
+nearby singletons broadcasting join requests and reachable CHs with spare
+capacity accepting requests. It does not require the BS to solve a global
+assignment problem.
+
+The pair-rotation repair is also local: it is limited to two-device clusters
+where the promoted member can directly reach both the old CH and the singleton.
+No global reassignment is used.
+
+The CH-to-CH merge repair is a cluster-quality pass, not a clustering-rate
+shortcut. It does not turn singletons into clustered devices by itself. Instead,
+it consolidates nearby valid D2D clusters when one existing CH can cover the
+combined member set. The practical interpretation is that neighboring CHs
+exchange compact cluster summaries and accept a merge only when the target CH
+can serve every member in one hop. This reduces the number of CH rows competing
+on the BS uplink and increases the average aggregate size seen by HFL.
+
+Use `--initial-cluster-size Cmax` to recover the earlier greedy-fill behavior.
+The default `2` prioritizes covering more devices with at least one D2D partner
+before growing clusters, which is closer to the original D2D-SRC sequence.
 
 SciPy `cKDTree` is not used in the GPU backend. It is CPU-side and remains a
 useful validation/profiling reference only:
@@ -231,6 +262,9 @@ Six scenario columns are returned:
 The returned `JaxTraceResult` contains:
 
 - `clusterized_devices_rate`: scalar clustering percentage.
+- cluster quality scalars: CH row count, singleton count, non-singleton D2D
+  cluster count, clustered-device count, mean cluster size, and mean
+  non-singleton cluster size.
 - `error_norms`: `float[checkpoints, 6]`.
 - `successful_uploads`: `float[checkpoints, 6]`.
 - `successful_clusterhead_uploads`: `float[checkpoints, 3]`.
@@ -298,7 +332,13 @@ That command writes:
 - `Runs/gpu_smoke/results_figure_15_error_norm.png` and `.pdf`;
 - `Runs/gpu_smoke/results_uploads.png` and `.pdf`;
 - `Runs/gpu_smoke/results_clusterhead_uploads.png` and `.pdf`;
-- `Runs/gpu_smoke/results_cluster_rate.png` and `.pdf`.
+- `Runs/gpu_smoke/results_cluster_rate.png` and `.pdf`;
+- `Runs/gpu_smoke/results_cluster_quality.png` and `.pdf`.
+
+The thesis-style figure plots every checkpoint saved in the CSV. Omit
+`--checkpoints` to save and plot the full curve for every iteration
+`t = 1..max_t`; use `--checkpoints 1 100 200` only when you intentionally want
+a lighter start/middle/end figure.
 
 If `Runs/gpu_smoke/` already exists, the runner writes to the next available
 suffix, such as `Runs/gpu_smoke-02/`. Without `--run-name`, the folder name is a
@@ -345,6 +385,10 @@ Every thesis-scale result should preserve:
 - seed policy;
 - `K`, `M`, `L`, `Cmax`, `R_BS`, `R_D2D`;
 - clustering mode and strategy;
+- local repair pass count;
+- local CH-rotation repair pass count;
+- local CH-to-CH merge repair pass count;
+- initial dense cluster size;
 - number of rounds and checkpoints;
 - batch size or effective `vmap` size;
 - elapsed time including compile time;

@@ -118,12 +118,13 @@ def _plot_thesis_figure_15(frame, output_stem, formats):
     optimized ALOHA, with dashed lines for the D2D variants.
 
     The notebook version used ``LIST_OF_FL_ITERATIONS_PER_ROUND = [1, 200]``.
-    If the CSV contains every iteration, this thesis-style figure still uses
-    only the first and last rows.  The full trajectory remains available in
-    ``results_error_norm``.
+    For better visual diagnosis, this version plots every checkpoint saved in
+    the CSV.  Omit ``--checkpoints`` in the sweep command to save every
+    iteration ``t = 1..max_t``.
     """
-    thesis_frame = frame.iloc[[0, -1]] if len(frame) > 1 else frame
+    thesis_frame = frame
     x_values = thesis_frame["t"].to_numpy(dtype=float)
+    marker_stride = 1 if len(x_values) <= 20 else max(1, len(x_values) // 10)
     fig, axis = plt.subplots(figsize=(7.6, 5.4))
 
     for scenario, label, color, linestyle, marker in THESIS_FIGURE_15_STYLES:
@@ -139,6 +140,7 @@ def _plot_thesis_figure_15(frame, output_stem, formats):
             color=color,
             linestyle=linestyle,
             marker=marker,
+            markevery=marker_stride,
             linewidth=2.0,
             markersize=6.0,
             label=label,
@@ -165,6 +167,65 @@ def _plot_cluster_rate(frame, output_stem, formats):
     axis.set_ylabel("Clustered devices (%)")
     axis.set_title("D2D clustering rate")
     axis.grid(True, axis="y", alpha=0.25)
+    fig.tight_layout()
+    return _save_figure(fig, output_stem, formats)
+
+
+def _plot_cluster_quality(frame, output_stem, formats):
+    """Plot structural clustering metrics when the CSV contains them."""
+    required_columns = {
+        "number_of_clusters_mean",
+        "singleton_count_mean",
+        "non_singleton_cluster_count_mean",
+        "clustered_devices_count_mean",
+        "mean_cluster_size_mean",
+        "mean_non_singleton_cluster_size_mean",
+    }
+    if not required_columns.issubset(frame.columns):
+        return []
+
+    first_row = frame.iloc[0]
+    count_metrics = (
+        ("clustered_devices_count", "Clustered devices"),
+        ("singleton_count", "Singletons"),
+        ("non_singleton_cluster_count", "D2D clusters"),
+        ("number_of_clusters", "Total CH rows"),
+    )
+    size_metrics = (
+        ("mean_cluster_size", "Mean cluster size"),
+        ("mean_non_singleton_cluster_size", "Mean D2D cluster size"),
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(10.0, 4.3))
+
+    count_values = [float(first_row[f"{metric}_mean"]) for metric, _ in count_metrics]
+    count_errors = [float(first_row.get(f"{metric}_ci95", 0.0)) for metric, _ in count_metrics]
+    axes[0].bar(
+        [label for _, label in count_metrics],
+        count_values,
+        yerr=count_errors,
+        capsize=5,
+        color=["#4c78a8", "#f58518", "#54a24b", "#b279a2"],
+    )
+    axes[0].set_ylabel("Count")
+    axes[0].set_title("Cluster structure")
+    axes[0].tick_params(axis="x", labelrotation=25)
+    axes[0].grid(True, axis="y", alpha=0.25)
+
+    size_values = [float(first_row[f"{metric}_mean"]) for metric, _ in size_metrics]
+    size_errors = [float(first_row.get(f"{metric}_ci95", 0.0)) for metric, _ in size_metrics]
+    axes[1].bar(
+        [label for _, label in size_metrics],
+        size_values,
+        yerr=size_errors,
+        capsize=5,
+        color=["#72b7b2", "#e45756"],
+    )
+    axes[1].set_ylabel("Devices per cluster")
+    axes[1].set_title("Aggregate quality")
+    axes[1].tick_params(axis="x", labelrotation=20)
+    axes[1].grid(True, axis="y", alpha=0.25)
+
     fig.tight_layout()
     return _save_figure(fig, output_stem, formats)
 
@@ -237,6 +298,13 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
         _plot_cluster_rate(
             frame,
             output_stem=base_stem.with_name(f"{base_stem.name}_cluster_rate"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_cluster_quality(
+            frame,
+            output_stem=base_stem.with_name(f"{base_stem.name}_cluster_quality"),
             formats=formats,
         )
     )

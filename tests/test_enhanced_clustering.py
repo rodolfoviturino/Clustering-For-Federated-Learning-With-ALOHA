@@ -1,5 +1,7 @@
 import unittest
 
+import numpy as np
+
 from Clustering.enhanced_clustering_algorithm import devices_clusterizer_v2
 import Clustering.jax_clustering_algorithm as jax_clustering
 from Clustering.jax_clustering_algorithm import (
@@ -61,6 +63,29 @@ class EnhancedClusteringTests(unittest.TestCase):
         )
 
     @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_dense_pair_first_configuration_is_valid(self):
+        devices = devices_generator_jax(32, 80, seed=5)
+        clusters = clusterizer_jax(
+            devices=devices,
+            device_radius=15.0,
+            max_devices_per_cluster=8,
+            min_devices_per_cluster=1,
+            clustering_mode="geometric",
+            initial_cluster_size=2,
+            repair_passes=1,
+        )
+
+        self.assertTrue(
+            validate_jax_cluster_result(
+                clusters,
+                devices.coords,
+                device_radius=15.0,
+                max_devices_per_cluster=8,
+                n_devices=32,
+            )
+        )
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
     def test_jax_no_d2d_returns_singletons(self):
         devices = devices_generator_jax(10, 50, seed=2)
         clusters = clusterizer_jax(
@@ -73,6 +98,107 @@ class EnhancedClusteringTests(unittest.TestCase):
         self.assertEqual(int(clusters.number_of_clusters), 10)
         self.assertEqual(int(clusters.singleton_count), 10)
         self.assertEqual(float(clusters.clusterized_devices_rate), 0.0)
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_local_repair_absorbs_reachable_singleton(self):
+        jnp = jax_clustering.jnp
+        cluster_members = jnp.asarray(
+            [
+                [0, 1, -1],
+                [2, -1, -1],
+                [3, -1, -1],
+                [-1, -1, -1],
+            ],
+            dtype=jnp.int32,
+        )
+        cluster_sizes = jnp.asarray([2, 1, 1, 0], dtype=jnp.int32)
+        coords = jnp.asarray(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+                [20.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+
+        repaired_members, repaired_sizes = jax_clustering._repair_singleton_join_requests(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=coords,
+            device_radius=2.0,
+            max_devices_per_cluster=3,
+            repair_passes=1,
+        )
+
+        self.assertEqual(np.asarray(repaired_sizes).tolist(), [3, 1, 0, 0])
+        self.assertEqual(np.asarray(repaired_members[0]).tolist(), [0, 1, 2])
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_pair_rotation_absorbs_singleton_reachable_from_member(self):
+        jnp = jax_clustering.jnp
+        cluster_members = jnp.asarray(
+            [
+                [0, 1, -1],
+                [2, -1, -1],
+                [-1, -1, -1],
+            ],
+            dtype=jnp.int32,
+        )
+        cluster_sizes = jnp.asarray([2, 1, 0], dtype=jnp.int32)
+        coords = jnp.asarray(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [2.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+
+        repaired_members, repaired_sizes = jax_clustering._repair_singleton_pair_rotations(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=coords,
+            device_radius=1.1,
+            rotation_repair_passes=1,
+        )
+
+        self.assertEqual(np.asarray(repaired_sizes).tolist(), [3, 0, 0])
+        self.assertEqual(np.asarray(repaired_members[0]).tolist(), [1, 0, 2])
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_local_cluster_merge_combines_one_hop_unions(self):
+        jnp = jax_clustering.jnp
+        cluster_members = jnp.asarray(
+            [
+                [0, 1, -1, -1],
+                [2, 3, -1, -1],
+                [4, -1, -1, -1],
+            ],
+            dtype=jnp.int32,
+        )
+        cluster_sizes = jnp.asarray([2, 2, 1], dtype=jnp.int32)
+        coords = jnp.asarray(
+            [
+                [0.0, 0.0],
+                [0.5, 0.0],
+                [1.0, 0.0],
+                [1.1, 0.0],
+                [10.0, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+
+        merged_members, merged_sizes = jax_clustering._merge_local_cluster_heads(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=coords,
+            device_radius=1.05,
+            merge_passes=1,
+        )
+
+        self.assertEqual(np.asarray(merged_sizes).tolist(), [4, 1, 0])
+        self.assertEqual(np.asarray(merged_members[0]).tolist(), [2, 3, 0, 1])
 
 
 if __name__ == "__main__":

@@ -18,6 +18,8 @@ outputs.
 - Main experiment runner.
 - Generates devices, clusters them, simulates HFL/ALOHA, writes CSV/metadata,
   and creates figures.
+- Records both outcome metrics and cluster-quality metrics, including CH row
+  count, singleton count, and average D2D cluster size.
 - Creates `Runs/<timestamp>/` by default after the simulation succeeds.
 
 `experiments/plot_gpu_sweep.py`
@@ -31,6 +33,8 @@ outputs.
 
 - JAX device generation and GPU-oriented one-hop D2D clustering.
 - Produces fixed-shape padded cluster arrays.
+- Dense mode includes local singleton repair, pair CH-rotation repair, and
+  CH-to-CH merge repair while preserving one-hop CH coverage and `Cmax`.
 
 `Models/jax_models_arrangement.py`
 
@@ -75,4 +79,3 @@ Explore results:
 ```text
 Open notebooks/explore_results.ipynb and load files from Runs/<run-name>/.
 ```
-

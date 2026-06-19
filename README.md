@@ -139,18 +139,26 @@ standard figures:
 python main.py --devices 1000 --rounds 1000 --iterations 200 --checkpoints 50 100 200
 ```
 
-The default run uses `--clustering-strategy dense`, thesis-style unscaled
-aggregation, and `--precision float32` for speed. Add `--precision float64` for
-thesis reproduction when optimized ALOHA curves need to go below about `1e-7`.
-Add `--clustering-strategy grid` for more conservative large-`K` clustering, or
-`--normalize-by-k` for the smaller normalized SGD update.
+The default run uses `--clustering-strategy dense`, pair-first local D2D
+formation (`--initial-cluster-size 2`), one local singleton join-repair pass,
+one local pair CH-rotation repair pass, one local CH-to-CH merge pass,
+thesis-style unscaled aggregation, and `--precision float32` for speed. Add
+`--precision float64` for thesis
+reproduction when optimized ALOHA curves need to go below about `1e-7`. Add
+`--clustering-strategy grid` for more conservative large-`K` clustering,
+`--repair-passes 0 --rotation-repair-passes 0 --merge-passes 0` to disable
+local repair, `--initial-cluster-size 10` to recover the earlier greedy-fill
+behavior, or `--normalize-by-k` for the smaller normalized SGD update.
 
-To generate a thesis Figure 15-style run with only the notebook's two plotted
-checkpoints:
+To generate a thesis Figure 15-style run with the full `t = 1..200` curve,
+omit `--checkpoints`:
 
 ```bash
-python main.py --run-name thesis_figure_15_x64 --checkpoints 1 200 --precision float64
+python main.py --run-name thesis_figure_15_x64 --precision float64
 ```
+
+Use `--checkpoints 1 100 200` only when you intentionally want a lighter
+start/middle/end CSV and figure.
 
 By default the runner creates a fresh timestamped folder only after the
 simulation finishes successfully:
@@ -161,7 +169,8 @@ simulation finishes successfully:
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_figure_15_error_norm.png` and `.pdf`;
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_uploads.png` and `.pdf`;
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_clusterhead_uploads.png` and `.pdf`;
-- `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_rate.png` and `.pdf`.
+- `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_rate.png` and `.pdf`;
+- `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_quality.png` and `.pdf`.
 
 Use a stable folder name when you want a recognizable run:
 

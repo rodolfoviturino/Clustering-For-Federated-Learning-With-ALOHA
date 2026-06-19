@@ -273,6 +273,321 @@ def _no_d2d_clusters(device_ids, max_devices_per_cluster, strategy: str = "dense
     )
 
 
+def _pack_active_clusters(cluster_members, cluster_sizes):
+    """Move non-empty cluster rows to the front of the padded arrays.
+
+    The model simulation indexes cluster rows from ``0`` to
+    ``number_of_clusters - 1``.  Repair passes may empty a singleton row after
+    moving that device into another cluster, so rows must be compacted before
+    returning the final ``JaxClusterResult``.
+    """
+    n_rows = cluster_sizes.shape[0]
+    row_indices = jnp.arange(n_rows, dtype=jnp.int32)
+    active = cluster_sizes > 0
+    sort_key = jnp.where(active, row_indices, row_indices + n_rows)
+    order = jnp.argsort(sort_key, stable=True)
+
+    packed_members = cluster_members[order]
+    packed_sizes = cluster_sizes[order]
+    number_of_clusters = jnp.sum(active).astype(jnp.int32)
+    packed_active = row_indices < number_of_clusters
+    packed_members = jnp.where(
+        packed_active[:, None],
+        packed_members,
+        -jnp.ones_like(packed_members),
+    )
+    packed_sizes = jnp.where(packed_active, packed_sizes, 0)
+    return packed_members, packed_sizes, number_of_clusters
+
+
+def _repair_singleton_join_requests(
+    cluster_members,
+    cluster_sizes,
+    coords,
+    device_radius: float,
+    max_devices_per_cluster: int,
+    repair_passes: int,
+):
+    """Absorb reachable singletons into nearby CHs with spare capacity.
+
+    This is intentionally a local D2D repair, not a global optimizer.  A
+    singleton can move only when it can directly reach an existing CH and that
+    CH's cluster has room under ``Cmax``.  The equivalent distributed protocol
+    is simple: singleton devices broadcast a join request, nearby CHs with
+    spare capacity respond, and the singleton joins the nearest accepting CH.
+    """
+    cmax = int(max_devices_per_cluster)
+    n_rows = cluster_sizes.shape[0]
+    row_indices = jnp.arange(n_rows, dtype=jnp.int32)
+    radius_squared = jnp.asarray(device_radius, dtype=coords.dtype) ** 2
+    passes = jnp.arange(int(repair_passes), dtype=jnp.int32)
+
+    def repair_one_pass(state, _):
+        members, sizes = state
+
+        def scan_singleton(inner_state, source_row):
+            current_members, current_sizes = inner_state
+            singleton_device = current_members[source_row, 0]
+            source_is_singleton = current_sizes[source_row] == 1
+
+            safe_heads = jnp.where(current_members[:, 0] >= 0, current_members[:, 0], 0)
+            deltas = coords[safe_heads] - coords[jnp.maximum(singleton_device, 0)]
+            distance_squared = jnp.sum(deltas * deltas, axis=1)
+            eligible_target = (
+                source_is_singleton
+                & (row_indices != source_row)
+                & (current_sizes > 1)
+                & (current_sizes < cmax)
+                & (distance_squared <= radius_squared)
+            )
+            best_target = jnp.argmin(jnp.where(eligible_target, distance_squared, jnp.inf))
+            has_target = jnp.any(eligible_target)
+            safe_target = jnp.where(has_target, best_target, 0)
+            insert_position = jnp.where(has_target, current_sizes[safe_target], 0)
+            previous_value = current_members[safe_target, insert_position]
+
+            current_members = current_members.at[safe_target, insert_position].set(
+                jnp.where(has_target, singleton_device, previous_value)
+            )
+            current_sizes = current_sizes.at[safe_target].set(
+                jnp.where(has_target, current_sizes[safe_target] + 1, current_sizes[safe_target])
+            )
+            current_members = current_members.at[source_row].set(
+                jnp.where(has_target, -jnp.ones(cmax, dtype=jnp.int32), current_members[source_row])
+            )
+            current_sizes = current_sizes.at[source_row].set(
+                jnp.where(has_target, 0, current_sizes[source_row])
+            )
+            return (current_members, current_sizes), None
+
+        repaired_state, _ = jax.lax.scan(
+            scan_singleton,
+            (members, sizes),
+            row_indices,
+        )
+        packed_members, packed_sizes, _ = _pack_active_clusters(*repaired_state)
+        return (packed_members, packed_sizes), None
+
+    (cluster_members, cluster_sizes), _ = jax.lax.scan(
+        repair_one_pass,
+        (cluster_members, cluster_sizes),
+        passes,
+    )
+    return cluster_members, cluster_sizes
+
+
+def _repair_singleton_pair_rotations(
+    cluster_members,
+    cluster_sizes,
+    coords,
+    device_radius: float,
+    rotation_repair_passes: int,
+):
+    """Absorb singletons by rotating two-device clusters locally.
+
+    This mirrors a D2D-SRC-style local negotiation: if a singleton cannot reach
+    the current CH of a pair but can reach the pair's member, that member can
+    become the CH and admit the singleton.  The operation is intentionally
+    limited to size-2 clusters because the one-hop validity check is then local
+    and simple: the new CH already reaches the old CH, and it must also reach
+    the singleton.
+    """
+    cmax = cluster_members.shape[1]
+    if cmax < 3:
+        return cluster_members, cluster_sizes
+
+    n_rows = cluster_sizes.shape[0]
+    row_indices = jnp.arange(n_rows, dtype=jnp.int32)
+    radius_squared = jnp.asarray(device_radius, dtype=coords.dtype) ** 2
+    passes = jnp.arange(int(rotation_repair_passes), dtype=jnp.int32)
+
+    def repair_one_pass(state, _):
+        members, sizes = state
+
+        def scan_singleton(inner_state, source_row):
+            current_members, current_sizes = inner_state
+            singleton_device = current_members[source_row, 0]
+            source_is_singleton = current_sizes[source_row] == 1
+
+            pair_member = jnp.where(current_members[:, 1] >= 0, current_members[:, 1], 0)
+            singleton_coord = coords[jnp.maximum(singleton_device, 0)]
+            member_deltas = coords[pair_member] - singleton_coord
+            member_distance_squared = jnp.sum(member_deltas * member_deltas, axis=1)
+            eligible_target = (
+                source_is_singleton
+                & (row_indices != source_row)
+                & (current_sizes == 2)
+                & (member_distance_squared <= radius_squared)
+            )
+            best_target = jnp.argmin(
+                jnp.where(eligible_target, member_distance_squared, jnp.inf)
+            )
+            has_target = jnp.any(eligible_target)
+            safe_target = jnp.where(has_target, best_target, 0)
+
+            old_head = current_members[safe_target, 0]
+            new_head = current_members[safe_target, 1]
+            rotated_row = jnp.concatenate(
+                (
+                    jnp.stack((new_head, old_head, singleton_device)).astype(jnp.int32),
+                    -jnp.ones(cmax - 3, dtype=jnp.int32),
+                )
+            )
+            current_members = current_members.at[safe_target].set(
+                jnp.where(has_target, rotated_row, current_members[safe_target])
+            )
+            current_sizes = current_sizes.at[safe_target].set(
+                jnp.where(has_target, 3, current_sizes[safe_target])
+            )
+            current_members = current_members.at[source_row].set(
+                jnp.where(has_target, -jnp.ones(cmax, dtype=jnp.int32), current_members[source_row])
+            )
+            current_sizes = current_sizes.at[source_row].set(
+                jnp.where(has_target, 0, current_sizes[source_row])
+            )
+            return (current_members, current_sizes), None
+
+        repaired_state, _ = jax.lax.scan(
+            scan_singleton,
+            (members, sizes),
+            row_indices,
+        )
+        packed_members, packed_sizes, _ = _pack_active_clusters(*repaired_state)
+        return (packed_members, packed_sizes), None
+
+    (cluster_members, cluster_sizes), _ = jax.lax.scan(
+        repair_one_pass,
+        (cluster_members, cluster_sizes),
+        passes,
+    )
+    return cluster_members, cluster_sizes
+
+
+def _merge_local_cluster_heads(
+    cluster_members,
+    cluster_sizes,
+    coords,
+    device_radius: float,
+    merge_passes: int,
+):
+    """Merge neighboring non-singleton clusters with a local one-hop rule.
+
+    This pass improves cluster quality after the pair-first/repair stages.  It
+    is not a centralized graph optimizer: a source cluster may merge into a
+    target cluster only when the target CH can directly cover every source
+    member and the union still fits inside ``Cmax``.  A real distributed
+    interpretation is that nearby CHs exchange a compact cluster summary
+    (member IDs/positions or equivalent reachability information), then only
+    accept merges that preserve one-hop coverage under the target CH.
+    """
+    cmax = cluster_members.shape[1]
+    if cmax < 2:
+        return cluster_members, cluster_sizes
+
+    n_rows = cluster_sizes.shape[0]
+    row_indices = jnp.arange(n_rows, dtype=jnp.int32)
+    member_positions = jnp.arange(cmax, dtype=jnp.int32)
+    radius_squared = jnp.asarray(device_radius, dtype=coords.dtype) ** 2
+    passes = jnp.arange(int(merge_passes), dtype=jnp.int32)
+
+    def merge_one_pass(state, _):
+        members, sizes = state
+
+        def scan_source(inner_state, source_row):
+            current_members, current_sizes = inner_state
+            source_size = current_sizes[source_row]
+            source_is_mergeable = source_size > 1
+            source_members = current_members[source_row]
+            safe_source_members = jnp.where(source_members >= 0, source_members, 0)
+            source_member_valid = member_positions < source_size
+
+            # Candidate target CHs. Empty rows use device 0 only as a safe
+            # gather index; their sizes make them ineligible below.
+            target_heads = jnp.where(current_members[:, 0] >= 0, current_members[:, 0], 0)
+            source_head = jnp.maximum(current_members[source_row, 0], 0)
+
+            # For every possible target row, test whether its CH can cover all
+            # valid members in the source row.  Existing target members are
+            # already covered by that target CH by construction.
+            deltas_to_source_members = (
+                coords[target_heads][:, None, :] - coords[safe_source_members][None, :, :]
+            )
+            distance_squared_to_source = jnp.sum(
+                deltas_to_source_members * deltas_to_source_members,
+                axis=-1,
+            )
+            target_covers_source = jnp.all(
+                jnp.where(
+                    source_member_valid[None, :],
+                    distance_squared_to_source <= radius_squared,
+                    True,
+                ),
+                axis=1,
+            )
+
+            combined_sizes = current_sizes + source_size
+            eligible_target = (
+                source_is_mergeable
+                & (row_indices != source_row)
+                & (current_sizes > 1)
+                & (combined_sizes <= cmax)
+                & target_covers_source
+            )
+
+            # Among valid local merges, prefer the nearest target CH.  This is
+            # deterministic and maps well to a practical CH-to-CH negotiation:
+            # the strongest/closest local exchange wins.
+            head_deltas = coords[target_heads] - coords[source_head]
+            head_distance_squared = jnp.sum(head_deltas * head_deltas, axis=1)
+            best_target = jnp.argmin(
+                jnp.where(eligible_target, head_distance_squared, jnp.inf)
+            )
+            has_target = jnp.any(eligible_target)
+            safe_target = jnp.where(has_target, best_target, 0)
+
+            target_size = current_sizes[safe_target]
+            combined_size = target_size + source_size
+            source_insert_indices = jnp.clip(member_positions - target_size, 0, cmax - 1)
+            source_values_to_append = source_members[source_insert_indices]
+            append_source_member = (
+                (member_positions >= target_size) & (member_positions < combined_size)
+            )
+            merged_target_row = jnp.where(
+                append_source_member,
+                source_values_to_append,
+                current_members[safe_target],
+            )
+
+            current_members = current_members.at[safe_target].set(
+                jnp.where(has_target, merged_target_row, current_members[safe_target])
+            )
+            current_sizes = current_sizes.at[safe_target].set(
+                jnp.where(has_target, combined_size, current_sizes[safe_target])
+            )
+            current_members = current_members.at[source_row].set(
+                jnp.where(has_target, -jnp.ones(cmax, dtype=jnp.int32), current_members[source_row])
+            )
+            current_sizes = current_sizes.at[source_row].set(
+                jnp.where(has_target, 0, current_sizes[source_row])
+            )
+            return (current_members, current_sizes), None
+
+        merged_state, _ = jax.lax.scan(
+            scan_source,
+            (members, sizes),
+            row_indices,
+        )
+        packed_members, packed_sizes, _ = _pack_active_clusters(*merged_state)
+        return (packed_members, packed_sizes), None
+
+    (cluster_members, cluster_sizes), _ = jax.lax.scan(
+        merge_one_pass,
+        (cluster_members, cluster_sizes),
+        passes,
+    )
+    return cluster_members, cluster_sizes
+
+
 def _rank_devices_for_mode(
     devices: JaxDeviceBatch,
     device_radius,
@@ -323,6 +638,10 @@ def _dense_greedy_clusters(
     clustering_mode: str,
     pathloss_exponent: float,
     tile_size: int,
+    repair_passes: int,
+    initial_cluster_size: int,
+    rotation_repair_passes: int,
+    merge_passes: int,
 ) -> JaxClusterResult:
     """Build one-hop clusters from the full radius graph.
 
@@ -333,6 +652,7 @@ def _dense_greedy_clusters(
     thesis-scale reproduction at ``K=1000``.
     """
     cmax = int(max_devices_per_cluster)
+    initial_cluster_size = max(1, min(int(initial_cluster_size), cmax))
     n_devices = devices.device_ids.shape[0]
     radius_squared = jnp.asarray(device_radius, dtype=devices.coords.dtype) ** 2
 
@@ -371,7 +691,7 @@ def _dense_greedy_clusters(
         distance_squared = jnp.sum(deltas * deltas, axis=1)
         candidates = (~assigned) & (distance_squared <= radius_squared)
         candidate_count = jnp.sum(candidates).astype(jnp.int32)
-        selected_count = jnp.minimum(candidate_count, cmax)
+        selected_count = jnp.minimum(candidate_count, initial_cluster_size)
 
         # Sort by distance so the CH keeps the closest one-hop members.  Stable
         # sorting preserves device-ID order for exact distance ties.
@@ -426,7 +746,64 @@ def _dense_greedy_clusters(
         jnp.where(singleton_rows, singleton_devices, cluster_members[:, 0])
     )
     cluster_sizes = jnp.where(singleton_rows, 1, cluster_sizes)
-    number_of_clusters = number_of_clusters + unassigned_count
+    cluster_members, cluster_sizes, number_of_clusters = _pack_active_clusters(
+        cluster_members,
+        cluster_sizes,
+    )
+
+    if repair_passes > 0:
+        cluster_members, cluster_sizes = _repair_singleton_join_requests(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=devices.coords,
+            device_radius=device_radius,
+            max_devices_per_cluster=max_devices_per_cluster,
+            repair_passes=repair_passes,
+        )
+        cluster_members, cluster_sizes, number_of_clusters = _pack_active_clusters(
+            cluster_members,
+            cluster_sizes,
+        )
+
+    if rotation_repair_passes > 0:
+        cluster_members, cluster_sizes = _repair_singleton_pair_rotations(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=devices.coords,
+            device_radius=device_radius,
+            rotation_repair_passes=rotation_repair_passes,
+        )
+        cluster_members, cluster_sizes, number_of_clusters = _pack_active_clusters(
+            cluster_members,
+            cluster_sizes,
+        )
+
+        if repair_passes > 0:
+            cluster_members, cluster_sizes = _repair_singleton_join_requests(
+                cluster_members=cluster_members,
+                cluster_sizes=cluster_sizes,
+                coords=devices.coords,
+                device_radius=device_radius,
+                max_devices_per_cluster=max_devices_per_cluster,
+                repair_passes=repair_passes,
+            )
+            cluster_members, cluster_sizes, number_of_clusters = _pack_active_clusters(
+                cluster_members,
+                cluster_sizes,
+            )
+
+    if merge_passes > 0:
+        cluster_members, cluster_sizes = _merge_local_cluster_heads(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=devices.coords,
+            device_radius=device_radius,
+            merge_passes=merge_passes,
+        )
+        cluster_members, cluster_sizes, number_of_clusters = _pack_active_clusters(
+            cluster_members,
+            cluster_sizes,
+        )
 
     cluster_mask = cluster_sizes > 0
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], -1)
@@ -458,6 +835,10 @@ def clusterizer_jax(
     strategy: str = "dense",
     pathloss_exponent: float = 2.0,
     tile_size: int = 1024,
+    repair_passes: int = 1,
+    initial_cluster_size: int = 2,
+    rotation_repair_passes: int = 1,
+    merge_passes: int = 1,
 ) -> JaxClusterResult:
     """Build padded one-hop clusters with GPU-friendly fixed-shape arrays.
 
@@ -474,6 +855,14 @@ def clusterizer_jax(
         raise ValueError("min_devices_per_cluster must be at least 1")
     if min_devices_per_cluster > max_devices_per_cluster:
         raise ValueError("min_devices_per_cluster cannot exceed max_devices_per_cluster")
+    if repair_passes < 0:
+        raise ValueError("repair_passes must be non-negative")
+    if initial_cluster_size < 1:
+        raise ValueError("initial_cluster_size must be at least 1")
+    if rotation_repair_passes < 0:
+        raise ValueError("rotation_repair_passes must be non-negative")
+    if merge_passes < 0:
+        raise ValueError("merge_passes must be non-negative")
     if strategy not in _STRATEGY_CODES:
         raise ValueError("strategy must be 'dense' or 'grid'")
 
@@ -491,6 +880,10 @@ def clusterizer_jax(
             clustering_mode=clustering_mode,
             pathloss_exponent=pathloss_exponent,
             tile_size=tile_size,
+            repair_passes=repair_passes,
+            initial_cluster_size=initial_cluster_size,
+            rotation_repair_passes=rotation_repair_passes,
+            merge_passes=merge_passes,
         )
 
     # Grid cell side in meters.  Any two points inside the same cell are within

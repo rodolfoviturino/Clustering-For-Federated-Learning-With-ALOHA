@@ -53,6 +53,18 @@ SUMMARY_FIELDS = (
 )
 
 
+def select_candidate_slice(candidates, candidate_start=0, candidate_count=None):
+    """Return the requested zero-based slice of the candidate grid."""
+    if candidate_start < 0:
+        raise ValueError("candidate_start must be non-negative")
+    if candidate_count is not None and candidate_count < 1:
+        raise ValueError("candidate_count must be positive")
+
+    if candidate_count is None:
+        return candidates[candidate_start:]
+    return candidates[candidate_start : candidate_start + candidate_count]
+
+
 def _candidate_tag(value):
     return f"{float(value):.2f}".replace(".", "p")
 
@@ -284,7 +296,22 @@ def build_parser():
         "--max-candidates",
         type=int,
         default=None,
-        help="Run only the first N grid candidates for smoke testing.",
+        help=(
+            "Run only the first N grid candidates for smoke testing. "
+            "Equivalent to --candidate-start 0 --candidate-count N."
+        ),
+    )
+    parser.add_argument(
+        "--candidate-start",
+        type=int,
+        default=0,
+        help="Zero-based index of the first candidate to run from the fixed grid.",
+    )
+    parser.add_argument(
+        "--candidate-count",
+        type=int,
+        default=None,
+        help="Number of candidates to run from --candidate-start.",
     )
     parser.add_argument(
         "--top-k",
@@ -305,23 +332,35 @@ def run_utility_pareto_sweep(args):
     if args.top_k < 1:
         raise ValueError("top_k must be positive")
 
-    candidates = candidate_grid()
+    if args.max_candidates is not None and args.candidate_count is not None:
+        raise ValueError("use either max_candidates or candidate_count, not both")
+
+    candidate_start = int(args.candidate_start)
+    candidate_count = args.candidate_count
     if args.max_candidates is not None:
         if args.max_candidates < 1:
             raise ValueError("max_candidates must be positive")
-        candidates = candidates[: args.max_candidates]
+        candidate_start = 0
+        candidate_count = args.max_candidates
+
+    full_grid = candidate_grid()
+    candidates = select_candidate_slice(full_grid, candidate_start, candidate_count)
+    if not candidates:
+        raise ValueError("candidate slice is empty")
 
     run_name = args.run_name or _default_sweep_name()
     sweep_dir = _unique_run_dir(args.runs_dir, run_name)
     summaries = []
 
-    for index, candidate in enumerate(candidates, start=1):
-        candidate_dir = sweep_dir / f"{index:03d}_{candidate['candidate_id']}"
+    for offset, candidate in enumerate(candidates):
+        grid_index = candidate_start + offset
+        candidate_dir = sweep_dir / f"{grid_index + 1:03d}_{candidate['candidate_id']}"
         result_csv = candidate_dir / "results.csv"
         candidate_args = _copy_args_with_candidate(args, candidate, result_csv)
         rows, metadata = run_gpu_sweep(candidate_args)
 
         metadata["utility_pareto_candidate"] = candidate
+        metadata["utility_pareto_candidate_index"] = grid_index
         metadata["utility_pareto_parent"] = str(sweep_dir)
         metadata["run_directory"] = str(candidate_dir)
         metadata["output_csv"] = str(result_csv)
@@ -340,7 +379,7 @@ def run_utility_pareto_sweep(args):
             )
 
         summaries.append(summarize_candidate(candidate, rows, result_csv))
-        print(f"[{index}/{len(candidates)}] wrote {result_csv}")
+        print(f"[{offset + 1}/{len(candidates)}] wrote {result_csv}")
 
     ranked = rank_candidate_summaries(summaries)
     summary_csv = sweep_dir / "utility_sweep_summary.csv"
@@ -353,6 +392,9 @@ def run_utility_pareto_sweep(args):
 
     metadata = {
         "candidate_count": len(candidates),
+        "candidate_start": candidate_start,
+        "candidate_end_exclusive": candidate_start + len(candidates),
+        "full_grid_candidate_count": len(full_grid),
         "candidate_grid": {
             "optimized_d2d_access_floor_fraction": list(FLOOR_VALUES),
             "optimized_d2d_norm_exponent": list(NORM_EXPONENT_VALUES),

@@ -33,6 +33,14 @@ outputs.
 - Writes per-candidate result folders plus `utility_sweep_summary.csv`,
   `utility_sweep_top10.md`, and a Pareto plot.
 - Ranks candidates by log-error AUC while constraining CH uploads near fixed D2D.
+- Supports `--candidate-start` and `--candidate-count` for Colab-friendly
+  partial grid runs.
+
+`experiments/merge_utility_pareto_summaries.py`
+
+- Combines summary CSVs from multiple utility Pareto parts.
+- Re-ranks all candidates and regenerates the consolidated top-10 and Pareto
+  plot.
 
 ## Core Modules
 
@@ -85,6 +93,12 @@ Tune utility parameters:
 
 ```bash
 python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_smoke --devices 1000 --rounds 20 --precision float64 --max-candidates 5
+```
+
+Merge utility tuning parts:
+
+```bash
+python -m experiments.merge_utility_pareto_summaries Runs/utility_pareto_k3000_part* --output-dir Runs/utility_pareto_k3000_merged
 ```
 
 Explore results:

@@ -1,7 +1,9 @@
 import unittest
 
 from experiments.run_utility_pareto_sweep import (
+    candidate_grid,
     rank_candidate_summaries,
+    select_candidate_slice,
     summarize_candidate,
 )
 
@@ -18,6 +20,22 @@ def _row(t, optimized_error, optimized_ch, fixed_ch, optimized_uploads, fixed_up
 
 
 class UtilityParetoSweepTests(unittest.TestCase):
+    def test_candidate_slice_uses_zero_based_grid_indices(self):
+        candidates = candidate_grid()
+        sliced = select_candidate_slice(candidates, candidate_start=3, candidate_count=2)
+
+        self.assertEqual(len(sliced), 2)
+        self.assertEqual(sliced[0], candidates[3])
+        self.assertEqual(sliced[1], candidates[4])
+
+    def test_candidate_slice_rejects_invalid_bounds(self):
+        candidates = candidate_grid()
+
+        with self.assertRaises(ValueError):
+            select_candidate_slice(candidates, candidate_start=-1)
+        with self.assertRaises(ValueError):
+            select_candidate_slice(candidates, candidate_start=0, candidate_count=0)
+
     def test_candidate_summary_computes_pareto_metrics(self):
         candidate = {
             "candidate_id": "candidate_a",

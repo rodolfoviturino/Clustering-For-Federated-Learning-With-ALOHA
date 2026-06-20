@@ -1,5 +1,25 @@
--r requirements.txt
+# Google Colab GPU requirements.
+#
+# This file intentionally does not install jax or jaxlib.  Colab GPU runtimes
+# often ship with a CUDA-enabled JAX build already matched to the active driver.
+# Installing a pinned CPU JAX wheel, or the wrong jax[cudaXX] extra, can make
+# JAX fall back to CpuDevice.
+#
+# Verify after install:
+#
+#   python -c "import jax; print(jax.__version__); print(jax.devices())"
+#
+# If that prints only CpuDevice, install the CUDA extra that matches the current
+# Colab image, then restart the runtime:
+#
+#   pip install -U "jax[cuda12]"
+#   # or, for CUDA 13 images:
+#   pip install -U "jax[cuda13]"
 
-# Use this file only on Linux GPU runtimes such as Google Colab.
-# Native Windows supports JAX CPU wheels, but JAX's CUDA wheels are Linux-only.
-jax[cuda13]==0.10.2
+numpy>=2.0,<2.3
+pandas>=2.2,<2.3
+scipy>=1.14,<1.17
+matplotlib>=3.9,<3.11
+seaborn>=0.13,<0.14
+tqdm>=4.66,<5
+scikit-learn>=1.5,<1.7

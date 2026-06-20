@@ -24,7 +24,9 @@ https://docs.jax.dev/en/latest/installation.html
 For that reason this repository uses two requirement files:
 
 - `requirements.txt`: local development, Windows CPU, and small smoke tests.
-- `requirements-colab-gpu.txt`: Colab/Linux GPU runs with the CUDA 13 extra.
+- `requirements-colab-gpu.txt`: Colab/Linux GPU helper dependencies. It
+  intentionally does not pin or reinstall JAX, because Colab often ships with a
+  CUDA-enabled JAX build already matched to the current driver/runtime image.
 
 TPU execution is not the first target. The simulation has random access,
 branching, and sparse cluster membership, which are easier to tune first on GPU.
@@ -326,6 +328,31 @@ It runs the fixed 243-candidate utility grid and ranks candidates by average
 log-error AUC, constrained to a final optimized/fixed D2D CH-upload ratio in
 `[0.95, 1.05]`. For local smoke tests, add `--max-candidates 5`.
 
+Free Colab sessions may not stay connected long enough for all 243 candidates.
+Use zero-based slices:
+
+```bash
+python -m experiments.run_utility_pareto_sweep \
+  --run-name utility_pareto_k3000_part01 \
+  --devices 3000 \
+  --rounds 100 \
+  --precision float64 \
+  --candidate-start 0 \
+  --candidate-count 30
+```
+
+For 30-candidate chunks, run starts `0`, `30`, `60`, `90`, `120`, `150`,
+`180`, `210`, and `240`. The final chunk contains only the remaining
+candidates.
+
+Then merge finished parts:
+
+```bash
+python -m experiments.merge_utility_pareto_summaries \
+  Runs/utility_pareto_k3000_part* \
+  --output-dir Runs/utility_pareto_k3000_merged
+```
+
 Six scenario columns are returned:
 
 0. Polling without D2D.
@@ -368,10 +395,14 @@ pip install -r requirements-colab-gpu.txt
 python -c "import jax; print(jax.__version__); print(jax.devices())"
 ```
 
-If the runtime reports CUDA 12 compatibility instead of CUDA 13, use:
+If that command prints `CudaDevice`, keep the existing JAX installation. If it
+prints only `CpuDevice`, install the JAX CUDA extra that matches the active
+Colab image, restart the runtime, and verify again:
 
 ```bash
-pip install -U "jax[cuda12]==0.10.2"
+pip install -U "jax[cuda12]"
+# or, on CUDA 13 Colab images:
+pip install -U "jax[cuda13]"
 ```
 
 Then run a small sweep:

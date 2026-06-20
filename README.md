@@ -49,6 +49,7 @@ docs/
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
   run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
+  merge_utility_pareto_summaries.py         Merge utility Pareto partial runs
   plot_gpu_sweep.py                         CSV-to-figure plotting CLI
   run_ablation.py                           Compatibility wrapper around the GPU sweep runner
 tests/
@@ -85,9 +86,12 @@ python -c "import jax; print(jax.__version__); print(jax.devices())"
 ```
 
 Native Windows does not have supported JAX NVIDIA GPU wheels. Use Colab, Linux,
-or WSL2 for GPU experiments. If the GPU runtime exposes CUDA 12 instead of CUDA
-13, replace `jax[cuda13]==0.10.2` with `jax[cuda12]==0.10.2` in
-`requirements-colab-gpu.txt`.
+or WSL2 for GPU experiments. The Colab requirements file intentionally does not
+pin or reinstall JAX, because Colab often already provides a CUDA-enabled JAX
+build matched to the current runtime. If `jax.devices()` prints `CudaDevice`,
+keep that JAX installation. If it prints only `CpuDevice`, install the matching
+`jax[cuda12]` or `jax[cuda13]` extra for the active Colab image, restart the
+runtime, and verify `jax.devices()` again.
 
 ## Reproducibility
 
@@ -220,6 +224,24 @@ The full grid has 243 candidates. Each candidate writes
 `Runs/<run-name>/<candidate>/results.csv`, and the parent folder writes
 `utility_sweep_summary.csv`, `utility_sweep_top10.md`, and
 `utility_sweep_pareto.png`/`.pdf`.
+
+On free Colab, run the grid in smaller slices to avoid runtime disconnects:
+
+```bash
+python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000_part01 --devices 3000 --rounds 100 --precision float64 --candidate-start 0 --candidate-count 30
+python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000_part02 --devices 3000 --rounds 100 --precision float64 --candidate-start 30 --candidate-count 30
+python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000_part03 --devices 3000 --rounds 100 --precision float64 --candidate-start 60 --candidate-count 30
+```
+
+Continue with starts `90`, `120`, `150`, `180`, `210`, and `240` to cover
+all 243 candidates. The last slice automatically contains only the remaining
+candidates.
+
+Merge completed parts after downloading or keeping them in the same runtime:
+
+```bash
+python -m experiments.merge_utility_pareto_summaries Runs/utility_pareto_k3000_part* --output-dir Runs/utility_pareto_k3000_merged
+```
 
 To generate a thesis Figure 15-style run with the full `t = 1..200` curve,
 omit `--checkpoints`:

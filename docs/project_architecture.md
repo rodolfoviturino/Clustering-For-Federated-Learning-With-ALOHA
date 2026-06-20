@@ -27,6 +27,13 @@ outputs.
 - Regenerates figures from an existing sweep CSV.
 - Does not rerun the simulation.
 
+`experiments/run_utility_pareto_sweep.py`
+
+- Runs the fixed optimized-D2D utility candidate grid.
+- Writes per-candidate result folders plus `utility_sweep_summary.csv`,
+  `utility_sweep_top10.md`, and a Pareto plot.
+- Ranks candidates by log-error AUC while constraining CH uploads near fixed D2D.
+
 ## Core Modules
 
 `Clustering/jax_clustering_algorithm.py`
@@ -72,6 +79,12 @@ Regenerate figures:
 
 ```bash
 python -m experiments.plot_gpu_sweep Runs/local_smoke/results.csv
+```
+
+Tune utility parameters:
+
+```bash
+python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_smoke --devices 1000 --rounds 20 --precision float64 --max-candidates 5
 ```
 
 Explore results:

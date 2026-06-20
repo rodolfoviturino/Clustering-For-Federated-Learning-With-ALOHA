@@ -72,6 +72,22 @@ class GpuSweepTests(unittest.TestCase):
         self.assertTrue(metadata["jax_enable_x64"])
         self.assertEqual(len(rows), 2)
 
+    def test_gpu_sweep_records_utility_load_target_factor(self):
+        rows, metadata = run_gpu_sweep(
+            self._small_args(
+                devices=10,
+                rounds=1,
+                iterations=2,
+                checkpoints=[1, 2],
+                optimized_d2d_access_mode="utility",
+                optimized_d2d_load_target_factor=1.2,
+            )
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(metadata["optimized_d2d_access_mode"], "utility")
+        self.assertEqual(metadata["optimized_d2d_load_target_factor"], 1.2)
+
 
 if __name__ == "__main__":
     unittest.main()

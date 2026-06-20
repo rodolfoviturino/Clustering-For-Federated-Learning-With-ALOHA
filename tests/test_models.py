@@ -162,6 +162,71 @@ class JaxModelTests(unittest.TestCase):
             optimized_d2d_norm_exponent=1.0,
             optimized_d2d_cluster_size_exponent=1.0,
             optimized_d2d_freshness_exponent=0.5,
+            optimized_d2d_load_target_factor=1.2,
+        )
+
+        self.assertEqual(len(result), 16)
+        for value in result[:7]:
+            self.assertTrue(math.isfinite(value))
+
+    def test_utility_load_target_factor_must_be_positive(self):
+        with self.assertRaises(ValueError):
+            error_calculator(
+                number_of_mobile_devices__k=6,
+                data_dimension__L=2,
+                number_of_parallel_channels__M=2,
+                probability_that_user_can_compute_its_local_update__pcomp=0.5,
+                number_of_iterations__t=3,
+                learning_rate__u1=0.01,
+                step_size__u=0.1,
+                clusters_list=[[0, 1], [2, 3], [4, 5]],
+                seed=21,
+                optimized_d2d_access_mode="utility",
+                optimized_d2d_load_target_factor=0.0,
+            )
+
+    def test_max_weight_optimized_d2d_access_mode_is_supported(self):
+        result = error_calculator(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            number_of_iterations__t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters_list=[[0, 1], [2, 3], [4, 5]],
+            seed=34,
+            optimized_d2d_access_mode="max_weight",
+            optimized_d2d_access_floor_fraction=0.10,
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=1.0,
+            optimized_d2d_threshold_gain=8.0,
+        )
+
+        self.assertEqual(len(result), 16)
+        for value in result[:7]:
+            self.assertTrue(math.isfinite(value))
+
+    def test_hybrid_optimized_d2d_access_mode_is_supported(self):
+        result = error_calculator(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            number_of_iterations__t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters_list=[[0, 1], [2, 3], [4, 5]],
+            seed=55,
+            optimized_d2d_access_mode="hybrid",
+            optimized_d2d_access_floor_fraction=0.10,
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=1.0,
+            optimized_d2d_novelty_exponent=1.0,
+            optimized_d2d_novelty_floor=0.25,
+            optimized_d2d_reference_decay=0.90,
         )
 
         self.assertEqual(len(result), 16)

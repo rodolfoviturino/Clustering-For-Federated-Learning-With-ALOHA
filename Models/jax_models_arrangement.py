@@ -14,8 +14,12 @@ The simulation follows the same thesis-level structure as the original model:
 * ``normalize_by_k=True`` enables the more conservative ``gradient / K`` variant.
 * optional optimized-access floors can keep optimized ALOHA from underusing
   channels after D2D aggregation drives update norms very small;
-* optimized D2D can use a load-controlled utility policy based on aggregate
+* optimized D2D can use load-controlled utility policies based on aggregate
   norm, active aggregate size, and freshness.
+* the enhanced max-weight D2D policy uses a dual threshold that can be
+  broadcast by the BS, while each CH computes its own local utility score.
+* the hybrid utility D2D policy keeps smooth load allocation, but discounts
+  CH aggregates that are directionally redundant with recent successful uploads.
 * ``dtype=jnp.float64`` is recommended when reproducing very small thesis error
   norms; ``float32`` is faster but floors optimized curves near single-precision
   machine accuracy.
@@ -205,6 +209,7 @@ def _utility_load_controlled_access_probability(
     norm_exponent,
     cluster_size_exponent,
     freshness_exponent,
+    load_target_factor,
 ):
     """Allocate optimized D2D access using utility while preserving ALOHA load.
 
@@ -214,11 +219,41 @@ def _utility_load_controlled_access_probability(
     aggregate updates, represent larger clusters, or have waited longer since a
     successful optimized-D2D transmission.
     """
-    dtype = aggregate_norms.dtype
+    utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+    return _load_controlled_access_from_utility(
+        utility=utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor,
+    )
+
+
+def _load_controlled_access_from_utility(
+    utility,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    load_target_factor,
+):
+    """Convert CH utilities into smooth load-controlled ALOHA probabilities."""
+    dtype = utility.dtype
     eps = jnp.asarray(1e-12, dtype=dtype)
     active_count = jnp.sum(cluster_mask).astype(dtype)
     target_contenders = jnp.minimum(
-        jnp.asarray(n_channels, dtype=dtype),
+        jnp.asarray(n_channels, dtype=dtype) * load_target_factor,
         pcomp * active_count,
     )
 
@@ -227,6 +262,40 @@ def _utility_load_controlled_access_probability(
     floor_load = jnp.sum(floor_by_cluster)
     remaining_load = jnp.maximum(target_contenders - floor_load, 0.0)
 
+    utility = jnp.where(cluster_mask, utility, 0.0)
+    utility_sum = jnp.sum(utility)
+
+    utility_probability = jnp.where(
+        utility_sum > eps,
+        remaining_load * utility / utility_sum,
+        0.0,
+    )
+    return jnp.minimum(floor_by_cluster + utility_probability, pcomp)
+
+
+def _cluster_utility_scores(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    cluster_mask,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+):
+    """Return a dimensionless local priority score for each CH.
+
+    Every term is normalized to ``[0, 1]`` across the active CH rows for this
+    simulated round.  In a deployed system these normalizers can be broadcast
+    by the BS from the previous control interval or estimated by gossip/summary
+    messages; the CH still needs only its own aggregate update, active member
+    count, and age since its last successful upload to compute its score.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+
+    # aggregate_norms: float[max_clusters], Euclidean norm of the CH aggregate.
+    # cluster_sizes: int[max_clusters], number of active members in the aggregate.
+    # freshness: float[max_clusters], FL rounds since the last successful CH upload.
     active_norms = jnp.where(cluster_mask, aggregate_norms, 0.0)
     active_sizes = jnp.where(cluster_mask, cluster_sizes.astype(dtype), 0.0)
     active_freshness = jnp.where(cluster_mask, freshness, 0.0)
@@ -240,15 +309,131 @@ def _utility_load_controlled_access_probability(
         * size_score**cluster_size_exponent
         * freshness_score**freshness_exponent
     )
-    utility = jnp.where(cluster_mask, utility, 0.0)
-    utility_sum = jnp.sum(utility)
+    return jnp.where(cluster_mask, utility, 0.0)
 
-    utility_probability = jnp.where(
-        utility_sum > eps,
-        remaining_load * utility / utility_sum,
-        0.0,
+
+def _cluster_novelty_scores(
+    aggregate_updates,
+    reference_direction,
+    cluster_mask,
+    novelty_floor,
+):
+    """Return how directionally new each CH aggregate is.
+
+    The BS can maintain ``reference_direction`` from previously successful
+    optimized-D2D uploads and broadcast it with the FL model.  A CH then
+    compares its own aggregate update with that reference.  Aggregates aligned
+    with the recent direction still keep ``novelty_floor`` credit, while
+    orthogonal aggregates receive full novelty credit.
+    """
+    dtype = aggregate_updates.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    one = jnp.asarray(1.0, dtype=dtype)
+
+    # reference_direction: float[L], recent successful optimized-D2D direction.
+    # aggregate_updates: float[max_clusters, L], one aggregate update per CH.
+    reference_norm = jnp.linalg.norm(reference_direction)
+    reference_unit = reference_direction / jnp.maximum(reference_norm, eps)
+    aggregate_norms = jnp.linalg.norm(aggregate_updates, axis=1)
+    cosine = jnp.sum(aggregate_updates * reference_unit[None, :], axis=1) / jnp.maximum(
+        aggregate_norms,
+        eps,
     )
-    return jnp.minimum(floor_by_cluster + utility_probability, pcomp)
+    aligned_fraction = jnp.minimum(jnp.abs(cosine), one)
+    orthogonal_fraction = jnp.sqrt(jnp.maximum(one - aligned_fraction**2, 0.0))
+
+    novelty = novelty_floor + (one - novelty_floor) * orthogonal_fraction
+    novelty = jnp.where(reference_norm > eps, novelty, one)
+    return jnp.where(cluster_mask, novelty, 0.0)
+
+
+def _hybrid_utility_access_probability(
+    aggregate_updates,
+    cluster_sizes,
+    freshness,
+    reference_direction,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    novelty_exponent,
+    novelty_floor,
+    load_target_factor,
+):
+    """Smooth optimized-D2D access with utility and marginal-direction novelty."""
+    aggregate_norms = jnp.linalg.norm(aggregate_updates, axis=1)
+    base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+    novelty = _cluster_novelty_scores(
+        aggregate_updates=aggregate_updates,
+        reference_direction=reference_direction,
+        cluster_mask=cluster_mask,
+        novelty_floor=novelty_floor,
+    )
+    hybrid_utility = base_utility * novelty**novelty_exponent
+    return _load_controlled_access_from_utility(
+        utility=hybrid_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor,
+    )
+
+
+def _max_weight_threshold_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    cluster_mask,
+    threshold,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    threshold_gain,
+):
+    """Distributed max-weight-style optimized D2D access probability.
+
+    The proportional utility policy spreads a fixed load budget across all
+    active CHs.  This mode is more selective: a CH maps its local utility score
+    through a sigmoid gate centered on a global threshold.  A successful system
+    needs only a scalar threshold broadcast by the BS.  If too many CHs contend,
+    the threshold rises; if too few contend, it falls.
+    """
+    dtype = aggregate_norms.dtype
+    floor_probability = jnp.minimum(fixed_access_probability, pcomp) * floor_fraction
+    remaining_probability = jnp.maximum(pcomp - floor_probability, 0.0)
+    utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+
+    # threshold: scalar dual state. Larger values make the CH gate stricter.
+    # threshold_gain: sigmoid slope. Larger values concentrate access on the
+    # highest-utility CHs; smaller values behave closer to smooth utility mode.
+    gate = jax.nn.sigmoid(threshold_gain * (utility - threshold))
+    probability = floor_probability + remaining_probability * gate
+    return jnp.where(cluster_mask, jnp.minimum(probability, pcomp), 0.0).astype(dtype)
 
 
 def _successful_from_draws(channel_key, random_draws, probability, eligibility, n_channels):
@@ -295,6 +480,11 @@ def error_calculator_trace_jax(
     optimized_d2d_norm_exponent: float = 1.0,
     optimized_d2d_cluster_size_exponent: float = 1.0,
     optimized_d2d_freshness_exponent: float = 0.5,
+    optimized_d2d_threshold_gain: float = 8.0,
+    optimized_d2d_novelty_exponent: float = 1.0,
+    optimized_d2d_novelty_floor: float = 0.25,
+    optimized_d2d_reference_decay: float = 0.90,
+    optimized_d2d_load_target_factor: float = 1.0,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -328,14 +518,26 @@ def error_calculator_trace_jax(
         raise ValueError("optimized_access_floor_fraction must be in [0, 1]")
     if not 0.0 <= optimized_d2d_access_floor_fraction <= 1.0:
         raise ValueError("optimized_d2d_access_floor_fraction must be in [0, 1]")
-    if optimized_d2d_access_mode not in {"norm", "utility"}:
-        raise ValueError("optimized_d2d_access_mode must be 'norm' or 'utility'")
+    if optimized_d2d_access_mode not in {"norm", "utility", "max_weight", "hybrid"}:
+        raise ValueError(
+            "optimized_d2d_access_mode must be 'norm', 'utility', 'max_weight', or 'hybrid'"
+        )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
     if optimized_d2d_cluster_size_exponent < 0.0:
         raise ValueError("optimized_d2d_cluster_size_exponent must be non-negative")
     if optimized_d2d_freshness_exponent < 0.0:
         raise ValueError("optimized_d2d_freshness_exponent must be non-negative")
+    if optimized_d2d_threshold_gain <= 0.0:
+        raise ValueError("optimized_d2d_threshold_gain must be positive")
+    if optimized_d2d_novelty_exponent < 0.0:
+        raise ValueError("optimized_d2d_novelty_exponent must be non-negative")
+    if not 0.0 <= optimized_d2d_novelty_floor <= 1.0:
+        raise ValueError("optimized_d2d_novelty_floor must be in [0, 1]")
+    if not 0.0 <= optimized_d2d_reference_decay <= 1.0:
+        raise ValueError("optimized_d2d_reference_decay must be in [0, 1]")
+    if optimized_d2d_load_target_factor <= 0.0:
+        raise ValueError("optimized_d2d_load_target_factor must be positive")
 
     dtype = jnp.float32 if dtype is None else dtype
     pcomp = jnp.asarray(
@@ -357,6 +559,11 @@ def error_calculator_trace_jax(
         dtype=dtype,
     )
     d2d_freshness_exponent = jnp.asarray(optimized_d2d_freshness_exponent, dtype=dtype)
+    d2d_threshold_gain = jnp.asarray(optimized_d2d_threshold_gain, dtype=dtype)
+    d2d_novelty_exponent = jnp.asarray(optimized_d2d_novelty_exponent, dtype=dtype)
+    d2d_novelty_floor = jnp.asarray(optimized_d2d_novelty_floor, dtype=dtype)
+    d2d_reference_decay = jnp.asarray(optimized_d2d_reference_decay, dtype=dtype)
+    d2d_load_target_factor = jnp.asarray(optimized_d2d_load_target_factor, dtype=dtype)
 
     key = _key_from_seed(seed)
     data_key, true_weight_key, init_weight_key, scan_key = jax.random.split(key, 4)
@@ -433,6 +640,7 @@ def error_calculator_trace_jax(
             upload_totals,
             clusterhead_upload_totals,
             optimized_d2d_freshness,
+            optimized_d2d_reference_direction,
         ) = state
         (
             key,
@@ -597,6 +805,40 @@ def error_calculator_trace_jax(
                 norm_exponent=d2d_norm_exponent,
                 cluster_size_exponent=d2d_cluster_size_exponent,
                 freshness_exponent=d2d_freshness_exponent,
+                load_target_factor=d2d_load_target_factor,
+            )
+        elif optimized_d2d_access_mode == "max_weight":
+            optimized_probability_d2d = _max_weight_threshold_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts,
+                freshness=optimized_d2d_freshness,
+                cluster_mask=cluster_mask,
+                threshold=psi_d2d,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                threshold_gain=d2d_threshold_gain,
+            )
+        elif optimized_d2d_access_mode == "hybrid":
+            optimized_probability_d2d = _hybrid_utility_access_probability(
+                aggregate_updates=aggregate_updates_model_3,
+                cluster_sizes=active_member_counts,
+                freshness=optimized_d2d_freshness,
+                reference_direction=optimized_d2d_reference_direction,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                novelty_exponent=d2d_novelty_exponent,
+                novelty_floor=d2d_novelty_floor,
+                load_target_factor=d2d_load_target_factor,
             )
         else:
             optimized_probability_d2d = jnp.where(
@@ -629,9 +871,15 @@ def error_calculator_trace_jax(
             jnp.where(success_3_d2d, active_member_counts, 0)
         ).astype(jnp.int32)
         ch_upload_3_d2d = jnp.sum(success_3_d2d).astype(jnp.int32)
-        next_psi_d2d = psi_d2d + step_size * (
-            candidates_3_d2d.astype(users_input__x.dtype) - n_channels
+        d2d_load_error = candidates_3_d2d.astype(users_input__x.dtype) - n_channels
+        threshold_load_error = d2d_load_error / jnp.asarray(
+            max(n_channels, 1),
+            dtype=users_input__x.dtype,
         )
+        if optimized_d2d_access_mode == "max_weight":
+            next_psi_d2d = psi_d2d + step_size * threshold_load_error
+        else:
+            next_psi_d2d = psi_d2d + step_size * d2d_load_error
         next_optimized_d2d_freshness = jnp.where(
             cluster_mask,
             optimized_d2d_freshness + 1.0,
@@ -642,6 +890,23 @@ def error_calculator_trace_jax(
             1.0,
             next_optimized_d2d_freshness,
         )
+        successful_reference_update = jnp.sum(
+            jnp.where(success_3_d2d[:, None], aggregate_updates_model_3, 0.0),
+            axis=0,
+        )
+        has_optimized_d2d_success = jnp.any(success_3_d2d)
+        blended_reference_direction = (
+            d2d_reference_decay * optimized_d2d_reference_direction
+            + (1.0 - d2d_reference_decay) * successful_reference_update
+        )
+        if optimized_d2d_access_mode == "hybrid":
+            next_optimized_d2d_reference_direction = jnp.where(
+                has_optimized_d2d_success,
+                blended_reference_direction,
+                optimized_d2d_reference_direction,
+            )
+        else:
+            next_optimized_d2d_reference_direction = optimized_d2d_reference_direction
 
         gradients = jnp.stack(
             [
@@ -682,15 +947,22 @@ def error_calculator_trace_jax(
             next_upload_totals,
             next_clusterhead_upload_totals,
             next_optimized_d2d_freshness,
+            next_optimized_d2d_reference_direction,
         )
         trace_row = (error_norms, next_upload_totals, next_clusterhead_upload_totals)
         return next_state, trace_row
+
+    initial_psi_d2d = (
+        jnp.asarray(0.5, dtype=users_input__x.dtype)
+        if optimized_d2d_access_mode == "max_weight"
+        else jnp.asarray(0.0, dtype=users_input__x.dtype)
+    )
 
     initial_state = (
         scan_key,
         weights,
         jnp.asarray(0.0, dtype=users_input__x.dtype),
-        jnp.asarray(0.0, dtype=users_input__x.dtype),
+        initial_psi_d2d,
         jnp.zeros(6, dtype=jnp.int32),
         jnp.zeros(3, dtype=jnp.int32),
         jnp.where(
@@ -698,6 +970,7 @@ def error_calculator_trace_jax(
             jnp.ones_like(cluster_sizes, dtype=users_input__x.dtype),
             0.0,
         ),
+        jnp.zeros(data_dimension, dtype=users_input__x.dtype),
     )
 
     _, (error_norms, upload_totals, clusterhead_upload_totals) = jax.lax.scan(
@@ -740,6 +1013,11 @@ def error_calculator(
     optimized_d2d_norm_exponent: float = 1.0,
     optimized_d2d_cluster_size_exponent: float = 1.0,
     optimized_d2d_freshness_exponent: float = 0.5,
+    optimized_d2d_threshold_gain: float = 8.0,
+    optimized_d2d_novelty_exponent: float = 1.0,
+    optimized_d2d_novelty_floor: float = 0.25,
+    optimized_d2d_reference_decay: float = 0.90,
+    optimized_d2d_load_target_factor: float = 1.0,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -763,6 +1041,11 @@ def error_calculator(
         optimized_d2d_norm_exponent=optimized_d2d_norm_exponent,
         optimized_d2d_cluster_size_exponent=optimized_d2d_cluster_size_exponent,
         optimized_d2d_freshness_exponent=optimized_d2d_freshness_exponent,
+        optimized_d2d_threshold_gain=optimized_d2d_threshold_gain,
+        optimized_d2d_novelty_exponent=optimized_d2d_novelty_exponent,
+        optimized_d2d_novelty_floor=optimized_d2d_novelty_floor,
+        optimized_d2d_reference_decay=optimized_d2d_reference_decay,
+        optimized_d2d_load_target_factor=optimized_d2d_load_target_factor,
         checkpoints=[number_of_iterations__t],
         dtype=dtype,
     )

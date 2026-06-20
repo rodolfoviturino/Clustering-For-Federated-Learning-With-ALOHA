@@ -181,6 +181,11 @@ def run_gpu_sweep(args):
             optimized_d2d_norm_exponent=args.optimized_d2d_norm_exponent,
             optimized_d2d_cluster_size_exponent=args.optimized_d2d_cluster_size_exponent,
             optimized_d2d_freshness_exponent=args.optimized_d2d_freshness_exponent,
+            optimized_d2d_threshold_gain=args.optimized_d2d_threshold_gain,
+            optimized_d2d_novelty_exponent=args.optimized_d2d_novelty_exponent,
+            optimized_d2d_novelty_floor=args.optimized_d2d_novelty_floor,
+            optimized_d2d_reference_decay=args.optimized_d2d_reference_decay,
+            optimized_d2d_load_target_factor=args.optimized_d2d_load_target_factor,
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -286,6 +291,11 @@ def run_gpu_sweep(args):
             args.optimized_d2d_cluster_size_exponent
         ),
         "optimized_d2d_freshness_exponent": float(args.optimized_d2d_freshness_exponent),
+        "optimized_d2d_threshold_gain": float(args.optimized_d2d_threshold_gain),
+        "optimized_d2d_novelty_exponent": float(args.optimized_d2d_novelty_exponent),
+        "optimized_d2d_novelty_floor": float(args.optimized_d2d_novelty_floor),
+        "optimized_d2d_reference_decay": float(args.optimized_d2d_reference_decay),
+        "optimized_d2d_load_target_factor": float(args.optimized_d2d_load_target_factor),
         "clustering_strategy_note": (
             dense_strategy_note
             if args.clustering_strategy == "dense"
@@ -460,11 +470,13 @@ def build_parser():
     )
     parser.add_argument(
         "--optimized-d2d-access-mode",
-        choices=("norm", "utility"),
+        choices=("norm", "utility", "max_weight", "hybrid"),
         default="norm",
         help=(
             "norm preserves the thesis-style optimized D2D controller; utility "
-            "load-controls access by aggregate norm, active cluster size, and freshness."
+            "load-controls access by aggregate norm, active cluster size, and freshness; "
+            "max_weight uses a dual-threshold gate that concentrates access on high-utility CHs; "
+            "hybrid keeps utility load control and adds directional novelty."
         ),
     )
     parser.add_argument(
@@ -484,6 +496,49 @@ def build_parser():
         type=float,
         default=0.5,
         help="Utility-mode exponent for time since last optimized-D2D CH success.",
+    )
+    parser.add_argument(
+        "--optimized-d2d-threshold-gain",
+        type=float,
+        default=8.0,
+        help=(
+            "Max-weight mode sigmoid gain. Larger values make the CH access "
+            "decision closer to a hard utility threshold."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-novelty-exponent",
+        type=float,
+        default=1.0,
+        help="Hybrid-mode exponent for directional novelty against recent optimized-D2D uploads.",
+    )
+    parser.add_argument(
+        "--optimized-d2d-novelty-floor",
+        type=float,
+        default=0.25,
+        help=(
+            "Hybrid-mode minimum novelty credit for aggregates aligned with "
+            "the recent optimized-D2D reference direction."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-reference-decay",
+        type=float,
+        default=0.90,
+        help=(
+            "Hybrid-mode exponential decay for the recent successful "
+            "optimized-D2D reference direction."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-load-target-factor",
+        type=float,
+        default=1.0,
+        help=(
+            "Utility/hybrid mode multiplier for the target expected CH "
+            "contender load. 1.0 targets M contenders, 0.8 targets 0.8*M, "
+            "and 1.2 targets 1.2*M."
+        ),
     )
     parser.add_argument(
         "--runs-dir",

@@ -48,6 +48,7 @@ docs/
   modeling_assumptions.md                   Thesis defaults and realism switches
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
+  run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
   plot_gpu_sweep.py                         CSV-to-figure plotting CLI
   run_ablation.py                           Compatibility wrapper around the GPU sweep runner
 tests/
@@ -172,6 +173,53 @@ python main.py --run-name k3000_x64_pair_merge_utility_opt --devices 3000 --prec
 Use `--optimized-d2d-access-floor-fraction 0.25` or `0.5` for utility mode.
 Using `1.0` makes the mode nearly identical to fixed D2D because the full load
 budget is already assigned to the baseline floor.
+Use `--optimized-d2d-load-target-factor` to tune the expected CH contender
+target for utility mode: `1.0` targets `M`, `0.8` targets `0.8M`, and `1.2`
+targets `1.2M`.
+
+The more selective optimized-D2D ablation is `max_weight`. It keeps the same
+utility terms, but maps them through an adaptive threshold. This concentrates
+access on high-value CH aggregates while the threshold controller tries to keep
+the CH contention load near `M` channels:
+
+```bash
+python main.py --run-name k3000_x64_max_weight --devices 3000 --precision float64 --optimized-d2d-access-mode max_weight --optimized-d2d-access-floor-fraction 0.10 --optimized-d2d-norm-exponent 2.0 --optimized-d2d-cluster-size-exponent 1.0 --optimized-d2d-freshness-exponent 1.0 --optimized-d2d-threshold-gain 8.0
+```
+
+This is an enhanced strategy, not thesis-exact behavior. It is intended for
+testing whether optimized D2D can beat fixed D2D by choosing better CH
+transmissions, rather than by simply increasing BS contention.
+
+The hybrid optimized-D2D ablation keeps the smoother utility allocation but
+adds a directional novelty term. The BS maintains a recent successful
+optimized-D2D update direction and can broadcast it with the FL model; each CH
+discounts aggregates that are mostly aligned with that recent direction:
+
+```bash
+python main.py --run-name k3000_x64_hybrid_b2_floor010 --devices 3000 --precision float64 --optimized-d2d-access-mode hybrid --optimized-d2d-access-floor-fraction 0.10 --optimized-d2d-norm-exponent 2.0 --optimized-d2d-cluster-size-exponent 1.0 --optimized-d2d-freshness-exponent 1.0 --optimized-d2d-novelty-exponent 1.0 --optimized-d2d-novelty-floor 0.25 --optimized-d2d-reference-decay 0.90
+```
+
+This tests whether optimized D2D improves by preserving update diversity, not
+by hard-thresholding access or increasing the expected CH load.
+
+To tune the utility policy as a Pareto problem, use the utility sweep runner.
+It executes the fixed grid of floors, exponents, and load-target factors, then
+writes per-candidate results plus a ranked summary:
+
+```bash
+python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_smoke --devices 1000 --rounds 20 --precision float64 --max-candidates 5
+```
+
+For the full `K = 3000` grid:
+
+```bash
+python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000 --devices 3000 --rounds 100 --precision float64
+```
+
+The full grid has 243 candidates. Each candidate writes
+`Runs/<run-name>/<candidate>/results.csv`, and the parent folder writes
+`utility_sweep_summary.csv`, `utility_sweep_top10.md`, and
+`utility_sweep_pareto.png`/`.pdf`.
 
 To generate a thesis Figure 15-style run with the full `t = 1..200` curve,
 omit `--checkpoints`:

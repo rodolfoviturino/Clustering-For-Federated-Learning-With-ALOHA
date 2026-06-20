@@ -34,6 +34,17 @@ This document records the simulation defaults after the code cleanup.
 - Optimized D2D can optionally use a utility policy that combines aggregate
   norm, active aggregate size, and freshness while keeping the expected ALOHA
   load near the channel count.
+- The utility load target can be tuned with
+  `--optimized-d2d-load-target-factor`, but the default `1.0` preserves the
+  current target of approximately `M` CH contenders.
+- Optimized D2D can also use a max-weight threshold policy. The BS only needs
+  to broadcast a scalar threshold/dual variable; each CH computes its own
+  utility score locally from its aggregate norm, active member count, and
+  freshness.
+- Optimized D2D can also use a hybrid utility/novelty policy. The BS keeps a
+  recent successful optimized-D2D update direction and broadcasts it with the
+  model; each CH discounts aggregates that are directionally redundant with
+  that reference.
 
 These defaults are intended to preserve the thesis figure behavior while fixing
 code bugs such as angle units, unsafe cluster merging, and fragile cluster-array
@@ -79,4 +90,12 @@ member-to-CH availability.
 - `--optimized-d2d-access-mode utility` is a stronger optimized-D2D ablation.
   It is not thesis-exact; it tests whether utility-aware probability allocation
   can outperform fixed D2D without increasing total expected channel load.
+- `--optimized-d2d-access-mode max_weight` is a more selective enhanced
+  optimized-D2D ablation. It maps the same utility score through an adaptive
+  sigmoid threshold, concentrating access on high-utility CHs while using the
+  observed contention count to move the threshold up or down.
+- `--optimized-d2d-access-mode hybrid` keeps smooth utility load control but
+  adds directional novelty. It tests whether the optimized D2D controller can
+  improve by selecting less redundant CH aggregate directions while preserving
+  roughly the same expected CH contention load.
 - Energy-aware CH selection is not implemented in this cleanup.

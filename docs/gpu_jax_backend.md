@@ -277,6 +277,54 @@ stays close to the channel count `M`. The access floor reserves a fraction of
 the fixed-D2D load before the remaining probability mass is distributed by
 utility. For this reason, a floor of `1.0` intentionally collapses the utility
 mode toward fixed D2D; useful exploratory values are usually `0.25` and `0.5`.
+`--optimized-d2d-load-target-factor` adjusts the same load target for
+load-controlled policies: `1.0` targets `M`, `0.8` targets `0.8M`, and `1.2`
+targets `1.2M`.
+
+The enhanced max-weight mode is selected with
+`--optimized-d2d-access-mode max_weight`. It uses the same utility expression,
+but maps the utility through:
+
+```text
+p_h = floor + (pcomp - floor) * sigmoid(gain * (utility_h - threshold))
+```
+
+The threshold is a scalar dual variable updated from the previous CH contender
+count. This keeps the policy compatible with a realistic control channel: the
+BS broadcasts the threshold and normalizing constants, while each CH computes
+its own access probability locally. Larger `--optimized-d2d-threshold-gain`
+values make the policy closer to hard max-weight scheduling; smaller values
+make it closer to the smooth utility mode.
+
+The hybrid mode is selected with `--optimized-d2d-access-mode hybrid`. It keeps
+the smooth utility allocation, but multiplies the utility by a directional
+novelty term:
+
+```text
+hybrid_utility_h = utility_h * novelty_h^eta
+```
+
+`novelty_h` is the fraction of the CH aggregate direction that is not aligned
+with a recent successful optimized-D2D reference direction, with
+`--optimized-d2d-novelty-floor` preserving some credit for aligned but still
+large aggregates. The reference is updated by exponential decay using
+`--optimized-d2d-reference-decay`. This is still a realistic distributed
+control signal: the BS broadcasts the reference direction, while each CH
+computes its own novelty score from its local aggregate update.
+
+The utility Pareto tuning runner is:
+
+```bash
+python -m experiments.run_utility_pareto_sweep \
+  --run-name utility_pareto_k3000 \
+  --devices 3000 \
+  --rounds 100 \
+  --precision float64
+```
+
+It runs the fixed 243-candidate utility grid and ranks candidates by average
+log-error AUC, constrained to a final optimized/fixed D2D CH-upload ratio in
+`[0.95, 1.05]`. For local smoke tests, add `--max-candidates 5`.
 
 Six scenario columns are returned:
 

@@ -150,6 +150,29 @@ reproduction when optimized ALOHA curves need to go below about `1e-7`. Add
 local repair, `--initial-cluster-size 10` to recover the earlier greedy-fill
 behavior, or `--normalize-by-k` for the smaller normalized SGD update.
 
+When optimized ALOHA with D2D underuses the channel after fast convergence,
+enable the guarded optimized-D2D access floor:
+
+```bash
+python main.py --run-name k3000_x64_pair_merge_opt_floor --devices 3000 --precision float64 --optimized-d2d-access-floor-fraction 1.0
+```
+
+That keeps the optimized-D2D access probability at least as large as the fixed
+D2D ALOHA baseline while still allowing norm-based priority above the floor.
+
+For a stronger optimized-D2D ablation, use the utility mode. It keeps the
+expected CH contender load near the number of channels, but redistributes access
+toward CHs with larger aggregate updates, larger active aggregates, and longer
+freshness:
+
+```bash
+python main.py --run-name k3000_x64_pair_merge_utility_opt --devices 3000 --precision float64 --optimized-d2d-access-mode utility --optimized-d2d-access-floor-fraction 0.25 --optimized-d2d-norm-exponent 1.0 --optimized-d2d-cluster-size-exponent 1.0 --optimized-d2d-freshness-exponent 0.5
+```
+
+Use `--optimized-d2d-access-floor-fraction 0.25` or `0.5` for utility mode.
+Using `1.0` makes the mode nearly identical to fixed D2D because the full load
+budget is already assigned to the baseline floor.
+
 To generate a thesis Figure 15-style run with the full `t = 1..200` curve,
 omit `--checkpoints`:
 

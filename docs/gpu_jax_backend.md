@@ -250,6 +250,34 @@ Use `--precision float64` for thesis reproduction when optimized ALOHA reaches
 very small error norms. `float32` is the speed default for GPU sweeps, but it
 usually floors norms around single-precision accuracy.
 
+Optimized ALOHA can optionally apply an access floor:
+
+```text
+p_opt_guarded = max(p_opt_norm_based, floor_fraction * p_fixed)
+```
+
+For D2D, `p_fixed` is the fixed D2D ALOHA access probability
+`min(M / number_of_clusterheads, pcomp)`. The recommended stress test for the
+merge-enhanced clustering path is `--optimized-d2d-access-floor-fraction 1.0`.
+This prevents optimized D2D from starving the BS channels after aggregate norms
+become very small, while still letting CHs with larger aggregate norms use
+higher access probabilities. The thesis-exact behavior is preserved by the
+default floor fraction `0.0`.
+
+The enhanced optimized-D2D utility mode is selected with
+`--optimized-d2d-access-mode utility`. It uses:
+
+```text
+utility_h =
+  norm_h^beta * active_cluster_size_h^delta * freshness_h^gamma
+```
+
+and then allocates access probabilities so the expected number of CH contenders
+stays close to the channel count `M`. The access floor reserves a fraction of
+the fixed-D2D load before the remaining probability mass is distributed by
+utility. For this reason, a floor of `1.0` intentionally collapses the utility
+mode toward fixed D2D; useful exploratory values are usually `0.25` and `0.5`.
+
 Six scenario columns are returned:
 
 0. Polling without D2D.

@@ -175,6 +175,12 @@ def run_gpu_sweep(args):
             normalize_by_k=args.normalize_by_k,
             d2d_member_compute_probability=args.d2d_member_compute_probability,
             d2d_member_link_success_probability=args.d2d_member_link_success_probability,
+            optimized_access_floor_fraction=args.optimized_access_floor_fraction,
+            optimized_d2d_access_floor_fraction=args.optimized_d2d_access_floor_fraction,
+            optimized_d2d_access_mode=args.optimized_d2d_access_mode,
+            optimized_d2d_norm_exponent=args.optimized_d2d_norm_exponent,
+            optimized_d2d_cluster_size_exponent=args.optimized_d2d_cluster_size_exponent,
+            optimized_d2d_freshness_exponent=args.optimized_d2d_freshness_exponent,
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -270,6 +276,16 @@ def run_gpu_sweep(args):
         "merge_passes": int(args.merge_passes),
         "initial_cluster_size": int(args.initial_cluster_size),
         "cluster_quality_metrics": list(CLUSTER_QUALITY_METRICS),
+        "optimized_access_floor_fraction": float(args.optimized_access_floor_fraction),
+        "optimized_d2d_access_floor_fraction": float(
+            args.optimized_d2d_access_floor_fraction
+        ),
+        "optimized_d2d_access_mode": args.optimized_d2d_access_mode,
+        "optimized_d2d_norm_exponent": float(args.optimized_d2d_norm_exponent),
+        "optimized_d2d_cluster_size_exponent": float(
+            args.optimized_d2d_cluster_size_exponent
+        ),
+        "optimized_d2d_freshness_exponent": float(args.optimized_d2d_freshness_exponent),
         "clustering_strategy_note": (
             dense_strategy_note
             if args.clustering_strategy == "dense"
@@ -424,6 +440,51 @@ def build_parser():
     parser.add_argument("--uniform-area", action="store_true")
     parser.add_argument("--d2d-member-compute-probability", type=float, default=1.0)
     parser.add_argument("--d2d-member-link-success-probability", type=float, default=1.0)
+    parser.add_argument(
+        "--optimized-access-floor-fraction",
+        type=float,
+        default=0.0,
+        help=(
+            "Minimum access probability for optimized ALOHA as a fraction of "
+            "the fixed-ALOHA probability. The default 0 preserves the thesis controller."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-access-floor-fraction",
+        type=float,
+        default=0.0,
+        help=(
+            "Minimum access probability for optimized ALOHA with D2D as a fraction "
+            "of the fixed D2D ALOHA probability. Use 1.0 to prevent D2D channel starvation."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-access-mode",
+        choices=("norm", "utility"),
+        default="norm",
+        help=(
+            "norm preserves the thesis-style optimized D2D controller; utility "
+            "load-controls access by aggregate norm, active cluster size, and freshness."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-norm-exponent",
+        type=float,
+        default=1.0,
+        help="Utility-mode exponent for aggregate update norm.",
+    )
+    parser.add_argument(
+        "--optimized-d2d-cluster-size-exponent",
+        type=float,
+        default=1.0,
+        help="Utility-mode exponent for active D2D aggregate size.",
+    )
+    parser.add_argument(
+        "--optimized-d2d-freshness-exponent",
+        type=float,
+        default=0.5,
+        help="Utility-mode exponent for time since last optimized-D2D CH success.",
+    )
     parser.add_argument(
         "--runs-dir",
         type=Path,

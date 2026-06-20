@@ -28,6 +28,12 @@ This document records the simulation defaults after the code cleanup.
   - `d2d_member_compute_probability=1.0`;
   - `d2d_member_link_success_probability=1.0`.
 - Optimized ALOHA uses the aggregate norm of the CH update.
+- Optimized ALOHA can optionally use a fixed-access floor. This keeps the
+  norm-based controller from starving the channel late in training, especially
+  in D2D runs where aggregate norms can shrink quickly.
+- Optimized D2D can optionally use a utility policy that combines aggregate
+  norm, active aggregate size, and freshness while keeping the expected ALOHA
+  load near the channel count.
 
 These defaults are intended to preserve the thesis figure behavior while fixing
 code bugs such as angle units, unsafe cluster merging, and fragile cluster-array
@@ -67,4 +73,10 @@ member-to-CH availability.
 - CH access utilities can be normalized by cluster size or combined with
   freshness, energy, or channel quality. The current default intentionally keeps
   the thesis aggregate-norm policy.
+- `--optimized-d2d-access-floor-fraction 1.0` is an enhanced optimized-ALOHA
+  ablation. It preserves norm-based priority while ensuring optimized D2D uses
+  at least the fixed-D2D access probability.
+- `--optimized-d2d-access-mode utility` is a stronger optimized-D2D ablation.
+  It is not thesis-exact; it tests whether utility-aware probability allocation
+  can outperform fixed D2D without increasing total expected channel load.
 - Energy-aware CH selection is not implemented in this cleanup.

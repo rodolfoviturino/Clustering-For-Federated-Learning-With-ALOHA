@@ -127,6 +127,47 @@ class JaxModelTests(unittest.TestCase):
         self.assertEqual(len(result), 16)
         self.assertGreaterEqual(result[8], 0)
 
+    def test_optimized_access_floor_parameters_are_supported(self):
+        result = error_calculator(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            number_of_iterations__t=2,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters_list=[[0, 1], [2, 3], [4, 5]],
+            seed=13,
+            optimized_access_floor_fraction=1.0,
+            optimized_d2d_access_floor_fraction=1.0,
+        )
+
+        self.assertEqual(len(result), 16)
+        for value in result[:7]:
+            self.assertTrue(math.isfinite(value))
+
+    def test_utility_optimized_d2d_access_mode_is_supported(self):
+        result = error_calculator(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            number_of_iterations__t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters_list=[[0, 1], [2, 3], [4, 5]],
+            seed=21,
+            optimized_d2d_access_mode="utility",
+            optimized_d2d_access_floor_fraction=0.25,
+            optimized_d2d_norm_exponent=1.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.5,
+        )
+
+        self.assertEqual(len(result), 16)
+        for value in result[:7]:
+            self.assertTrue(math.isfinite(value))
+
 
 if __name__ == "__main__":
     unittest.main()

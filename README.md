@@ -235,7 +235,9 @@ python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000_p
 
 Continue with starts `90`, `120`, `150`, `180`, `210`, and `240` to cover
 all 243 candidates. The last slice automatically contains only the remaining
-candidates.
+candidates. Each slice prints the selected zero-based interval, for example
+`candidate slice 30:60 of 243`, and the summary CSV includes
+`candidate_grid_index` so partial runs can be audited before merging.
 
 Merge completed parts after downloading or keeping them in the same runtime:
 

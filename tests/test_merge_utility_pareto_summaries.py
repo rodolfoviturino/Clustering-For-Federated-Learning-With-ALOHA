@@ -10,6 +10,7 @@ from experiments.run_utility_pareto_sweep import SUMMARY_FIELDS
 def _summary_row(candidate_id, feasible, auc):
     return {
         "rank": 0,
+        "candidate_grid_index": "",
         "pareto_feasible": feasible,
         "candidate_id": candidate_id,
         "optimized_d2d_access_floor_fraction": 0.1,

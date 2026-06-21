@@ -33,6 +33,7 @@ LOAD_TARGET_FACTOR_VALUES = (0.8, 1.0, 1.2)
 
 SUMMARY_FIELDS = (
     "rank",
+    "candidate_grid_index",
     "pareto_feasible",
     "candidate_id",
     "optimized_d2d_access_floor_fraction",
@@ -129,7 +130,7 @@ def _average_log_error_auc(rows):
     return area / span
 
 
-def summarize_candidate(candidate, rows, result_csv):
+def summarize_candidate(candidate, rows, result_csv, candidate_grid_index=None):
     """Summarize one candidate's rows into rankable scalar metrics."""
     rows = _sorted_rows(rows)
     row_100 = _nearest_row(rows, 100)
@@ -149,6 +150,9 @@ def summarize_candidate(candidate, rows, result_csv):
     return {
         **candidate,
         "rank": 0,
+        "candidate_grid_index": (
+            "" if candidate_grid_index is None else int(candidate_grid_index)
+        ),
         "pareto_feasible": feasible,
         "log_error_auc": _average_log_error_auc(rows),
         "t100_error": _float(row_100, "optimized_aloha_d2d_error_norm_mean"),
@@ -347,10 +351,19 @@ def run_utility_pareto_sweep(args):
     candidates = select_candidate_slice(full_grid, candidate_start, candidate_count)
     if not candidates:
         raise ValueError("candidate slice is empty")
+    candidate_end = candidate_start + len(candidates)
 
     run_name = args.run_name or _default_sweep_name()
     sweep_dir = _unique_run_dir(args.runs_dir, run_name)
     summaries = []
+
+    print(
+        "candidate slice "
+        f"{candidate_start}:{candidate_end} of {len(full_grid)} "
+        f"(1-based {candidate_start + 1}-{candidate_end})"
+    )
+    print(f"first candidate [{candidate_start}] {candidates[0]['candidate_id']}")
+    print(f"last candidate [{candidate_end - 1}] {candidates[-1]['candidate_id']}")
 
     for offset, candidate in enumerate(candidates):
         grid_index = candidate_start + offset
@@ -378,8 +391,11 @@ def run_utility_pareto_sweep(args):
                 encoding="utf-8",
             )
 
-        summaries.append(summarize_candidate(candidate, rows, result_csv))
-        print(f"[{offset + 1}/{len(candidates)}] wrote {result_csv}")
+        summaries.append(summarize_candidate(candidate, rows, result_csv, grid_index))
+        print(
+            f"[{offset + 1}/{len(candidates)} | grid {grid_index + 1}/{len(full_grid)}] "
+            f"wrote {result_csv}"
+        )
 
     ranked = rank_candidate_summaries(summaries)
     summary_csv = sweep_dir / "utility_sweep_summary.csv"
@@ -393,7 +409,7 @@ def run_utility_pareto_sweep(args):
     metadata = {
         "candidate_count": len(candidates),
         "candidate_start": candidate_start,
-        "candidate_end_exclusive": candidate_start + len(candidates),
+        "candidate_end_exclusive": candidate_end,
         "full_grid_candidate_count": len(full_grid),
         "candidate_grid": {
             "optimized_d2d_access_floor_fraction": list(FLOOR_VALUES),

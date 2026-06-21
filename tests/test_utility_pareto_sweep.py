@@ -51,9 +51,10 @@ class UtilityParetoSweepTests(unittest.TestCase):
             _row(200, 1e-12, 1000, 1000, 5000, 4000),
         ]
 
-        summary = summarize_candidate(candidate, rows, "candidate_a/results.csv")
+        summary = summarize_candidate(candidate, rows, "candidate_a/results.csv", 12)
 
         self.assertTrue(summary["pareto_feasible"])
+        self.assertEqual(summary["candidate_grid_index"], 12)
         self.assertEqual(summary["candidate_id"], "candidate_a")
         self.assertEqual(summary["ch_upload_ratio"], 1.0)
         self.assertEqual(summary["device_upload_gain"], 0.25)

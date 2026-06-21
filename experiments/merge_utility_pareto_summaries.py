@@ -44,6 +44,7 @@ def _read_summary_csv(path):
         for row in csv.DictReader(handle):
             parsed = dict(row)
             parsed["rank"] = 0
+            parsed.setdefault("candidate_grid_index", "")
             parsed["pareto_feasible"] = _parse_bool(parsed["pareto_feasible"])
             for field in NUMERIC_FIELDS:
                 parsed[field] = float(parsed[field])

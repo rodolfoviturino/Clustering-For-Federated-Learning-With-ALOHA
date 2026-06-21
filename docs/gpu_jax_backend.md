@@ -343,7 +343,9 @@ python -m experiments.run_utility_pareto_sweep \
 
 For 30-candidate chunks, run starts `0`, `30`, `60`, `90`, `120`, `150`,
 `180`, `210`, and `240`. The final chunk contains only the remaining
-candidates.
+candidates. The runner prints the selected interval and writes
+`candidate_grid_index` to `utility_sweep_summary.csv`, so the partial output can
+be checked before merging.
 
 Then merge finished parts:
 

@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 
 from experiments.run_utility_pareto_sweep import (
     SUMMARY_FIELDS,
     _write_pareto_plot,
     _write_summary_csv,
+    _write_target_time_plot,
     _write_top10_markdown,
     rank_candidate_summaries,
 )
@@ -22,6 +24,10 @@ NUMERIC_FIELDS = {
     "optimized_d2d_cluster_size_exponent",
     "optimized_d2d_freshness_exponent",
     "optimized_d2d_load_target_factor",
+    "target_time_score",
+    "t_to_1e_minus_6",
+    "t_to_1e_minus_9",
+    "t_to_1e_minus_12",
     "log_error_auc",
     "t100_error",
     "t200_error",
@@ -47,7 +53,10 @@ def _read_summary_csv(path):
             parsed.setdefault("candidate_grid_index", "")
             parsed["pareto_feasible"] = _parse_bool(parsed["pareto_feasible"])
             for field in NUMERIC_FIELDS:
-                parsed[field] = float(parsed[field])
+                if field not in parsed or parsed[field] == "":
+                    parsed[field] = math.inf
+                else:
+                    parsed[field] = float(parsed[field])
             rows.append(parsed)
     return rows
 
@@ -108,11 +117,13 @@ def main(argv=None):
     summary_csv = args.output_dir / "utility_sweep_summary.csv"
     top10_md = args.output_dir / "utility_sweep_top10.md"
     pareto_stem = args.output_dir / "utility_sweep_pareto"
+    target_time_stem = args.output_dir / "utility_sweep_target_time"
     metadata_path = args.output_dir / "utility_sweep.metadata.json"
 
     _write_summary_csv(ranked, summary_csv)
     _write_top10_markdown(ranked[: args.top_k], top10_md)
     plot_paths = _write_pareto_plot(ranked, pareto_stem)
+    target_time_plot_paths = _write_target_time_plot(ranked, target_time_stem)
 
     metadata = {
         "input_count": len(args.inputs),
@@ -121,12 +132,15 @@ def main(argv=None):
         "summary_csv": str(summary_csv),
         "top10_markdown": str(top10_md),
         "pareto_plots": [str(path) for path in plot_paths],
+        "target_time_plots": [str(path) for path in target_time_plot_paths],
     }
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
     print(f"wrote {summary_csv}")
     print(f"wrote {top10_md}")
     for plot_path in plot_paths:
+        print(f"wrote {plot_path}")
+    for plot_path in target_time_plot_paths:
         print(f"wrote {plot_path}")
     print(f"wrote {metadata_path}")
 

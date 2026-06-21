@@ -324,11 +324,14 @@ python -m experiments.run_utility_pareto_sweep \
   --precision float64
 ```
 
-It runs the fixed 243-candidate utility grid and ranks candidates by average
-log-error AUC, constrained to a final optimized/fixed D2D CH-upload ratio in
-`[0.95, 1.05]`. For local smoke tests, add `--max-candidates 5`.
+It runs the refined 162-candidate utility grid by default and ranks candidates
+by time to reach optimized-D2D error targets `1e-6`, `1e-9`, and `1e-12`,
+constrained to a final optimized/fixed D2D CH-upload ratio in `[0.95, 1.05]`.
+The older 243-candidate sweep remains available with `--candidate-grid coarse`.
+For local smoke tests, add `--max-candidates 5`. The runner writes both the
+original AUC-vs-CH-ratio Pareto plot and a target-time-vs-CH-ratio Pareto plot.
 
-Free Colab sessions may not stay connected long enough for all 243 candidates.
+Free Colab sessions may not stay connected long enough for every candidate.
 Use zero-based slices:
 
 ```bash
@@ -341,11 +344,12 @@ python -m experiments.run_utility_pareto_sweep \
   --candidate-count 30
 ```
 
-For 30-candidate chunks, run starts `0`, `30`, `60`, `90`, `120`, `150`,
-`180`, `210`, and `240`. The final chunk contains only the remaining
-candidates. The runner prints the selected interval and writes
-`candidate_grid_index` to `utility_sweep_summary.csv`, so the partial output can
-be checked before merging.
+For 30-candidate chunks on the refined grid, run starts `0`, `30`, `60`, `90`,
+`120`, and `150`. For the coarse grid, also use `180`, `210`, and `240`. The
+final chunk contains only the remaining candidates. The runner prints the
+selected interval and writes `candidate_grid_index` to
+`utility_sweep_summary.csv`, so the partial output can be checked before
+merging.
 
 Then merge finished parts:
 

@@ -20,6 +20,10 @@ def _row(t, optimized_error, optimized_ch, fixed_ch, optimized_uploads, fixed_up
 
 
 class UtilityParetoSweepTests(unittest.TestCase):
+    def test_candidate_grid_profiles_have_expected_sizes(self):
+        self.assertEqual(len(candidate_grid("coarse")), 243)
+        self.assertEqual(len(candidate_grid("refined")), 162)
+
     def test_candidate_slice_uses_zero_based_grid_indices(self):
         candidates = candidate_grid()
         sliced = select_candidate_slice(candidates, candidate_start=3, candidate_count=2)
@@ -58,13 +62,20 @@ class UtilityParetoSweepTests(unittest.TestCase):
         self.assertEqual(summary["candidate_id"], "candidate_a")
         self.assertEqual(summary["ch_upload_ratio"], 1.0)
         self.assertEqual(summary["device_upload_gain"], 0.25)
+        self.assertEqual(summary["t_to_1e_minus_6"], 100)
+        self.assertEqual(summary["t_to_1e_minus_9"], 200)
+        self.assertEqual(summary["t_to_1e_minus_12"], 200)
+        self.assertEqual(summary["target_time_score"], 500)
         self.assertEqual(summary["t100_error"], 1e-8)
         self.assertEqual(summary["t200_error"], 1e-12)
 
-    def test_ranking_prefers_feasible_then_lower_auc(self):
+    def test_ranking_prefers_feasible_then_lower_target_time(self):
         feasible_better = {
             "candidate_id": "feasible_better",
             "pareto_feasible": True,
+            "target_time_score": 120,
+            "t_to_1e_minus_12": 60,
+            "t_to_1e_minus_9": 40,
             "log_error_auc": -9.0,
             "t100_error": 1e-9,
             "t200_error": 1e-12,
@@ -73,6 +84,9 @@ class UtilityParetoSweepTests(unittest.TestCase):
         feasible_worse = {
             "candidate_id": "feasible_worse",
             "pareto_feasible": True,
+            "target_time_score": 180,
+            "t_to_1e_minus_12": 90,
+            "t_to_1e_minus_9": 60,
             "log_error_auc": -7.0,
             "t100_error": 1e-7,
             "t200_error": 1e-10,
@@ -81,6 +95,9 @@ class UtilityParetoSweepTests(unittest.TestCase):
         infeasible_best_error = {
             "candidate_id": "infeasible_best_error",
             "pareto_feasible": False,
+            "target_time_score": 30,
+            "t_to_1e_minus_12": 10,
+            "t_to_1e_minus_9": 10,
             "log_error_auc": -12.0,
             "t100_error": 1e-12,
             "t200_error": 1e-14,

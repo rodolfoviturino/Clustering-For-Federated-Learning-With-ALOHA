@@ -29,10 +29,14 @@ outputs.
 
 `experiments/run_utility_pareto_sweep.py`
 
-- Runs the fixed optimized-D2D utility candidate grid.
+- Runs optimized-D2D utility candidate grids. The default `refined` grid
+  searches the high-performing neighborhood found by the first full K=3000
+  sweep; `--candidate-grid coarse` keeps the older 243-point grid available.
 - Writes per-candidate result folders plus `utility_sweep_summary.csv`,
-  `utility_sweep_top10.md`, and a Pareto plot.
-- Ranks candidates by log-error AUC while constraining CH uploads near fixed D2D.
+  `utility_sweep_top10.md`, an AUC Pareto plot, and a target-time Pareto plot.
+- Ranks candidates by time to reach error targets `1e-6`, `1e-9`, and `1e-12`,
+  with log-error AUC as a tie-breaker, while constraining CH uploads near fixed
+  D2D.
 - Supports `--candidate-start` and `--candidate-count` for Colab-friendly
   partial grid runs.
 

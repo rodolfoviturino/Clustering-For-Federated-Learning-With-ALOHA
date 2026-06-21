@@ -207,23 +207,30 @@ This tests whether optimized D2D improves by preserving update diversity, not
 by hard-thresholding access or increasing the expected CH load.
 
 To tune the utility policy as a Pareto problem, use the utility sweep runner.
-It executes the fixed grid of floors, exponents, and load-target factors, then
-writes per-candidate results plus a ranked summary:
+It executes a grid of floors, exponents, and load-target factors, then writes
+per-candidate results plus a ranked summary:
 
 ```bash
 python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_smoke --devices 1000 --rounds 20 --precision float64 --max-candidates 5
 ```
 
-For the full `K = 3000` grid:
+For the full refined `K = 3000` grid:
 
 ```bash
 python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000 --devices 3000 --rounds 100 --precision float64
 ```
 
-The full grid has 243 candidates. Each candidate writes
+The default refined grid has 162 candidates and focuses on the neighborhood
+that performed best in the first full K=3000 sweep: lower access floor, higher
+norm exponent, higher cluster-size exponent, and lower freshness exponent. The
+older 243-candidate grid is still available with `--candidate-grid coarse`.
+Each candidate writes
 `Runs/<run-name>/<candidate>/results.csv`, and the parent folder writes
 `utility_sweep_summary.csv`, `utility_sweep_top10.md`, and
-`utility_sweep_pareto.png`/`.pdf`.
+`utility_sweep_pareto.png`/`.pdf` plus
+`utility_sweep_target_time.png`/`.pdf`. The summary includes
+`t_to_1e_minus_6`, `t_to_1e_minus_9`, and `t_to_1e_minus_12` because final
+error near `1e-16` is often dominated by float64 numerical saturation.
 
 On free Colab, run the grid in smaller slices to avoid runtime disconnects:
 
@@ -233,11 +240,12 @@ python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000_p
 python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_k3000_part03 --devices 3000 --rounds 100 --precision float64 --candidate-start 60 --candidate-count 30
 ```
 
-Continue with starts `90`, `120`, `150`, `180`, `210`, and `240` to cover
-all 243 candidates. The last slice automatically contains only the remaining
-candidates. Each slice prints the selected zero-based interval, for example
-`candidate slice 30:60 of 243`, and the summary CSV includes
-`candidate_grid_index` so partial runs can be audited before merging.
+For the refined grid, continue with starts `90`, `120`, and `150` to cover all
+162 candidates. For the old coarse grid, use starts `0`, `30`, `60`, `90`,
+`120`, `150`, `180`, `210`, and `240`. The last slice automatically contains
+only the remaining candidates. Each slice prints the selected zero-based
+interval, for example `candidate slice 30:60 of 162`, and the summary CSV
+includes `candidate_grid_index` so partial runs can be audited before merging.
 
 Merge completed parts after downloading or keeping them in the same runtime:
 

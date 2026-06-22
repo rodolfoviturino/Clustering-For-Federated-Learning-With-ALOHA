@@ -99,6 +99,99 @@ Real-world plausibility:
 - Merge repair is local if the target CH checks that it can directly cover the
   source members before accepting the merge.
 
+### Quality CH Election
+
+Quality CH election is an optional post-clustering refinement:
+
+```text
+score_i =
+  degree_weight  * normalized_D2D_degree_i
+  + channel_weight * normalized_BS_channel_quality_i
+  + battery_weight * normalized_battery_i
+```
+
+The cluster membership does not change.  Inside each existing cluster, the
+algorithm moves the highest-scoring valid member to the CH position only if that
+member can still directly cover every member in the cluster.  If the
+highest-scoring member would break one-hop coverage, the algorithm keeps looking
+among valid candidates; if no better valid candidate exists, the original CH
+stays in place.
+
+Real-world plausibility:
+
+- D2D degree comes from the same local discovery beacons used for clustering.
+- BS channel quality can be estimated from downlink reference signals or past
+  uplink control measurements.
+- Battery is local to each device and can be exchanged as a compact class, not
+  necessarily as an exact value.
+- The decision can be negotiated inside the cluster after formation.  The BS
+  does not need to solve a global assignment or directly appoint every CH.
+
+Current modeling limitation:
+
+- The current HFL/ALOHA simulator is still mostly collision/load driven on the
+  CH-to-BS uplink.  Because the aggregate member set is unchanged, quality CH
+  election should not be expected to create a large deterministic error-curve
+  gain unless the model also makes CH-to-BS success, energy cost, or retry
+  behavior depend on the elected CH's channel/battery.
+- For that reason, this strategy is best understood as the structural first
+  half of a more realistic uplink-quality model.  It is still useful because it
+  makes the chosen CH identity scientifically meaningful and testable.
+
+### Channel-Aware CH-to-BS Success
+
+The channel-aware CH-to-BS mode completes the quality-election idea by adding a
+physical-link success stage after ALOHA contention:
+
+```text
+attempt_h = Bernoulli(p_h)
+channel_h = random channel among M
+collision_free_h = no other attempted CH chose channel_h
+
+if collision_free_h:
+  decoded_h = Bernoulli(q_h)
+else:
+  decoded_h = false
+```
+
+The decoding probability is:
+
+```text
+channel_quality_i =
+  (1 / distance_to_bs_i^pathloss_exponent)
+  / max_j(1 / distance_to_bs_j^pathloss_exponent)
+
+q_i =
+  min_success
+  + (1 - min_success) *
+    channel_quality_i *
+    battery_i^battery_exponent
+```
+
+The default remains `--d2d-ch-bs-success-mode none`, so thesis-compatible runs
+do not change.  The enhanced mode is enabled with
+`--d2d-ch-bs-success-mode channel_quality`.
+
+Real-world plausibility:
+
+- A CH still makes a local ALOHA decision; the BS does not schedule a specific
+  CH.
+- Weak CHs still consume ALOHA contention opportunities when they attempt; they
+  can collide with stronger CHs even if their own packet is later undecodable.
+- The BS channel estimate can come from reference-signal measurements, and
+  battery can be exchanged as a coarse local class during cluster formation.
+- This makes quality CH election meaningful because the elected CH's identity
+  now affects the probability that a collision-free aggregate reaches the BS.
+
+Interpretation:
+
+- This mode is more realistic but is no longer a direct reproduction of the
+  original thesis curve.  It should be reported as an enhanced wireless-link
+  ablation.
+- Because failed CH-BS decoding reduces all D2D curves, comparisons should use
+  paired runs: same seeds and parameters, with and without
+  `--cluster-head-selection-mode quality`.
+
 ### Utility Clustering And No-D2D
 
 `utility` clustering ranks candidates using local degree, battery, BS channel
@@ -545,6 +638,8 @@ updates, hybrid novelty, and adaptive-diversity state.
 | Selective water-filling | utility | water level plus redistribution fraction | moderate | fraction may not fit every density |
 | Conditional water-filling | utility | ACK EWMA, fixed-D2D reference, trigger | moderate | trigger can be density-dependent |
 | Density-aware conditional | utility | clusterized fraction from control plane, ACK EWMA | moderate | bad density estimates can choose wrong mode |
+| Quality CH election | local D2D degree, BS channel estimate, battery, one-hop coverage | optional score weights | low to moderate | limited gain unless CH-BS channel quality affects success/cost |
+| Channel-aware CH-BS success | elected CH channel quality and battery | optional pathloss/min-success parameters | low to moderate | makes enhanced runs less thesis-comparable |
 | Max-weight | utility | scalar threshold | low to moderate | threshold tuning can be unstable |
 | Hybrid | aggregate direction | recent reference direction | higher | reference vector overhead |
 | Adaptive diversity | norm, size, freshness, direction | reference direction, phase scalar | higher | phase schedule may not fit the task |
@@ -586,6 +681,10 @@ the observed clusterization regime.
 - Test imperfect D2D member compute/link probabilities below `1.0`.
 - Test whether density thresholds generalize to `K=500`, `K=5000`, and
   `K=10000`.
+- Test quality CH election with `--d2d-ch-bs-success-mode channel_quality` to
+  measure whether better elected CHs improve the decoded D2D aggregate stream.
+- Test a separate energy-cost model where repeated weak-channel CH duty drains
+  battery faster.
 - Compare control overhead of scalar-only utility policies against
   reference-vector policies such as hybrid/adaptive diversity.
 - Separate "better final numerical floor" from "better convergence before

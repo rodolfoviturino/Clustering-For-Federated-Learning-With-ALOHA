@@ -54,6 +54,15 @@ outputs.
   required control information, and plausible real-world deployment
   arrangement for the strategies tested so far.
 
+`docs/current_architecture_considerations.md`
+
+- Explains the current enhanced architecture in terms of implementable wireless
+  signals: battery, BS channel quality, D2D degree, freshness, CH election,
+  member-to-CH availability, CH-to-BS decoding, and load allocation.
+- Records which assumptions are thesis-compatible, which are enhanced
+  ablations, and which limitations remain before claiming real-world
+  comparability.
+
 ## Core Modules
 
 `Clustering/jax_clustering_algorithm.py`
@@ -62,12 +71,18 @@ outputs.
 - Produces fixed-shape padded cluster arrays.
 - Dense mode includes local singleton repair, pair CH-rotation repair, and
   CH-to-CH merge repair while preserving one-hop CH coverage and `Cmax`.
+- Optional quality CH election keeps cluster membership fixed but rotates the
+  CH role to the best valid member according to D2D degree, BS channel quality,
+  and battery.
 
 `Models/jax_models_arrangement.py`
 
 - JAX HFL/ALOHA simulation.
 - Uses `jax.lax.scan` to run one trajectory and record all requested
   checkpoints.
+- Supports optional channel-aware CH-to-BS decoding for D2D curves: CHs still
+  contend through ALOHA, but collision-free CH packets may fail based on the
+  elected CH's BS channel quality and battery.
 - Contains thesis-compatible optimized D2D plus enhanced `utility`,
   `max_weight`, `hybrid`, and `adaptive_diversity` CH access policies.
 - Load-controlled enhanced policies share the same allocator family:

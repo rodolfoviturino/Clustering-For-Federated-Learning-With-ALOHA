@@ -22,6 +22,8 @@ The simulation follows the same thesis-level structure as the original model:
   CH aggregates that are directionally redundant with recent successful uploads.
 * the adaptive-diversity D2D policy keeps the same distributed load controller,
   but shifts from early high-utility aggregates to late diversity/freshness.
+* optional CH-to-BS link realism can make a collision-free CH upload succeed
+  with probability derived from the elected CH's BS channel quality and battery.
 * ``dtype=jnp.float64`` is recommended when reproducing very small thesis error
   norms; ``float32`` is faster but floors optimized curves near single-precision
   machine accuracy.
@@ -197,6 +199,82 @@ def _apply_access_floor(probability, floor_fraction, fixed_access_probability, p
     """
     fixed_floor = jnp.minimum(fixed_access_probability, pcomp) * floor_fraction
     return jnp.minimum(jnp.maximum(probability, fixed_floor), pcomp)
+
+
+def _d2d_ch_bs_success_probability(
+    cluster_heads,
+    cluster_mask,
+    number_of_devices,
+    dtype,
+    success_mode,
+    min_success_probability,
+    pathloss_exponent,
+    battery_exponent,
+    device_distance_to_bs=None,
+    device_battery=None,
+):
+    """Return per-cluster CH-to-BS decoding probabilities.
+
+    The baseline thesis-compatible simulator treats a CH upload as successful
+    whenever the CH is allowed to transmit, computes its local update, and does
+    not collide on the selected ALOHA channel.  That means the identity of the
+    elected CH has little physical meaning after a cluster is formed.
+
+    ``success_mode="channel_quality"`` adds a deployable second-stage decoding
+    model: attempted CH transmissions still contend and collide exactly as
+    before, but a collision-free transmission is decoded by the BS with a
+    probability derived from the elected CH's inverse pathloss and optional
+    battery factor.  This gives quality CH election a measurable, realistic
+    role without centralizing scheduling.
+
+    Arrays:
+
+    - ``cluster_heads``: int[max_clusters], elected CH device id per row.
+    - ``cluster_mask``: bool[max_clusters], active cluster rows.
+    - ``device_distance_to_bs``: float[K], meters from each device to the BS.
+    - ``device_battery``: float/int[K], battery percentage or normalized energy.
+    """
+    safe_heads = jnp.where(cluster_mask, cluster_heads, 0)
+    if success_mode == "none":
+        return jnp.where(cluster_mask, 1.0, 0.0).astype(dtype)
+
+    if device_distance_to_bs is None:
+        device_distance_to_bs = jnp.ones((number_of_devices,), dtype=dtype)
+    else:
+        device_distance_to_bs = jnp.asarray(device_distance_to_bs, dtype=dtype)
+
+    if device_battery is None:
+        device_battery = jnp.ones((number_of_devices,), dtype=dtype)
+    else:
+        device_battery = jnp.asarray(device_battery, dtype=dtype)
+        # Device batches use 1..100 percentages.  Legacy callers may pass an
+        # already-normalized 0..1 energy vector, so only divide when the array
+        # clearly looks like a percentage scale.
+        battery_max = jnp.max(jnp.where(device_battery > 0.0, device_battery, 0.0))
+        device_battery = jnp.where(
+            battery_max > 1.0,
+            device_battery / 100.0,
+            device_battery,
+        )
+
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    one = jnp.asarray(1.0, dtype=dtype)
+    min_success = jnp.asarray(min_success_probability, dtype=dtype)
+    pathloss_exponent = jnp.asarray(pathloss_exponent, dtype=dtype)
+    battery_exponent = jnp.asarray(battery_exponent, dtype=dtype)
+
+    raw_channel = one / jnp.maximum(device_distance_to_bs, one) ** pathloss_exponent
+    channel_quality = raw_channel / jnp.maximum(jnp.max(raw_channel), eps)
+    battery_quality = jnp.clip(device_battery, 0.0, 1.0)
+    raw_success = (
+        channel_quality[safe_heads] * battery_quality[safe_heads] ** battery_exponent
+    )
+    success_probability = min_success + (one - min_success) * jnp.clip(
+        raw_success,
+        0.0,
+        1.0,
+    )
+    return jnp.where(cluster_mask, jnp.clip(success_probability, 0.0, 1.0), 0.0)
 
 
 def _utility_load_controlled_access_probability(
@@ -716,12 +794,25 @@ def _max_weight_threshold_access_probability(
     return jnp.where(cluster_mask, jnp.minimum(probability, pcomp), 0.0).astype(dtype)
 
 
-def _successful_from_draws(channel_key, random_draws, probability, eligibility, n_channels):
+def _successful_from_draws(
+    channel_key,
+    random_draws,
+    probability,
+    eligibility,
+    n_channels,
+    link_key=None,
+    link_success_probability=None,
+):
     """Resolve multichannel ALOHA contenders for one model.
 
     ``random_draws`` supplies the compute/access draw.  ``probability`` may be
     scalar or vector.  Each candidate picks one channel; a candidate succeeds
-    only if no other candidate picked the same channel.
+    only if no other candidate picked the same channel.  When
+    ``link_success_probability`` is supplied, a collision-free candidate still
+    needs a successful physical-layer CH-to-BS decoding draw.  Attempts that
+    fail this link draw still counted as contenders, which is important because
+    weak CHs can consume channel opportunities even when the BS cannot decode
+    them.
     """
     probability = jnp.broadcast_to(probability, random_draws.shape)
     candidates = (random_draws < probability) & eligibility
@@ -737,7 +828,22 @@ def _successful_from_draws(channel_key, random_draws, probability, eligibility, 
         weights=candidates.astype(jnp.int32),
         length=n_channels,
     )
-    successful = candidates & (channel_counts[selected_channels] == 1)
+    collision_free = candidates & (channel_counts[selected_channels] == 1)
+    if link_success_probability is None:
+        successful = collision_free
+    else:
+        if link_key is None:
+            link_key = channel_key
+        link_success_probability = jnp.broadcast_to(
+            link_success_probability,
+            random_draws.shape,
+        )
+        link_draws = jax.random.uniform(
+            link_key,
+            random_draws.shape,
+            dtype=random_draws.dtype,
+        )
+        successful = collision_free & (link_draws < link_success_probability)
     return successful, jnp.sum(candidates).astype(jnp.int32)
 
 
@@ -754,6 +860,12 @@ def error_calculator_trace_jax(
     normalize_by_k: bool = False,
     d2d_member_compute_probability: float = 1.0,
     d2d_member_link_success_probability: float = 1.0,
+    d2d_ch_bs_success_mode: str = "none",
+    d2d_ch_bs_min_success_probability: float = 0.20,
+    d2d_ch_bs_pathloss_exponent: float = 2.0,
+    d2d_ch_bs_battery_exponent: float = 0.0,
+    device_distance_to_bs=None,
+    device_battery=None,
     optimized_access_floor_fraction: float = 0.0,
     optimized_d2d_access_floor_fraction: float = 0.0,
     optimized_d2d_access_mode: str = "norm",
@@ -804,6 +916,16 @@ def error_calculator_trace_jax(
         raise ValueError("d2d_member_compute_probability must be in [0, 1]")
     if not 0.0 <= d2d_member_link_success_probability <= 1.0:
         raise ValueError("d2d_member_link_success_probability must be in [0, 1]")
+    if d2d_ch_bs_success_mode not in {"none", "channel_quality"}:
+        raise ValueError(
+            "d2d_ch_bs_success_mode must be 'none' or 'channel_quality'"
+        )
+    if not 0.0 <= d2d_ch_bs_min_success_probability <= 1.0:
+        raise ValueError("d2d_ch_bs_min_success_probability must be in [0, 1]")
+    if d2d_ch_bs_pathloss_exponent < 0.0:
+        raise ValueError("d2d_ch_bs_pathloss_exponent must be non-negative")
+    if d2d_ch_bs_battery_exponent < 0.0:
+        raise ValueError("d2d_ch_bs_battery_exponent must be non-negative")
     if not 0.0 <= optimized_access_floor_fraction <= 1.0:
         raise ValueError("optimized_access_floor_fraction must be in [0, 1]")
     if not 0.0 <= optimized_d2d_access_floor_fraction <= 1.0:
@@ -878,6 +1000,18 @@ def error_calculator_trace_jax(
     step_size = jnp.asarray(step_size__u, dtype=dtype)
     d2d_compute_probability = jnp.asarray(d2d_member_compute_probability, dtype=dtype)
     d2d_link_probability = jnp.asarray(d2d_member_link_success_probability, dtype=dtype)
+    d2d_ch_bs_min_success_probability = jnp.asarray(
+        d2d_ch_bs_min_success_probability,
+        dtype=dtype,
+    )
+    d2d_ch_bs_pathloss_exponent = jnp.asarray(
+        d2d_ch_bs_pathloss_exponent,
+        dtype=dtype,
+    )
+    d2d_ch_bs_battery_exponent = jnp.asarray(
+        d2d_ch_bs_battery_exponent,
+        dtype=dtype,
+    )
     access_floor_fraction = jnp.asarray(optimized_access_floor_fraction, dtype=dtype)
     d2d_access_floor_fraction = jnp.asarray(
         optimized_d2d_access_floor_fraction,
@@ -1000,6 +1134,25 @@ def error_calculator_trace_jax(
     member_positions = jnp.arange(max_cluster_size, dtype=jnp.int32)[None, :]
     member_mask = member_positions < cluster_sizes[:, None]
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], 0)
+    ch_bs_success_probability = _d2d_ch_bs_success_probability(
+        cluster_heads=cluster_heads,
+        cluster_mask=cluster_mask,
+        number_of_devices=k_devices,
+        dtype=dtype,
+        success_mode=d2d_ch_bs_success_mode,
+        min_success_probability=d2d_ch_bs_min_success_probability,
+        pathloss_exponent=d2d_ch_bs_pathloss_exponent,
+        battery_exponent=d2d_ch_bs_battery_exponent,
+        device_distance_to_bs=device_distance_to_bs,
+        device_battery=device_battery,
+    )
+    mean_ch_bs_success_probability = jnp.sum(ch_bs_success_probability) / jnp.maximum(
+        active_clusterhead_count,
+        jnp.asarray(1.0, dtype=users_input__x.dtype),
+    )
+    expected_fixed_d2d_ch_successes = (
+        expected_fixed_d2d_ch_successes * mean_ch_bs_success_probability
+    )
 
     def local_updates_for_weights(current_weights):
         # current_weights: float[6, L]
@@ -1040,7 +1193,10 @@ def error_calculator_trace_jax(
             channel_key_2_d2d,
             channel_key_3,
             channel_key_3_d2d,
-        ) = jax.random.split(key, 9)
+            polling_d2d_link_key,
+            fixed_d2d_link_key,
+            optimized_d2d_link_key,
+        ) = jax.random.split(key, 12)
 
         device_draws = jax.random.uniform(draw_key, (k_devices,), dtype=dtype)
         channel_draws = jax.random.uniform(polling_key, (n_channels,), dtype=dtype)
@@ -1101,18 +1257,26 @@ def error_calculator_trace_jax(
         scheduled_clusters = (
             iteration_index * n_channels + jnp.arange(n_channels, dtype=jnp.int32)
         ) % number_of_clusterheads
+        polling_d2d_link_draws = jax.random.uniform(
+            polling_d2d_link_key,
+            (n_channels,),
+            dtype=dtype,
+        )
+        polling_success_d2d = polling_success & (
+            polling_d2d_link_draws < ch_bs_success_probability[scheduled_clusters]
+        )
         gradient_1_d2d = jnp.sum(
             jnp.where(
-                polling_success[:, None],
+                polling_success_d2d[:, None],
                 aggregate_updates_model_1[scheduled_clusters],
                 0.0,
             ),
             axis=0,
         )
         upload_1_d2d = jnp.sum(
-            jnp.where(polling_success, active_member_counts[scheduled_clusters], 0)
+            jnp.where(polling_success_d2d, active_member_counts[scheduled_clusters], 0)
         ).astype(jnp.int32)
-        ch_upload_1_d2d = upload_1
+        ch_upload_1_d2d = jnp.sum(polling_success_d2d).astype(jnp.int32)
 
         # Model 2: fixed ALOHA without and with D2D.
         threshold = jnp.minimum(
@@ -1140,6 +1304,8 @@ def error_calculator_trace_jax(
             threshold_d2d,
             cluster_mask,
             n_channels,
+            link_key=fixed_d2d_link_key,
+            link_success_probability=ch_bs_success_probability,
         )
         gradient_2_d2d = jnp.sum(
             jnp.where(success_2_d2d[:, None], aggregate_updates_model_2, 0.0),
@@ -1298,6 +1464,8 @@ def error_calculator_trace_jax(
             optimized_probability_d2d,
             cluster_mask,
             n_channels,
+            link_key=optimized_d2d_link_key,
+            link_success_probability=ch_bs_success_probability,
         )
         gradient_3_d2d = jnp.sum(
             jnp.where(success_3_d2d[:, None], aggregate_updates_model_3, 0.0),
@@ -1452,6 +1620,12 @@ def error_calculator(
     normalize_by_k: bool = False,
     d2d_member_compute_probability: float = 1.0,
     d2d_member_link_success_probability: float = 1.0,
+    d2d_ch_bs_success_mode: str = "none",
+    d2d_ch_bs_min_success_probability: float = 0.20,
+    d2d_ch_bs_pathloss_exponent: float = 2.0,
+    d2d_ch_bs_battery_exponent: float = 0.0,
+    device_distance_to_bs=None,
+    device_battery=None,
     optimized_access_floor_fraction: float = 0.0,
     optimized_d2d_access_floor_fraction: float = 0.0,
     optimized_d2d_access_mode: str = "norm",
@@ -1490,6 +1664,12 @@ def error_calculator(
         normalize_by_k=normalize_by_k,
         d2d_member_compute_probability=d2d_member_compute_probability,
         d2d_member_link_success_probability=d2d_member_link_success_probability,
+        d2d_ch_bs_success_mode=d2d_ch_bs_success_mode,
+        d2d_ch_bs_min_success_probability=d2d_ch_bs_min_success_probability,
+        d2d_ch_bs_pathloss_exponent=d2d_ch_bs_pathloss_exponent,
+        d2d_ch_bs_battery_exponent=d2d_ch_bs_battery_exponent,
+        device_distance_to_bs=device_distance_to_bs,
+        device_battery=device_battery,
         optimized_access_floor_fraction=optimized_access_floor_fraction,
         optimized_d2d_access_floor_fraction=optimized_d2d_access_floor_fraction,
         optimized_d2d_access_mode=optimized_d2d_access_mode,

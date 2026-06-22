@@ -44,6 +44,7 @@ Models/
   jax_models_arrangement.py                 JAX HFL/ALOHA trace simulation
 docs/
   project_architecture.md                   Where entry points, modules, and notebooks belong
+  current_architecture_considerations.md     Current architecture signals, assumptions, and limits
   gpu_jax_backend.md                        GPU backend notes, validation, and Colab guidance
   modeling_assumptions.md                   Thesis defaults and realism switches
   optimized_d2d_strategy_report.md          Strategy evolution, results, and deployment notes
@@ -155,6 +156,18 @@ reproduction when optimized ALOHA curves need to go below about `1e-7`. Add
 `--repair-passes 0 --rotation-repair-passes 0 --merge-passes 0` to disable
 local repair, `--initial-cluster-size 10` to recover the earlier greedy-fill
 behavior, or `--normalize-by-k` for the smaller normalized SGD update.
+Use `--cluster-head-selection-mode quality` as an enhanced ablation that keeps
+cluster membership fixed but elects, inside each cluster, the best valid CH
+according to D2D degree, BS channel quality, and battery. A member can become
+CH only when it still directly covers all cluster members. Because current
+CH-to-BS upload success is still modeled mainly through ALOHA contention, this
+is most useful as preparation for channel-aware or energy-aware uplink
+experiments.
+Enable that channel-aware uplink ablation with
+`--d2d-ch-bs-success-mode channel_quality`. In that mode a CH still attempts
+ALOHA normally and can still collide, but a collision-free CH packet is decoded
+with probability based on the elected CH distance-to-BS and optional battery
+factor.
 
 When optimized ALOHA with D2D underuses the channel after fast convergence,
 enable the guarded optimized-D2D access floor:

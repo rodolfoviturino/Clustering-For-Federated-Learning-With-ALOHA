@@ -588,6 +588,114 @@ def _merge_local_cluster_heads(
     return cluster_members, cluster_sizes
 
 
+def _cluster_head_quality_scores(
+    devices: JaxDeviceBatch,
+    device_radius,
+    pathloss_exponent: float,
+    tile_size: int,
+    degree_weight: float,
+    channel_weight: float,
+    battery_weight: float,
+):
+    """Return a high-is-good score for CH rotation candidates.
+
+    The score is intentionally built from signals that are plausible before an
+    FL update is transmitted:
+
+    - D2D degree: local neighbor count inside ``R_D2D``.  A high-degree CH is
+      likely to be a stronger local representative and robust to small changes
+      in neighborhood membership.
+    - BS channel quality: normalized inverse pathloss from device to BS.  A CH
+      closer to the BS is a better uplink representative for the cluster.
+    - Battery: local battery percentage.  Higher battery makes repeated CH duty
+      more realistic.
+
+    These are control-plane or locally measurable quantities.  The function
+    does not inspect labels, model error, or future upload outcomes.
+    """
+    dtype = devices.coords.dtype
+    neighbor_counts = neighbor_counts_tiled_jax(
+        devices.coords,
+        device_radius,
+        tile_size=tile_size,
+    ).astype(dtype)
+    degree_score = neighbor_counts / jnp.maximum(jnp.max(neighbor_counts), 1.0)
+    channel_score = _normalized_inverse_pathloss(
+        devices.distance_to_bs,
+        pathloss_exponent,
+    )
+    battery_score = devices.battery.astype(dtype) / 100.0
+
+    return (
+        jnp.asarray(degree_weight, dtype=dtype) * degree_score
+        + jnp.asarray(channel_weight, dtype=dtype) * channel_score
+        + jnp.asarray(battery_weight, dtype=dtype) * battery_score
+    )
+
+
+def _rotate_cluster_heads_by_quality(
+    cluster_members,
+    cluster_sizes,
+    coords,
+    device_radius: float,
+    quality_score,
+):
+    """Move the best valid member to CH position inside each cluster.
+
+    This is a CH-selection refinement, not a cluster-membership optimizer.  The
+    member set of every row stays unchanged.  A candidate member may become CH
+    only if it can directly cover every valid member in that row, preserving the
+    one-hop D2D invariant used by the thesis.  In a real deployment, the same
+    operation can be negotiated inside the cluster after local discovery: the
+    cluster keeps its members but elects the member with the best D2D/BS/battery
+    score among candidates that satisfy one-hop coverage.
+    """
+    cmax = cluster_members.shape[1]
+    dtype = coords.dtype
+    member_positions = jnp.arange(cmax, dtype=jnp.int32)
+    valid_member = member_positions[None, :] < cluster_sizes[:, None]
+    safe_members = jnp.where(cluster_members >= 0, cluster_members, 0)
+
+    candidate_coords = coords[safe_members]
+    deltas = candidate_coords[:, :, None, :] - candidate_coords[:, None, :, :]
+    distance_squared = jnp.sum(deltas * deltas, axis=-1)
+    radius_squared = jnp.asarray(device_radius, dtype=dtype) ** 2
+
+    # valid_cover[row, candidate_pos] is true only when that candidate member
+    # reaches every real member in the same row.  Padding columns are ignored.
+    valid_cover = jnp.all(
+        jnp.where(
+            valid_member[:, None, :],
+            distance_squared <= radius_squared,
+            True,
+        ),
+        axis=2,
+    )
+    candidate_valid = valid_member & valid_cover
+    candidate_scores = jnp.where(
+        candidate_valid,
+        quality_score[safe_members],
+        -jnp.inf,
+    )
+    best_position = jnp.argmax(candidate_scores, axis=1).astype(jnp.int32)
+
+    # Move the selected CH to column 0 and shift the previous prefix one slot to
+    # the right.  Example: [0, 1, 2, -1] with best_position=2 becomes
+    # [2, 0, 1, -1].  This keeps every member exactly once.
+    source_positions = jnp.where(
+        member_positions[None, :] == 0,
+        best_position[:, None],
+        jnp.where(
+            member_positions[None, :] <= best_position[:, None],
+            member_positions[None, :] - 1,
+            member_positions[None, :],
+        ),
+    )
+    source_positions = jnp.clip(source_positions, 0, cmax - 1)
+    rotated_members = jnp.take_along_axis(cluster_members, source_positions, axis=1)
+    return jnp.where((cluster_sizes > 0)[:, None], rotated_members, cluster_members)
+
+
 def _rank_devices_for_mode(
     devices: JaxDeviceBatch,
     device_radius,
@@ -642,6 +750,10 @@ def _dense_greedy_clusters(
     initial_cluster_size: int,
     rotation_repair_passes: int,
     merge_passes: int,
+    cluster_head_selection_mode: str,
+    cluster_head_degree_weight: float,
+    cluster_head_channel_weight: float,
+    cluster_head_battery_weight: float,
 ) -> JaxClusterResult:
     """Build one-hop clusters from the full radius graph.
 
@@ -805,6 +917,24 @@ def _dense_greedy_clusters(
             cluster_sizes,
         )
 
+    if cluster_head_selection_mode == "quality":
+        quality_score = _cluster_head_quality_scores(
+            devices=devices,
+            device_radius=device_radius,
+            pathloss_exponent=pathloss_exponent,
+            tile_size=tile_size,
+            degree_weight=cluster_head_degree_weight,
+            channel_weight=cluster_head_channel_weight,
+            battery_weight=cluster_head_battery_weight,
+        )
+        cluster_members = _rotate_cluster_heads_by_quality(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=devices.coords,
+            device_radius=device_radius,
+            quality_score=quality_score,
+        )
+
     cluster_mask = cluster_sizes > 0
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], -1)
     singleton_count = jnp.sum((cluster_sizes == 1) & cluster_mask).astype(jnp.int32)
@@ -839,6 +969,10 @@ def clusterizer_jax(
     initial_cluster_size: int = 2,
     rotation_repair_passes: int = 1,
     merge_passes: int = 1,
+    cluster_head_selection_mode: str = "first",
+    cluster_head_degree_weight: float = 0.40,
+    cluster_head_channel_weight: float = 0.40,
+    cluster_head_battery_weight: float = 0.20,
 ) -> JaxClusterResult:
     """Build padded one-hop clusters with GPU-friendly fixed-shape arrays.
 
@@ -863,6 +997,24 @@ def clusterizer_jax(
         raise ValueError("rotation_repair_passes must be non-negative")
     if merge_passes < 0:
         raise ValueError("merge_passes must be non-negative")
+    if cluster_head_selection_mode not in {"first", "quality"}:
+        raise ValueError("cluster_head_selection_mode must be 'first' or 'quality'")
+    if cluster_head_degree_weight < 0.0:
+        raise ValueError("cluster_head_degree_weight must be non-negative")
+    if cluster_head_channel_weight < 0.0:
+        raise ValueError("cluster_head_channel_weight must be non-negative")
+    if cluster_head_battery_weight < 0.0:
+        raise ValueError("cluster_head_battery_weight must be non-negative")
+    if (
+        cluster_head_selection_mode == "quality"
+        and cluster_head_degree_weight
+        + cluster_head_channel_weight
+        + cluster_head_battery_weight
+        <= 0.0
+    ):
+        raise ValueError(
+            "quality CH selection requires at least one positive CH score weight"
+        )
     if strategy not in _STRATEGY_CODES:
         raise ValueError("strategy must be 'dense' or 'grid'")
 
@@ -884,6 +1036,10 @@ def clusterizer_jax(
             initial_cluster_size=initial_cluster_size,
             rotation_repair_passes=rotation_repair_passes,
             merge_passes=merge_passes,
+            cluster_head_selection_mode=cluster_head_selection_mode,
+            cluster_head_degree_weight=cluster_head_degree_weight,
+            cluster_head_channel_weight=cluster_head_channel_weight,
+            cluster_head_battery_weight=cluster_head_battery_weight,
         )
 
     # Grid cell side in meters.  Any two points inside the same cell are within
@@ -985,6 +1141,23 @@ def clusterizer_jax(
     cluster_sizes = jnp.zeros(n_devices, dtype=jnp.int32).at[final_row_indices].max(
         final_member_positions + 1
     )
+    if cluster_head_selection_mode == "quality":
+        quality_score = _cluster_head_quality_scores(
+            devices=devices,
+            device_radius=device_radius,
+            pathloss_exponent=pathloss_exponent,
+            tile_size=tile_size,
+            degree_weight=cluster_head_degree_weight,
+            channel_weight=cluster_head_channel_weight,
+            battery_weight=cluster_head_battery_weight,
+        )
+        cluster_members = _rotate_cluster_heads_by_quality(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=devices.coords,
+            device_radius=device_radius,
+            quality_score=quality_score,
+        )
     cluster_mask = cluster_sizes > 0
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], -1)
 

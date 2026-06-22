@@ -21,6 +21,20 @@ This document records the simulation defaults after the code cleanup.
   rotation repair. A source D2D cluster can merge into a target D2D cluster
   only when the target CH can directly cover every source member and the union
   still fits within `Cmax`.
+- Enhanced runs can enable quality CH election with
+  `--cluster-head-selection-mode quality`. This does not change cluster
+  membership. It only moves the CH role to the highest-scoring member that can
+  still directly cover the whole cluster. The score uses local D2D degree,
+  normalized BS channel quality, and battery. In the current collision-oriented
+  ALOHA model, this is a structural CH-selection ablation; strong deterministic
+  gains require a follow-up CH-to-BS channel or energy model that makes the
+  elected CH's quality affect successful uplink delivery or cost.
+- Enhanced runs can enable channel-aware CH-to-BS decoding with
+  `--d2d-ch-bs-success-mode channel_quality`. A CH still contends through
+  ALOHA and can still collide; only after a collision-free attempt does the BS
+  decode the packet with probability derived from the elected CH's normalized
+  inverse pathloss and optional battery factor. The default `none` preserves
+  thesis-compatible collision-only D2D uploads.
 - First-tier HFL aggregation at the CH is a sum of member updates.
 - The thesis figure code applies the BS update as an unscaled SGD step:
   `w <- w - u1 * gradient`.
@@ -162,3 +176,6 @@ member-to-CH availability.
   probability redistribution can increase collision pressure without adding
   proportional information gain.
 - Energy-aware CH selection is not implemented in this cleanup.
+- Channel-aware CH-to-BS success is implemented as a decoding-probability
+  ablation, not a full energy-drain model. It changes whether a collision-free
+  D2D aggregate reaches the BS; it does not yet reduce battery over time.

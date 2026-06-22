@@ -81,6 +81,14 @@ class GpuSweepTests(unittest.TestCase):
                 checkpoints=[1, 2],
                 optimized_d2d_access_mode="utility",
                 optimized_d2d_load_target_factor=1.2,
+                cluster_head_selection_mode="quality",
+                cluster_head_degree_weight=0.5,
+                cluster_head_channel_weight=0.3,
+                cluster_head_battery_weight=0.2,
+                d2d_ch_bs_success_mode="channel_quality",
+                d2d_ch_bs_min_success_probability=0.3,
+                d2d_ch_bs_pathloss_exponent=2.5,
+                d2d_ch_bs_battery_exponent=0.25,
                 optimized_d2d_load_allocation_mode="proportional_clip",
                 optimized_d2d_redistribution_fraction=0.0,
                 optimized_d2d_redistribution_trigger_ratio=0.90,
@@ -93,6 +101,14 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(metadata["optimized_d2d_access_mode"], "utility")
         self.assertEqual(metadata["optimized_d2d_load_target_factor"], 1.2)
+        self.assertEqual(metadata["cluster_head_selection_mode"], "quality")
+        self.assertEqual(metadata["cluster_head_degree_weight"], 0.5)
+        self.assertEqual(metadata["cluster_head_channel_weight"], 0.3)
+        self.assertEqual(metadata["cluster_head_battery_weight"], 0.2)
+        self.assertEqual(metadata["d2d_ch_bs_success_mode"], "channel_quality")
+        self.assertEqual(metadata["d2d_ch_bs_min_success_probability"], 0.3)
+        self.assertEqual(metadata["d2d_ch_bs_pathloss_exponent"], 2.5)
+        self.assertEqual(metadata["d2d_ch_bs_battery_exponent"], 0.25)
         self.assertEqual(
             metadata["optimized_d2d_load_allocation_mode"],
             "proportional_clip",

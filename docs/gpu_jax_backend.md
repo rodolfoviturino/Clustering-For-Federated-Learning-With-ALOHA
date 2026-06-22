@@ -149,6 +149,11 @@ Dense strategy:
 - runs local CH-to-CH merge repair after singleton/rotation repair: two
   non-singleton clusters may merge only when the target CH can cover the whole
   union and the merged cluster remains within `Cmax`;
+- can optionally run quality CH election with
+  `--cluster-head-selection-mode quality`: cluster membership stays fixed, but
+  the CH position rotates to the highest-scoring member that can still directly
+  cover all members. The score combines normalized D2D degree, normalized BS
+  channel quality, and battery;
 - preserves one-hop CH coverage directly from the radius test;
 - is more expensive than grid clustering, but gives a clustering-rate behavior
   much closer to the old D2D-SRC notebook.
@@ -211,6 +216,24 @@ on the BS uplink and increases the average aggregate size seen by HFL.
 Use `--initial-cluster-size Cmax` to recover the earlier greedy-fill behavior.
 The default `2` prioritizes covering more devices with at least one D2D partner
 before growing clusters, which is closer to the original D2D-SRC sequence.
+
+Quality CH election is a separate ablation from singleton/merge repair. Repair
+changes which devices belong to each cluster; quality CH election changes only
+which member represents an already formed cluster on the BS uplink. It is
+plausible as an intra-cluster control step: members exchange local degree,
+battery, and BS reference-signal quality, then elect the best candidate that
+preserves one-hop coverage. It does not require the BS to assign CHs globally.
+In the current collision-oriented ALOHA model, this is mainly a structural
+uplink-quality ablation: because the member set is unchanged, large systematic
+curve gains require a follow-up model where CH-to-BS success, energy cost, or
+retry behavior depends on the elected CH's BS channel and battery.
+
+That follow-up is available as
+`--d2d-ch-bs-success-mode channel_quality`.  In this mode, an attempted CH still
+enters the same multichannel ALOHA contention process.  If the CH avoids
+collision, the BS decodes the aggregate with probability derived from normalized
+inverse pathloss and optional battery weighting.  This makes elected-CH
+identity matter while preserving distributed ALOHA decisions.
 
 SciPy `cKDTree` is not used in the GPU backend. It is CPU-side and remains a
 useful validation/profiling reference only:

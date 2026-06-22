@@ -200,6 +200,94 @@ class EnhancedClusteringTests(unittest.TestCase):
         self.assertEqual(np.asarray(merged_sizes).tolist(), [4, 1, 0])
         self.assertEqual(np.asarray(merged_members[0]).tolist(), [2, 3, 0, 1])
 
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_quality_ch_rotation_preserves_one_hop_coverage(self):
+        jnp = jax_clustering.jnp
+        cluster_members = jnp.asarray(
+            [
+                [0, 1, 2, -1],
+                [3, 4, 5, -1],
+            ],
+            dtype=jnp.int32,
+        )
+        cluster_sizes = jnp.asarray([3, 3], dtype=jnp.int32)
+        coords = jnp.asarray(
+            [
+                [0.0, 0.0],
+                [0.9, 0.0],
+                [-0.9, 0.0],
+                [10.0, 0.0],
+                [10.2, 0.0],
+                [10.4, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        quality_score = jnp.asarray([0.1, 0.9, 0.2, 0.1, 0.8, 0.3], dtype=jnp.float32)
+
+        rotated_members = jax_clustering._rotate_cluster_heads_by_quality(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=coords,
+            device_radius=1.0,
+            quality_score=quality_score,
+        )
+
+        # Row 0 keeps device 0 as CH even though device 1 has the highest
+        # quality, because device 1 cannot directly cover device 2.
+        self.assertEqual(np.asarray(rotated_members[0]).tolist(), [0, 1, 2, -1])
+        # Row 1 rotates to device 4 because it has the highest quality among
+        # members that can still cover the whole one-hop cluster.
+        self.assertEqual(np.asarray(rotated_members[1]).tolist(), [4, 3, 5, -1])
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_quality_ch_selection_clusters_remain_valid(self):
+        devices = devices_generator_jax(40, 80, seed=8)
+        clusters = clusterizer_jax(
+            devices=devices,
+            device_radius=15.0,
+            max_devices_per_cluster=8,
+            min_devices_per_cluster=1,
+            clustering_mode="geometric",
+            cluster_head_selection_mode="quality",
+            cluster_head_degree_weight=0.4,
+            cluster_head_channel_weight=0.4,
+            cluster_head_battery_weight=0.2,
+        )
+
+        self.assertTrue(
+            validate_jax_cluster_result(
+                clusters,
+                devices.coords,
+                device_radius=15.0,
+                max_devices_per_cluster=8,
+                n_devices=40,
+            )
+        )
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_quality_ch_selection_rejects_invalid_weights(self):
+        devices = devices_generator_jax(10, 50, seed=3)
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_head_selection_mode="quality",
+                cluster_head_degree_weight=0.0,
+                cluster_head_channel_weight=0.0,
+                cluster_head_battery_weight=0.0,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_head_selection_mode="quality",
+                cluster_head_degree_weight=-0.1,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

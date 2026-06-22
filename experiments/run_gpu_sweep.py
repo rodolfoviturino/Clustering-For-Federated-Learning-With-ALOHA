@@ -160,6 +160,10 @@ def run_gpu_sweep(args):
             initial_cluster_size=args.initial_cluster_size,
             rotation_repair_passes=args.rotation_repair_passes,
             merge_passes=args.merge_passes,
+            cluster_head_selection_mode=args.cluster_head_selection_mode,
+            cluster_head_degree_weight=args.cluster_head_degree_weight,
+            cluster_head_channel_weight=args.cluster_head_channel_weight,
+            cluster_head_battery_weight=args.cluster_head_battery_weight,
         )
         cluster_quality = _cluster_quality_vector(clusters, compute_dtype)
         trace = error_calculator_trace_jax(
@@ -175,6 +179,12 @@ def run_gpu_sweep(args):
             normalize_by_k=args.normalize_by_k,
             d2d_member_compute_probability=args.d2d_member_compute_probability,
             d2d_member_link_success_probability=args.d2d_member_link_success_probability,
+            d2d_ch_bs_success_mode=args.d2d_ch_bs_success_mode,
+            d2d_ch_bs_min_success_probability=args.d2d_ch_bs_min_success_probability,
+            d2d_ch_bs_pathloss_exponent=args.d2d_ch_bs_pathloss_exponent,
+            d2d_ch_bs_battery_exponent=args.d2d_ch_bs_battery_exponent,
+            device_distance_to_bs=devices.distance_to_bs,
+            device_battery=devices.battery,
             optimized_access_floor_fraction=args.optimized_access_floor_fraction,
             optimized_d2d_access_floor_fraction=args.optimized_d2d_access_floor_fraction,
             optimized_d2d_access_mode=args.optimized_d2d_access_mode,
@@ -300,7 +310,17 @@ def run_gpu_sweep(args):
         "rotation_repair_passes": int(args.rotation_repair_passes),
         "merge_passes": int(args.merge_passes),
         "initial_cluster_size": int(args.initial_cluster_size),
+        "cluster_head_selection_mode": args.cluster_head_selection_mode,
+        "cluster_head_degree_weight": float(args.cluster_head_degree_weight),
+        "cluster_head_channel_weight": float(args.cluster_head_channel_weight),
+        "cluster_head_battery_weight": float(args.cluster_head_battery_weight),
         "cluster_quality_metrics": list(CLUSTER_QUALITY_METRICS),
+        "d2d_ch_bs_success_mode": args.d2d_ch_bs_success_mode,
+        "d2d_ch_bs_min_success_probability": float(
+            args.d2d_ch_bs_min_success_probability
+        ),
+        "d2d_ch_bs_pathloss_exponent": float(args.d2d_ch_bs_pathloss_exponent),
+        "d2d_ch_bs_battery_exponent": float(args.d2d_ch_bs_battery_exponent),
         "optimized_access_floor_fraction": float(args.optimized_access_floor_fraction),
         "optimized_d2d_access_floor_fraction": float(
             args.optimized_d2d_access_floor_fraction
@@ -495,9 +515,76 @@ def build_parser():
             "A merge is accepted only when the target CH can cover the union and Cmax holds."
         ),
     )
+    parser.add_argument(
+        "--cluster-head-selection-mode",
+        choices=("first", "quality"),
+        default="first",
+        help=(
+            "Post-clustering CH election. first preserves the current CH in "
+            "column 0; quality rotates each cluster to the best member that "
+            "still covers all members using D2D degree, BS channel quality, "
+            "and battery scores."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-head-degree-weight",
+        type=float,
+        default=0.40,
+        help="Quality CH rotation weight for normalized D2D degree.",
+    )
+    parser.add_argument(
+        "--cluster-head-channel-weight",
+        type=float,
+        default=0.40,
+        help="Quality CH rotation weight for normalized inverse pathloss to the BS.",
+    )
+    parser.add_argument(
+        "--cluster-head-battery-weight",
+        type=float,
+        default=0.20,
+        help="Quality CH rotation weight for normalized battery percentage.",
+    )
     parser.add_argument("--uniform-area", action="store_true")
     parser.add_argument("--d2d-member-compute-probability", type=float, default=1.0)
     parser.add_argument("--d2d-member-link-success-probability", type=float, default=1.0)
+    parser.add_argument(
+        "--d2d-ch-bs-success-mode",
+        choices=("none", "channel_quality"),
+        default="none",
+        help=(
+            "Optional CH-to-BS decoding realism for D2D curves. none preserves "
+            "the collision-only thesis-compatible behavior; channel_quality "
+            "makes a collision-free CH upload succeed according to the elected "
+            "CH distance-to-BS and optional battery factor."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-bs-min-success-probability",
+        type=float,
+        default=0.20,
+        help=(
+            "Minimum collision-free CH-to-BS decoding probability used by "
+            "channel_quality mode. Ignored when success mode is none."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-bs-pathloss-exponent",
+        type=float,
+        default=2.0,
+        help=(
+            "Pathloss exponent used to convert CH distance-to-BS into normalized "
+            "BS channel quality for channel_quality mode."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-bs-battery-exponent",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional battery exponent for channel_quality CH-to-BS decoding. "
+            "The default 0 uses channel quality only."
+        ),
+    )
     parser.add_argument(
         "--optimized-access-floor-fraction",
         type=float,

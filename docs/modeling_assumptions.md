@@ -37,6 +37,13 @@ This document records the simulation defaults after the code cleanup.
 - The utility load target can be tuned with
   `--optimized-d2d-load-target-factor`, but the default `1.0` preserves the
   current target of approximately `M` CH contenders.
+- Enhanced utility-style modes use conditional selective water-filling by
+  default. This can redistribute CH access-probability mass clipped by `pcomp`,
+  but only when the EWMA of successful optimized-D2D CH uploads falls below the
+  configured trigger relative to the expected fixed-D2D CH throughput. It does
+  not centrally schedule CHs; each CH still performs an independent ALOHA
+  decision. When the trigger is not active, the allocator returns the exact
+  legacy proportional clipped probabilities.
 - Optimized D2D can also use a max-weight threshold policy. The BS only needs
   to broadcast a scalar threshold/dual variable; each CH computes its own
   utility score locally from its aggregate norm, active member count, and
@@ -45,6 +52,11 @@ This document records the simulation defaults after the code cleanup.
   recent successful optimized-D2D update direction and broadcasts it with the
   model; each CH discounts aggregates that are directionally redundant with
   that reference.
+- Optimized D2D can also use an adaptive-diversity policy. It keeps the same
+  CH-level load controller as utility/hybrid, but changes the score over time:
+  early rounds emphasize large useful aggregates, while later rounds emphasize
+  novelty and freshness. The phase uses `t / max_t`, not measured model error,
+  so the policy remains plausible when the true optimum is unknown.
 
 These defaults are intended to preserve the thesis figure behavior while fixing
 code bugs such as angle units, unsafe cluster merging, and fragile cluster-array
@@ -90,6 +102,16 @@ member-to-CH availability.
 - `--optimized-d2d-access-mode utility` is a stronger optimized-D2D ablation.
   It is not thesis-exact; it tests whether utility-aware probability allocation
   can outperform fixed D2D without increasing total expected channel load.
+- `--optimized-d2d-load-allocation-mode proportional_clip` reproduces the older
+  enhanced-mode allocator. The default `conditional_selective_water_filling`
+  uses a scalar water level only when observed optimized-D2D CH throughput is
+  below the fixed-D2D reference throughput, so clipped high-utility probability
+  can be assigned to other CHs that are still below `pcomp` without forcing
+  extra load in already high-throughput regimes. If the trigger is off, no
+  water-filling reshuffle is applied.
+- `--optimized-d2d-load-allocation-mode selective_water_filling` redistributes
+  only a fraction of the clipped probability mass. This tests the middle ground
+  between selective high-utility CH access and full water-filling load usage.
 - `--optimized-d2d-access-mode max_weight` is a more selective enhanced
   optimized-D2D ablation. It maps the same utility score through an adaptive
   sigmoid threshold, concentrating access on high-utility CHs while using the
@@ -98,4 +120,45 @@ member-to-CH availability.
   adds directional novelty. It tests whether the optimized D2D controller can
   improve by selecting less redundant CH aggregate directions while preserving
   roughly the same expected CH contention load.
+- `--optimized-d2d-access-mode adaptive_diversity` is a stronger algorithmic
+  ablation. It uses:
+
+  ```text
+  phase(t) = sigmoid(gain * ((t / max_t) - switch_fraction))
+
+  adaptive_utility_h =
+    (1 - phase(t)) *
+      norm_h^early_norm *
+      active_cluster_size_h^size_exp *
+      freshness_h^early_freshness
+    + phase(t) *
+      norm_h^late_norm *
+      active_cluster_size_h^size_exp *
+      freshness_h^late_freshness *
+      novelty_h^novelty_exp
+  ```
+
+  The CH can compute its local score from aggregate norm, active aggregate size,
+  freshness, and aggregate direction. The BS can broadcast scalar normalizers,
+  the recent optimized-D2D reference direction, and the temporal phase. This is
+  not a BS-side global assignment and does not use the true error curve to
+  switch behavior.
+- `conditional_selective_water_filling` is the default allocator for enhanced
+  load-controlled policies. It is intentionally not a centralized scheduler:
+  the BS can broadcast only the target load, trigger ratio, redistribution
+  fraction, and scalar water-level normalizer. Each CH still computes its own
+  access probability and performs its own ALOHA trial. The condition uses an
+  EWMA of successful CH uploads, which is observable through ACKs, rather than
+  attempted contenders, the inflated exploratory target, or the training error.
+  True optimization error is not available in a real deployment.
+- The conditional allocator is density-aware. When the clusterized-device
+  fraction exceeds `--optimized-d2d-density-trigger-threshold`, the effective
+  trigger becomes `--optimized-d2d-dense-trigger-ratio`; otherwise it remains
+  `--optimized-d2d-redistribution-trigger-ratio`. This is still a scalar
+  control rule, not BS-side CH scheduling. The clusterization fraction is
+  available after cluster formation, and the BS can broadcast the effective
+  trigger with the normal FL control parameters. The motivation is empirical
+  and physical: dense D2D coverage already creates many eligible CHs, so extra
+  probability redistribution can increase collision pressure without adding
+  proportional information gain.
 - Energy-aware CH selection is not implemented in this cleanup.

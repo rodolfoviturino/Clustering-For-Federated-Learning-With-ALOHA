@@ -186,6 +186,26 @@ def run_gpu_sweep(args):
             optimized_d2d_novelty_floor=args.optimized_d2d_novelty_floor,
             optimized_d2d_reference_decay=args.optimized_d2d_reference_decay,
             optimized_d2d_load_target_factor=args.optimized_d2d_load_target_factor,
+            optimized_d2d_load_allocation_mode=args.optimized_d2d_load_allocation_mode,
+            optimized_d2d_redistribution_fraction=args.optimized_d2d_redistribution_fraction,
+            optimized_d2d_redistribution_trigger_ratio=(
+                args.optimized_d2d_redistribution_trigger_ratio
+            ),
+            optimized_d2d_density_trigger_threshold=(
+                args.optimized_d2d_density_trigger_threshold
+            ),
+            optimized_d2d_dense_trigger_ratio=args.optimized_d2d_dense_trigger_ratio,
+            optimized_d2d_throughput_ewma_decay=(
+                args.optimized_d2d_throughput_ewma_decay
+            ),
+            optimized_d2d_late_norm_exponent=args.optimized_d2d_late_norm_exponent,
+            optimized_d2d_late_freshness_exponent=(
+                args.optimized_d2d_late_freshness_exponent
+            ),
+            optimized_d2d_adaptive_switch_fraction=(
+                args.optimized_d2d_adaptive_switch_fraction
+            ),
+            optimized_d2d_adaptive_switch_gain=args.optimized_d2d_adaptive_switch_gain,
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -296,6 +316,34 @@ def run_gpu_sweep(args):
         "optimized_d2d_novelty_floor": float(args.optimized_d2d_novelty_floor),
         "optimized_d2d_reference_decay": float(args.optimized_d2d_reference_decay),
         "optimized_d2d_load_target_factor": float(args.optimized_d2d_load_target_factor),
+        "optimized_d2d_load_allocation_mode": args.optimized_d2d_load_allocation_mode,
+        "optimized_d2d_redistribution_fraction": float(
+            args.optimized_d2d_redistribution_fraction
+        ),
+        "optimized_d2d_redistribution_trigger_ratio": float(
+            args.optimized_d2d_redistribution_trigger_ratio
+        ),
+        "optimized_d2d_density_trigger_threshold": float(
+            args.optimized_d2d_density_trigger_threshold
+        ),
+        "optimized_d2d_dense_trigger_ratio": float(
+            args.optimized_d2d_dense_trigger_ratio
+        ),
+        "optimized_d2d_throughput_ewma_decay": float(
+            args.optimized_d2d_throughput_ewma_decay
+        ),
+        "optimized_d2d_late_norm_exponent": float(
+            args.optimized_d2d_late_norm_exponent
+        ),
+        "optimized_d2d_late_freshness_exponent": float(
+            args.optimized_d2d_late_freshness_exponent
+        ),
+        "optimized_d2d_adaptive_switch_fraction": float(
+            args.optimized_d2d_adaptive_switch_fraction
+        ),
+        "optimized_d2d_adaptive_switch_gain": float(
+            args.optimized_d2d_adaptive_switch_gain
+        ),
         "clustering_strategy_note": (
             dense_strategy_note
             if args.clustering_strategy == "dense"
@@ -470,13 +518,14 @@ def build_parser():
     )
     parser.add_argument(
         "--optimized-d2d-access-mode",
-        choices=("norm", "utility", "max_weight", "hybrid"),
+        choices=("norm", "utility", "max_weight", "hybrid", "adaptive_diversity"),
         default="norm",
         help=(
             "norm preserves the thesis-style optimized D2D controller; utility "
             "load-controls access by aggregate norm, active cluster size, and freshness; "
             "max_weight uses a dual-threshold gate that concentrates access on high-utility CHs; "
-            "hybrid keeps utility load control and adds directional novelty."
+            "hybrid keeps utility load control and adds directional novelty; "
+            "adaptive_diversity shifts from early utility to late novelty/freshness."
         ),
     )
     parser.add_argument(
@@ -510,15 +559,18 @@ def build_parser():
         "--optimized-d2d-novelty-exponent",
         type=float,
         default=1.0,
-        help="Hybrid-mode exponent for directional novelty against recent optimized-D2D uploads.",
+        help=(
+            "Hybrid/adaptive-diversity exponent for directional novelty against "
+            "recent optimized-D2D uploads."
+        ),
     )
     parser.add_argument(
         "--optimized-d2d-novelty-floor",
         type=float,
         default=0.25,
         help=(
-            "Hybrid-mode minimum novelty credit for aggregates aligned with "
-            "the recent optimized-D2D reference direction."
+            "Hybrid/adaptive-diversity minimum novelty credit for aggregates "
+            "aligned with the recent optimized-D2D reference direction."
         ),
     )
     parser.add_argument(
@@ -526,7 +578,7 @@ def build_parser():
         type=float,
         default=0.90,
         help=(
-            "Hybrid-mode exponential decay for the recent successful "
+            "Hybrid/adaptive-diversity exponential decay for the recent successful "
             "optimized-D2D reference direction."
         ),
     )
@@ -535,9 +587,115 @@ def build_parser():
         type=float,
         default=1.0,
         help=(
-            "Utility/hybrid mode multiplier for the target expected CH "
-            "contender load. 1.0 targets M contenders, 0.8 targets 0.8*M, "
+            "Utility/hybrid/adaptive-diversity multiplier for the target expected "
+            "CH contender load. 1.0 targets M contenders, 0.8 targets 0.8*M, "
             "and 1.2 targets 1.2*M."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-load-allocation-mode",
+        choices=(
+            "water_filling",
+            "selective_water_filling",
+            "conditional_selective_water_filling",
+            "proportional_clip",
+        ),
+        default="conditional_selective_water_filling",
+        help=(
+            "Load-controlled utility allocator. water_filling redistributes "
+            "all probability clipped by pcomp; selective_water_filling "
+            "redistributes only --optimized-d2d-redistribution-fraction of "
+            "the clipped mass; conditional_selective_water_filling only "
+            "redistributes when observed optimized-D2D CH throughput falls "
+            "below the trigger ratio and otherwise returns proportional_clip; "
+            "proportional_clip reproduces the older behavior."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-redistribution-fraction",
+        type=float,
+        default=0.5,
+        help=(
+            "Selective-water-filling fraction of clipped target load to "
+            "redistribute. 0.0 matches proportional_clip; 1.0 matches the "
+            "water-filling target load."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-redistribution-trigger-ratio",
+        type=float,
+        default=0.95,
+        help=(
+            "Conditional-selective trigger. Redistribution is skipped when the "
+            "EWMA of successful optimized-D2D CH uploads is at least this "
+            "fraction of the expected fixed-D2D CH throughput."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-density-trigger-threshold",
+        type=float,
+        default=0.95,
+        help=(
+            "Conditional-selective density gate. When the clustered-device "
+            "fraction is at least this value, the allocator uses "
+            "--optimized-d2d-dense-trigger-ratio instead of the base trigger. "
+            "Use 1.0 to effectively disable the dense-regime override."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-dense-trigger-ratio",
+        type=float,
+        default=0.90,
+        help=(
+            "Conditional-selective trigger ratio used in dense clusterization "
+            "regimes. Lower values make redistribution less likely when the "
+            "network is already highly covered by D2D clusters."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-throughput-ewma-decay",
+        type=float,
+        default=0.90,
+        help=(
+            "Conditional-selective EWMA decay for observed optimized-D2D CH "
+            "throughput. Larger values react more slowly; 0.90 is a stable "
+            "default for 200-round thesis-style curves."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-late-norm-exponent",
+        type=float,
+        default=1.25,
+        help=(
+            "Adaptive-diversity late-phase norm exponent. Lower values reduce "
+            "late over-selection of the largest aggregate directions."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-late-freshness-exponent",
+        type=float,
+        default=1.0,
+        help=(
+            "Adaptive-diversity late-phase freshness exponent. Larger values "
+            "give stale CHs more late-round access probability."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-adaptive-switch-fraction",
+        type=float,
+        default=0.30,
+        help=(
+            "Adaptive-diversity midpoint as a fraction of total iterations. "
+            "The phase uses t/max_t instead of true error to stay deployable."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-adaptive-switch-gain",
+        type=float,
+        default=12.0,
+        help=(
+            "Adaptive-diversity sigmoid gain. Larger values make the transition "
+            "from early utility to late diversity sharper."
         ),
     )
     parser.add_argument(

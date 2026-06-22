@@ -180,6 +180,28 @@ budget is already assigned to the baseline floor.
 Use `--optimized-d2d-load-target-factor` to tune the expected CH contender
 target for utility mode: `1.0` targets `M`, `0.8` targets `0.8M`, and `1.2`
 targets `1.2M`.
+Load-controlled enhanced modes use `--optimized-d2d-load-allocation-mode
+conditional_selective_water_filling` by default. This starts from the old
+proportional clipped allocator, checks whether the EWMA of successful
+optimized-D2D CH uploads is below `--optimized-d2d-redistribution-trigger-ratio`
+of the expected fixed-D2D CH throughput, and only then redistributes
+`--optimized-d2d-redistribution-fraction` of the missing load toward the
+configured load target. If the throughput trigger is not active, it returns
+exactly the legacy `proportional_clip` probabilities. This uses ACK-observable
+throughput rather than true model error or raw attempted contenders.
+The conditional allocator is also density-aware by default: when the
+clusterized-device fraction is at least
+`--optimized-d2d-density-trigger-threshold` the trigger ratio is replaced by
+`--optimized-d2d-dense-trigger-ratio`. The current defaults use `0.95` as the
+dense-regime cutoff and `0.90` as the dense trigger. This was added because the
+larger `K=3000` runs showed that highly clusterized deployments can be hurt by
+extra redistribution: the channel receives more contenders, but the additional
+successful CH uploads do not necessarily carry enough new information to offset
+the collision risk. The rule is still deployable because the BS only needs the
+clusterization summary and ACK-observed CH throughput.
+Use `proportional_clip` to reproduce the older enhanced-mode allocator exactly,
+`selective_water_filling` to always redistribute a partial amount, and
+`water_filling` to force the full target load when testing high-usage ablations.
 
 The more selective optimized-D2D ablation is `max_weight`. It keeps the same
 utility terms, but maps them through an adaptive threshold. This concentrates
@@ -206,6 +228,46 @@ python main.py --run-name k3000_x64_hybrid_b2_floor010 --devices 3000 --precisio
 This tests whether optimized D2D improves by preserving update diversity, not
 by hard-thresholding access or increasing the expected CH load.
 
+The adaptive-diversity optimized-D2D ablation is the next algorithmic test. It
+keeps the same load-controlled CH contention target as `utility`/`hybrid`, but
+uses a two-phase score. Early rounds favor large useful aggregates so the model
+moves quickly; later rounds reduce the raw-norm emphasis and add novelty plus
+freshness so the BS receives less redundant cluster directions. The phase is a
+sigmoid of `t / max_t`, not of the true error, because real deployments do not
+know the true optimization error:
+
+```bash
+python main.py --run-name k3000_adaptive_diversity \
+  --devices 3000 \
+  --rounds 100 \
+  --precision float64 \
+  --optimized-d2d-access-mode adaptive_diversity \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-late-norm-exponent 1.25 \
+  --optimized-d2d-late-freshness-exponent 1.0 \
+  --optimized-d2d-novelty-exponent 1.5 \
+  --optimized-d2d-novelty-floor 0.25 \
+  --optimized-d2d-reference-decay 0.90 \
+  --optimized-d2d-load-target-factor 1.1 \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-redistribution-fraction 0.25 \
+  --optimized-d2d-redistribution-trigger-ratio 0.95 \
+  --optimized-d2d-density-trigger-threshold 0.95 \
+  --optimized-d2d-dense-trigger-ratio 0.90 \
+  --optimized-d2d-throughput-ewma-decay 0.90 \
+  --optimized-d2d-adaptive-switch-fraction 0.30 \
+  --optimized-d2d-adaptive-switch-gain 12.0
+```
+
+This is not thesis-exact behavior. It is a scientifically motivated ablation
+for testing whether a deployable CH-level policy can beat pure utility tuning:
+local CH signals are aggregate norm, active aggregate size, freshness, and
+aggregate direction; the BS can broadcast only scalar normalizers, the phase
+value, and the recent optimized-D2D reference direction.
+
 To tune the utility policy as a Pareto problem, use the utility sweep runner.
 It executes a grid of floors, exponents, and load-target factors, then writes
 per-candidate results plus a ranked summary:
@@ -224,6 +286,11 @@ The default refined grid has 162 candidates and focuses on the neighborhood
 that performed best in the first full K=3000 sweep: lower access floor, higher
 norm exponent, higher cluster-size exponent, and lower freshness exponent. The
 older 243-candidate grid is still available with `--candidate-grid coarse`.
+New sweeps use conditional selective water-filling allocation by default; add
+`--optimized-d2d-load-allocation-mode proportional_clip` when reproducing older
+utility-sweep results, or `selective_water_filling` plus
+`--optimized-d2d-redistribution-fraction` when forcing partial redistribution
+even when the proportional clipped load is already near the target.
 Each candidate writes
 `Runs/<run-name>/<candidate>/results.csv`, and the parent folder writes
 `utility_sweep_summary.csv`, `utility_sweep_top10.md`, and

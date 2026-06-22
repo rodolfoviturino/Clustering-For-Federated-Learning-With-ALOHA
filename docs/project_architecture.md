@@ -60,6 +60,17 @@ outputs.
 - JAX HFL/ALOHA simulation.
 - Uses `jax.lax.scan` to run one trajectory and record all requested
   checkpoints.
+- Contains thesis-compatible optimized D2D plus enhanced `utility`,
+  `max_weight`, `hybrid`, and `adaptive_diversity` CH access policies.
+- Load-controlled enhanced policies share the same allocator family:
+  `proportional_clip`, `water_filling`, `selective_water_filling`, and the
+  default `conditional_selective_water_filling`, which only redistributes lost
+  target load when ACK-observed optimized-D2D CH throughput is materially below
+  the expected fixed-D2D CH throughput; otherwise it returns the exact
+  proportional clipped allocator. The conditional allocator also has a
+  density-aware trigger: highly clusterized deployments can use a lower trigger
+  ratio so redistribution does not add collision pressure when D2D coverage is
+  already near-complete.
 
 `Models/models_arrangement.py`
 
@@ -97,6 +108,12 @@ Tune utility parameters:
 
 ```bash
 python -m experiments.run_utility_pareto_sweep --run-name utility_pareto_smoke --devices 1000 --rounds 20 --precision float64 --max-candidates 5
+```
+
+Run the adaptive-diversity optimized-D2D smoke experiment:
+
+```bash
+python main.py --run-name k3000_adaptive_diversity_smoke --devices 1000 --rounds 20 --precision float64 --optimized-d2d-access-mode adaptive_diversity --optimized-d2d-load-allocation-mode conditional_selective_water_filling --optimized-d2d-redistribution-fraction 0.25 --optimized-d2d-redistribution-trigger-ratio 0.95 --optimized-d2d-density-trigger-threshold 0.95 --optimized-d2d-dense-trigger-ratio 0.90 --optimized-d2d-throughput-ewma-decay 0.90 --optimized-d2d-access-floor-fraction 0.02 --optimized-d2d-norm-exponent 3.5 --optimized-d2d-cluster-size-exponent 1.5 --optimized-d2d-freshness-exponent 0.25 --optimized-d2d-late-norm-exponent 1.25 --optimized-d2d-late-freshness-exponent 1.0 --optimized-d2d-novelty-exponent 1.5 --optimized-d2d-load-target-factor 1.1
 ```
 
 Merge utility tuning parts:

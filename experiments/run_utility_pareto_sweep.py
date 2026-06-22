@@ -555,6 +555,22 @@ def run_utility_pareto_sweep(args):
         "candidate_start": candidate_start,
         "candidate_end_exclusive": candidate_end,
         "full_grid_candidate_count": len(full_grid),
+        "optimized_d2d_load_allocation_mode": args.optimized_d2d_load_allocation_mode,
+        "optimized_d2d_redistribution_fraction": float(
+            args.optimized_d2d_redistribution_fraction
+        ),
+        "optimized_d2d_redistribution_trigger_ratio": float(
+            args.optimized_d2d_redistribution_trigger_ratio
+        ),
+        "optimized_d2d_density_trigger_threshold": float(
+            args.optimized_d2d_density_trigger_threshold
+        ),
+        "optimized_d2d_dense_trigger_ratio": float(
+            args.optimized_d2d_dense_trigger_ratio
+        ),
+        "optimized_d2d_throughput_ewma_decay": float(
+            args.optimized_d2d_throughput_ewma_decay
+        ),
         "candidate_grid": {
             key: list(value)
             for key, value in GRID_PROFILES[args.candidate_grid].items()

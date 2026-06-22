@@ -81,12 +81,73 @@ class GpuSweepTests(unittest.TestCase):
                 checkpoints=[1, 2],
                 optimized_d2d_access_mode="utility",
                 optimized_d2d_load_target_factor=1.2,
+                optimized_d2d_load_allocation_mode="proportional_clip",
+                optimized_d2d_redistribution_fraction=0.0,
+                optimized_d2d_redistribution_trigger_ratio=0.90,
+                optimized_d2d_density_trigger_threshold=0.93,
+                optimized_d2d_dense_trigger_ratio=0.85,
+                optimized_d2d_throughput_ewma_decay=0.80,
             )
         )
 
         self.assertEqual(len(rows), 2)
         self.assertEqual(metadata["optimized_d2d_access_mode"], "utility")
         self.assertEqual(metadata["optimized_d2d_load_target_factor"], 1.2)
+        self.assertEqual(
+            metadata["optimized_d2d_load_allocation_mode"],
+            "proportional_clip",
+        )
+        self.assertEqual(metadata["optimized_d2d_redistribution_fraction"], 0.0)
+        self.assertEqual(metadata["optimized_d2d_redistribution_trigger_ratio"], 0.90)
+        self.assertEqual(metadata["optimized_d2d_density_trigger_threshold"], 0.93)
+        self.assertEqual(metadata["optimized_d2d_dense_trigger_ratio"], 0.85)
+        self.assertEqual(metadata["optimized_d2d_throughput_ewma_decay"], 0.80)
+
+    def test_gpu_sweep_records_adaptive_diversity_parameters(self):
+        rows, metadata = run_gpu_sweep(
+            self._small_args(
+                devices=10,
+                rounds=1,
+                iterations=2,
+                checkpoints=[1, 2],
+                optimized_d2d_access_mode="adaptive_diversity",
+                optimized_d2d_access_floor_fraction=0.02,
+                optimized_d2d_norm_exponent=3.5,
+                optimized_d2d_cluster_size_exponent=1.5,
+                optimized_d2d_freshness_exponent=0.25,
+                optimized_d2d_late_norm_exponent=1.25,
+                optimized_d2d_late_freshness_exponent=1.0,
+                optimized_d2d_novelty_exponent=1.5,
+                optimized_d2d_novelty_floor=0.25,
+                optimized_d2d_reference_decay=0.90,
+                optimized_d2d_load_target_factor=1.1,
+                optimized_d2d_load_allocation_mode="selective_water_filling",
+                optimized_d2d_redistribution_fraction=0.5,
+                optimized_d2d_redistribution_trigger_ratio=0.95,
+                optimized_d2d_density_trigger_threshold=0.95,
+                optimized_d2d_dense_trigger_ratio=0.90,
+                optimized_d2d_throughput_ewma_decay=0.90,
+                optimized_d2d_adaptive_switch_fraction=0.30,
+                optimized_d2d_adaptive_switch_gain=12.0,
+            )
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(metadata["optimized_d2d_access_mode"], "adaptive_diversity")
+        self.assertEqual(metadata["optimized_d2d_late_norm_exponent"], 1.25)
+        self.assertEqual(metadata["optimized_d2d_late_freshness_exponent"], 1.0)
+        self.assertEqual(metadata["optimized_d2d_adaptive_switch_fraction"], 0.30)
+        self.assertEqual(metadata["optimized_d2d_adaptive_switch_gain"], 12.0)
+        self.assertEqual(metadata["optimized_d2d_load_target_factor"], 1.1)
+        self.assertEqual(
+            metadata["optimized_d2d_load_allocation_mode"],
+            "selective_water_filling",
+        )
+        self.assertEqual(metadata["optimized_d2d_redistribution_fraction"], 0.5)
+        self.assertEqual(metadata["optimized_d2d_redistribution_trigger_ratio"], 0.95)
+        self.assertEqual(metadata["optimized_d2d_density_trigger_threshold"], 0.95)
+        self.assertEqual(metadata["optimized_d2d_dense_trigger_ratio"], 0.90)
+        self.assertEqual(metadata["optimized_d2d_throughput_ewma_decay"], 0.90)
 
 
 if __name__ == "__main__":

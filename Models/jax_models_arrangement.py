@@ -20,6 +20,8 @@ The simulation follows the same thesis-level structure as the original model:
   broadcast by the BS, while each CH computes its own local utility score.
 * the hybrid utility D2D policy keeps smooth load allocation, but discounts
   CH aggregates that are directionally redundant with recent successful uploads.
+* the adaptive-diversity D2D policy keeps the same distributed load controller,
+  but shifts from early high-utility aggregates to late diversity/freshness.
 * ``dtype=jnp.float64`` is recommended when reproducing very small thesis error
   norms; ``float32`` is faster but floors optimized curves near single-precision
   machine accuracy.
@@ -210,6 +212,14 @@ def _utility_load_controlled_access_probability(
     cluster_size_exponent,
     freshness_exponent,
     load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
 ):
     """Allocate optimized D2D access using utility while preserving ALOHA load.
 
@@ -236,6 +246,14 @@ def _utility_load_controlled_access_probability(
         fixed_access_probability=fixed_access_probability,
         floor_fraction=floor_fraction,
         load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
     )
 
 
@@ -247,10 +265,58 @@ def _load_controlled_access_from_utility(
     fixed_access_probability,
     floor_fraction,
     load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    optimized_success_ewma,
+    fixed_success_target,
+    density_trigger_threshold=None,
+    dense_trigger_ratio=None,
+    clusterized_devices_fraction=None,
 ):
-    """Convert CH utilities into smooth load-controlled ALOHA probabilities."""
+    """Convert CH utilities into smooth load-controlled ALOHA probabilities.
+
+    ``proportional_clip`` is the original enhanced-mode allocator: distribute
+    remaining probability mass in proportion to CH utility and clip each CH at
+    ``pcomp``.  The clipping is local and simple, but any clipped excess mass is
+    lost.
+
+    ``water_filling`` keeps the same distributed ALOHA interpretation while
+    using more of the expected CH contention budget.  The BS can broadcast the
+    resulting scalar water level or its equivalent normalizer; every CH still
+    computes its own access probability from local utility and shared scalars.
+    No CH is centrally scheduled or forced to transmit.
+
+    ``selective_water_filling`` is the intermediate ablation.  It starts from
+    the selective ``proportional_clip`` probabilities, measures how much target
+    load was lost to clipping, and redistributes only a configured fraction of
+    that lost load to CHs that still have spare access capacity.
+
+    ``conditional_selective_water_filling`` is the deployable combined policy.
+    It uses the same partial redistribution, but only when the observed EWMA of
+    successful optimized-D2D CH uploads falls below a configured fraction of the
+    expected fixed-D2D CH throughput.  The effective trigger can become more
+    conservative when the deployment is already densely clusterized: dense
+    networks have many CHs with one-hop coverage, so extra redistributed load
+    can create collisions without adding much new information.  The BS can know
+    or estimate this density after cluster formation and broadcast only the
+    scalar effective trigger; CHs still run local ALOHA trials.
+    """
     dtype = utility.dtype
     eps = jnp.asarray(1e-12, dtype=dtype)
+    if density_trigger_threshold is None:
+        density_trigger_threshold = jnp.asarray(1.0, dtype=dtype)
+    if dense_trigger_ratio is None:
+        dense_trigger_ratio = redistribution_trigger_ratio
+    if clusterized_devices_fraction is None:
+        clusterized_devices_fraction = jnp.asarray(0.0, dtype=dtype)
+
+    density_trigger_threshold = jnp.asarray(density_trigger_threshold, dtype=dtype)
+    dense_trigger_ratio = jnp.asarray(dense_trigger_ratio, dtype=dtype)
+    clusterized_devices_fraction = jnp.asarray(
+        clusterized_devices_fraction,
+        dtype=dtype,
+    )
     active_count = jnp.sum(cluster_mask).astype(dtype)
     target_contenders = jnp.minimum(
         jnp.asarray(n_channels, dtype=dtype) * load_target_factor,
@@ -265,12 +331,98 @@ def _load_controlled_access_from_utility(
     utility = jnp.where(cluster_mask, utility, 0.0)
     utility_sum = jnp.sum(utility)
 
-    utility_probability = jnp.where(
+    proportional_probability = jnp.where(
         utility_sum > eps,
         remaining_load * utility / utility_sum,
         0.0,
     )
-    return jnp.minimum(floor_by_cluster + utility_probability, pcomp)
+    proportional_clip_probability = jnp.minimum(
+        floor_by_cluster + proportional_probability,
+        pcomp,
+    )
+    if load_allocation_mode == "proportional_clip":
+        return proportional_clip_probability
+
+    proportional_clip_load = jnp.sum(proportional_clip_probability)
+    target_gap = jnp.maximum(target_contenders - proportional_clip_load, 0.0)
+    redistribution_fraction = jnp.clip(redistribution_fraction, 0.0, 1.0)
+
+    if load_allocation_mode == "selective_water_filling":
+        redistribution_scale = redistribution_fraction
+    elif load_allocation_mode == "conditional_selective_water_filling":
+        throughput_ratio = optimized_success_ewma / jnp.maximum(fixed_success_target, eps)
+        dense_cluster_regime = clusterized_devices_fraction >= jnp.clip(
+            density_trigger_threshold,
+            0.0,
+            1.0,
+        )
+        effective_trigger_ratio = jnp.where(
+            dense_cluster_regime,
+            dense_trigger_ratio,
+            redistribution_trigger_ratio,
+        )
+        # The trigger uses observed optimized-D2D CH throughput against the
+        # expected fixed-D2D throughput, not attempted contenders and not model
+        # error.  A dense clusterization regime uses a lower threshold by
+        # default because the previous K=3000 runs showed that extra load is
+        # often collision-dominated there.  The BS can estimate both inputs
+        # from cluster formation plus ACKs, so the rule remains deployable.
+        should_redistribute = throughput_ratio < jnp.clip(
+            effective_trigger_ratio,
+            0.0,
+            1.0,
+        )
+        redistribution_scale = jnp.where(
+            should_redistribute,
+            redistribution_fraction,
+            0.0,
+        )
+    else:
+        redistribution_scale = jnp.asarray(1.0, dtype=dtype)
+
+    selective_target_load = proportional_clip_load + redistribution_scale * target_gap
+    selective_remaining_load = jnp.maximum(selective_target_load - floor_load, 0.0)
+
+    capacity = jnp.where(
+        cluster_mask,
+        jnp.maximum(pcomp - floor_by_cluster, 0.0),
+        0.0,
+    )
+    capped_remaining_load = jnp.minimum(selective_remaining_load, jnp.sum(capacity))
+    max_water_level = jnp.max(capacity / jnp.maximum(utility, eps)) + 1.0
+
+    def binary_search_step(bounds, _):
+        low, high = bounds
+        midpoint = (low + high) / 2.0
+        allocated = jnp.sum(jnp.minimum(capacity, midpoint * utility))
+        low = jnp.where(allocated < capped_remaining_load, midpoint, low)
+        high = jnp.where(allocated < capped_remaining_load, high, midpoint)
+        return (low, high), None
+
+    # Fixed iteration count keeps the operation JIT/static and works on CPU/GPU.
+    (low, high), _ = jax.lax.scan(
+        binary_search_step,
+        (jnp.asarray(0.0, dtype=dtype), max_water_level),
+        None,
+        length=32,
+    )
+    water_level = (low + high) / 2.0
+    water_filling_probability = floor_by_cluster + jnp.minimum(
+        capacity,
+        water_level * utility,
+    )
+    bounded_water_filling_probability = jnp.minimum(water_filling_probability, pcomp)
+    if load_allocation_mode == "conditional_selective_water_filling":
+        # When the throughput trigger is off, this mode must be exactly the
+        # legacy proportional clip allocator.  Returning water-filling with an
+        # equivalent total load would still reshuffle CH probabilities and can
+        # regress dense cases such as K=3000.
+        return jnp.where(
+            should_redistribute,
+            bounded_water_filling_probability,
+            proportional_clip_probability,
+        )
+    return bounded_water_filling_probability
 
 
 def _cluster_utility_scores(
@@ -363,6 +515,14 @@ def _hybrid_utility_access_probability(
     novelty_exponent,
     novelty_floor,
     load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
 ):
     """Smooth optimized-D2D access with utility and marginal-direction novelty."""
     aggregate_norms = jnp.linalg.norm(aggregate_updates, axis=1)
@@ -390,6 +550,126 @@ def _hybrid_utility_access_probability(
         fixed_access_probability=fixed_access_probability,
         floor_fraction=floor_fraction,
         load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+    )
+
+
+def _adaptive_diversity_access_probability(
+    aggregate_updates,
+    cluster_sizes,
+    freshness,
+    reference_direction,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    early_norm_exponent,
+    late_norm_exponent,
+    cluster_size_exponent,
+    early_freshness_exponent,
+    late_freshness_exponent,
+    novelty_exponent,
+    novelty_floor,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+    switch_fraction,
+    switch_gain,
+    iteration_index,
+    max_iterations,
+):
+    """Two-phase optimized-D2D access with utility first and diversity later.
+
+    This policy is intentionally still deployable as a distributed CH decision:
+    each CH needs its local aggregate update, active D2D member count, and
+    freshness age.  The BS can broadcast the normalizers, the recent reference
+    direction, and the current phase scalar with the global model.
+
+    Array contracts:
+    - aggregate_updates: float[max_clusters, L], one active aggregate per CH.
+    - cluster_sizes: int[max_clusters], active member count in each aggregate.
+    - freshness: float[max_clusters], rounds since the CH last uploaded.
+    - reference_direction: float[L], recent successful optimized-D2D direction.
+    - cluster_mask: bool[max_clusters], true for real padded cluster rows.
+    """
+    dtype = aggregate_updates.dtype
+    aggregate_norms = jnp.linalg.norm(aggregate_updates, axis=1)
+
+    # The early phase is aggressive: prioritize high-norm, large aggregates so
+    # the global model moves quickly while errors are still large.  This mirrors
+    # utility-guided participant selection without requiring the BS to choose a
+    # deterministic client set.
+    early_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=early_norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=early_freshness_exponent,
+    )
+
+    # The late phase is more conservative about raw norm and gives more room to
+    # freshness and directional novelty.  This tests whether avoiding redundant
+    # CH aggregate directions helps once the largest updates have already driven
+    # most of the error down.
+    late_base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=late_norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=late_freshness_exponent,
+    )
+    novelty = _cluster_novelty_scores(
+        aggregate_updates=aggregate_updates,
+        reference_direction=reference_direction,
+        cluster_mask=cluster_mask,
+        novelty_floor=novelty_floor,
+    )
+    late_utility = late_base_utility * novelty**novelty_exponent
+
+    # phase_progress uses t / max_t instead of measured error.  The BS knows the
+    # planned horizon and can broadcast this scalar, whereas true optimization
+    # error is unavailable in real deployments.
+    phase_progress = (
+        (iteration_index.astype(dtype) + 1.0)
+        / jnp.asarray(max_iterations, dtype=dtype)
+    )
+    phase = jax.nn.sigmoid(switch_gain * (phase_progress - switch_fraction))
+    adaptive_utility = (1.0 - phase) * early_utility + phase * late_utility
+
+    return _load_controlled_access_from_utility(
+        utility=adaptive_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
     )
 
 
@@ -485,6 +765,16 @@ def error_calculator_trace_jax(
     optimized_d2d_novelty_floor: float = 0.25,
     optimized_d2d_reference_decay: float = 0.90,
     optimized_d2d_load_target_factor: float = 1.0,
+    optimized_d2d_load_allocation_mode: str = "conditional_selective_water_filling",
+    optimized_d2d_redistribution_fraction: float = 0.5,
+    optimized_d2d_redistribution_trigger_ratio: float = 0.95,
+    optimized_d2d_density_trigger_threshold: float = 0.95,
+    optimized_d2d_dense_trigger_ratio: float = 0.90,
+    optimized_d2d_throughput_ewma_decay: float = 0.90,
+    optimized_d2d_late_norm_exponent: float = 1.25,
+    optimized_d2d_late_freshness_exponent: float = 1.0,
+    optimized_d2d_adaptive_switch_fraction: float = 0.30,
+    optimized_d2d_adaptive_switch_gain: float = 12.0,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -518,9 +808,16 @@ def error_calculator_trace_jax(
         raise ValueError("optimized_access_floor_fraction must be in [0, 1]")
     if not 0.0 <= optimized_d2d_access_floor_fraction <= 1.0:
         raise ValueError("optimized_d2d_access_floor_fraction must be in [0, 1]")
-    if optimized_d2d_access_mode not in {"norm", "utility", "max_weight", "hybrid"}:
+    if optimized_d2d_access_mode not in {
+        "norm",
+        "utility",
+        "max_weight",
+        "hybrid",
+        "adaptive_diversity",
+    }:
         raise ValueError(
-            "optimized_d2d_access_mode must be 'norm', 'utility', 'max_weight', or 'hybrid'"
+            "optimized_d2d_access_mode must be 'norm', 'utility', "
+            "'max_weight', 'hybrid', or 'adaptive_diversity'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -538,6 +835,39 @@ def error_calculator_trace_jax(
         raise ValueError("optimized_d2d_reference_decay must be in [0, 1]")
     if optimized_d2d_load_target_factor <= 0.0:
         raise ValueError("optimized_d2d_load_target_factor must be positive")
+    if optimized_d2d_load_allocation_mode not in {
+        "water_filling",
+        "selective_water_filling",
+        "conditional_selective_water_filling",
+        "proportional_clip",
+    }:
+        raise ValueError(
+            "optimized_d2d_load_allocation_mode must be "
+            "'water_filling', 'selective_water_filling', "
+            "'conditional_selective_water_filling', or 'proportional_clip'"
+        )
+    if not 0.0 <= optimized_d2d_redistribution_fraction <= 1.0:
+        raise ValueError("optimized_d2d_redistribution_fraction must be in [0, 1]")
+    if not 0.0 <= optimized_d2d_redistribution_trigger_ratio <= 1.0:
+        raise ValueError(
+            "optimized_d2d_redistribution_trigger_ratio must be in [0, 1]"
+        )
+    if not 0.0 <= optimized_d2d_density_trigger_threshold <= 1.0:
+        raise ValueError("optimized_d2d_density_trigger_threshold must be in [0, 1]")
+    if not 0.0 <= optimized_d2d_dense_trigger_ratio <= 1.0:
+        raise ValueError("optimized_d2d_dense_trigger_ratio must be in [0, 1]")
+    if not 0.0 <= optimized_d2d_throughput_ewma_decay <= 1.0:
+        raise ValueError("optimized_d2d_throughput_ewma_decay must be in [0, 1]")
+    if optimized_d2d_late_norm_exponent < 0.0:
+        raise ValueError("optimized_d2d_late_norm_exponent must be non-negative")
+    if optimized_d2d_late_freshness_exponent < 0.0:
+        raise ValueError(
+            "optimized_d2d_late_freshness_exponent must be non-negative"
+        )
+    if not 0.0 <= optimized_d2d_adaptive_switch_fraction <= 1.0:
+        raise ValueError("optimized_d2d_adaptive_switch_fraction must be in [0, 1]")
+    if optimized_d2d_adaptive_switch_gain <= 0.0:
+        raise ValueError("optimized_d2d_adaptive_switch_gain must be positive")
 
     dtype = jnp.float32 if dtype is None else dtype
     pcomp = jnp.asarray(
@@ -564,6 +894,42 @@ def error_calculator_trace_jax(
     d2d_novelty_floor = jnp.asarray(optimized_d2d_novelty_floor, dtype=dtype)
     d2d_reference_decay = jnp.asarray(optimized_d2d_reference_decay, dtype=dtype)
     d2d_load_target_factor = jnp.asarray(optimized_d2d_load_target_factor, dtype=dtype)
+    d2d_redistribution_fraction = jnp.asarray(
+        optimized_d2d_redistribution_fraction,
+        dtype=dtype,
+    )
+    d2d_redistribution_trigger_ratio = jnp.asarray(
+        optimized_d2d_redistribution_trigger_ratio,
+        dtype=dtype,
+    )
+    d2d_density_trigger_threshold = jnp.asarray(
+        optimized_d2d_density_trigger_threshold,
+        dtype=dtype,
+    )
+    d2d_dense_trigger_ratio = jnp.asarray(
+        optimized_d2d_dense_trigger_ratio,
+        dtype=dtype,
+    )
+    d2d_throughput_ewma_decay = jnp.asarray(
+        optimized_d2d_throughput_ewma_decay,
+        dtype=dtype,
+    )
+    d2d_late_norm_exponent = jnp.asarray(
+        optimized_d2d_late_norm_exponent,
+        dtype=dtype,
+    )
+    d2d_late_freshness_exponent = jnp.asarray(
+        optimized_d2d_late_freshness_exponent,
+        dtype=dtype,
+    )
+    d2d_adaptive_switch_fraction = jnp.asarray(
+        optimized_d2d_adaptive_switch_fraction,
+        dtype=dtype,
+    )
+    d2d_adaptive_switch_gain = jnp.asarray(
+        optimized_d2d_adaptive_switch_gain,
+        dtype=dtype,
+    )
 
     key = _key_from_seed(seed)
     data_key, true_weight_key, init_weight_key, scan_key = jax.random.split(key, 4)
@@ -574,6 +940,13 @@ def error_calculator_trace_jax(
     cluster_members = clusters.cluster_members.astype(jnp.int32)
     cluster_sizes = clusters.cluster_sizes.astype(jnp.int32)
     cluster_mask = clusters.cluster_mask
+    # Fraction in [0, 1].  The clustering result stores this public metric as a
+    # percentage for CSV/figures, while the controller needs a compact scalar to
+    # decide whether the current deployment is dense enough to use the more
+    # conservative trigger.
+    clusterized_devices_fraction = (
+        jnp.asarray(clusters.clusterized_devices_rate, dtype=dtype) / 100.0
+    )
     max_cluster_size = cluster_members.shape[1]
     safe_members = jnp.where(cluster_members >= 0, cluster_members, 0)
 
@@ -609,6 +982,20 @@ def error_calculator_trace_jax(
         / number_of_clusterheads.astype(users_input__x.dtype),
         1.0,
     )
+    fixed_d2d_attempt_probability = jnp.minimum(access_probability_d2d, pcomp)
+    active_clusterhead_count = jnp.sum(cluster_mask).astype(users_input__x.dtype)
+    same_channel_escape_probability = jnp.maximum(
+        1.0
+        - fixed_d2d_attempt_probability
+        / jnp.asarray(n_channels, dtype=users_input__x.dtype),
+        0.0,
+    )
+    expected_fixed_d2d_ch_successes = (
+        active_clusterhead_count
+        * fixed_d2d_attempt_probability
+        * same_channel_escape_probability
+        ** jnp.maximum(active_clusterhead_count - 1.0, 0.0)
+    )
 
     member_positions = jnp.arange(max_cluster_size, dtype=jnp.int32)[None, :]
     member_mask = member_positions < cluster_sizes[:, None]
@@ -641,6 +1028,7 @@ def error_calculator_trace_jax(
             clusterhead_upload_totals,
             optimized_d2d_freshness,
             optimized_d2d_reference_direction,
+            optimized_d2d_success_ewma,
         ) = state
         (
             key,
@@ -806,6 +1194,14 @@ def error_calculator_trace_jax(
                 cluster_size_exponent=d2d_cluster_size_exponent,
                 freshness_exponent=d2d_freshness_exponent,
                 load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=expected_fixed_d2d_ch_successes,
             )
         elif optimized_d2d_access_mode == "max_weight":
             optimized_probability_d2d = _max_weight_threshold_access_probability(
@@ -839,6 +1235,46 @@ def error_calculator_trace_jax(
                 novelty_exponent=d2d_novelty_exponent,
                 novelty_floor=d2d_novelty_floor,
                 load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=expected_fixed_d2d_ch_successes,
+            )
+        elif optimized_d2d_access_mode == "adaptive_diversity":
+            optimized_probability_d2d = _adaptive_diversity_access_probability(
+                aggregate_updates=aggregate_updates_model_3,
+                cluster_sizes=active_member_counts,
+                freshness=optimized_d2d_freshness,
+                reference_direction=optimized_d2d_reference_direction,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                early_norm_exponent=d2d_norm_exponent,
+                late_norm_exponent=d2d_late_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                early_freshness_exponent=d2d_freshness_exponent,
+                late_freshness_exponent=d2d_late_freshness_exponent,
+                novelty_exponent=d2d_novelty_exponent,
+                novelty_floor=d2d_novelty_floor,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=expected_fixed_d2d_ch_successes,
+                switch_fraction=d2d_adaptive_switch_fraction,
+                switch_gain=d2d_adaptive_switch_gain,
+                iteration_index=iteration_index,
+                max_iterations=max_iterations_t,
             )
         else:
             optimized_probability_d2d = jnp.where(
@@ -899,7 +1335,7 @@ def error_calculator_trace_jax(
             d2d_reference_decay * optimized_d2d_reference_direction
             + (1.0 - d2d_reference_decay) * successful_reference_update
         )
-        if optimized_d2d_access_mode == "hybrid":
+        if optimized_d2d_access_mode in {"hybrid", "adaptive_diversity"}:
             next_optimized_d2d_reference_direction = jnp.where(
                 has_optimized_d2d_success,
                 blended_reference_direction,
@@ -907,6 +1343,11 @@ def error_calculator_trace_jax(
             )
         else:
             next_optimized_d2d_reference_direction = optimized_d2d_reference_direction
+        next_optimized_d2d_success_ewma = (
+            d2d_throughput_ewma_decay * optimized_d2d_success_ewma
+            + (1.0 - d2d_throughput_ewma_decay)
+            * ch_upload_3_d2d.astype(users_input__x.dtype)
+        )
 
         gradients = jnp.stack(
             [
@@ -948,6 +1389,7 @@ def error_calculator_trace_jax(
             next_clusterhead_upload_totals,
             next_optimized_d2d_freshness,
             next_optimized_d2d_reference_direction,
+            next_optimized_d2d_success_ewma,
         )
         trace_row = (error_norms, next_upload_totals, next_clusterhead_upload_totals)
         return next_state, trace_row
@@ -971,6 +1413,9 @@ def error_calculator_trace_jax(
             0.0,
         ),
         jnp.zeros(data_dimension, dtype=users_input__x.dtype),
+        # Start from the fixed-D2D reference throughput to avoid an artificial
+        # cold-start burst of redistribution before any ACK history exists.
+        expected_fixed_d2d_ch_successes,
     )
 
     _, (error_norms, upload_totals, clusterhead_upload_totals) = jax.lax.scan(
@@ -1018,6 +1463,16 @@ def error_calculator(
     optimized_d2d_novelty_floor: float = 0.25,
     optimized_d2d_reference_decay: float = 0.90,
     optimized_d2d_load_target_factor: float = 1.0,
+    optimized_d2d_load_allocation_mode: str = "conditional_selective_water_filling",
+    optimized_d2d_redistribution_fraction: float = 0.5,
+    optimized_d2d_redistribution_trigger_ratio: float = 0.95,
+    optimized_d2d_density_trigger_threshold: float = 0.95,
+    optimized_d2d_dense_trigger_ratio: float = 0.90,
+    optimized_d2d_throughput_ewma_decay: float = 0.90,
+    optimized_d2d_late_norm_exponent: float = 1.25,
+    optimized_d2d_late_freshness_exponent: float = 1.0,
+    optimized_d2d_adaptive_switch_fraction: float = 0.30,
+    optimized_d2d_adaptive_switch_gain: float = 12.0,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -1046,6 +1501,20 @@ def error_calculator(
         optimized_d2d_novelty_floor=optimized_d2d_novelty_floor,
         optimized_d2d_reference_decay=optimized_d2d_reference_decay,
         optimized_d2d_load_target_factor=optimized_d2d_load_target_factor,
+        optimized_d2d_load_allocation_mode=optimized_d2d_load_allocation_mode,
+        optimized_d2d_redistribution_fraction=optimized_d2d_redistribution_fraction,
+        optimized_d2d_redistribution_trigger_ratio=(
+            optimized_d2d_redistribution_trigger_ratio
+        ),
+        optimized_d2d_density_trigger_threshold=(
+            optimized_d2d_density_trigger_threshold
+        ),
+        optimized_d2d_dense_trigger_ratio=optimized_d2d_dense_trigger_ratio,
+        optimized_d2d_throughput_ewma_decay=optimized_d2d_throughput_ewma_decay,
+        optimized_d2d_late_norm_exponent=optimized_d2d_late_norm_exponent,
+        optimized_d2d_late_freshness_exponent=optimized_d2d_late_freshness_exponent,
+        optimized_d2d_adaptive_switch_fraction=optimized_d2d_adaptive_switch_fraction,
+        optimized_d2d_adaptive_switch_gain=optimized_d2d_adaptive_switch_gain,
         checkpoints=[number_of_iterations__t],
         dtype=dtype,
     )

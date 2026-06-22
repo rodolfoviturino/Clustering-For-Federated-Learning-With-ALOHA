@@ -283,6 +283,89 @@ mode toward fixed D2D; useful exploratory values are usually `0.25` and `0.5`.
 load-controlled policies: `1.0` targets `M`, `0.8` targets `0.8M`, and `1.2`
 targets `1.2M`.
 
+Load-controlled policies can choose how the target probability mass is assigned
+with `--optimized-d2d-load-allocation-mode`. The base water-filling allocator
+keeps the floor, computes each CH's remaining capacity `pcomp - floor`, and
+finds a scalar water level `lambda` such that:
+
+```text
+p_h = floor_h + min(pcomp - floor_h, lambda * utility_h)
+```
+
+This replaces the older `proportional_clip` behavior, where clipped probability
+mass disappeared whenever a high-utility CH hit `pcomp`. Water-filling is still
+not centralized scheduling: the BS can broadcast the scalar water level or
+equivalent normalizer, while every CH keeps making its own ALOHA decision.
+Use `proportional_clip` only when reproducing older enhanced-mode runs or when
+the clipped load already matches the desired channel contention.
+
+`selective_water_filling` is the intermediate ablation. It first computes the
+older clipped load, then redistributes only:
+
+```text
+redistributed_load =
+  redistribution_fraction * max(target_load - proportional_clip_load, 0)
+```
+
+`--optimized-d2d-redistribution-fraction 0.0` matches `proportional_clip`;
+`1.0` targets the same total load as water-filling. Values such as `0.25`,
+`0.50`, and `0.75` test whether some extra CH usage improves convergence
+without activating too many low-marginal-value CHs.
+
+The default enhanced allocator is `conditional_selective_water_filling`. It
+uses the same partial redistribution only when observed optimized-D2D CH
+throughput is below the expected fixed-D2D CH throughput:
+
+```text
+target_load = min(M * load_target_factor, pcomp * active_clusterhead_count)
+
+fixed_success_target =
+  active_clusterhead_count *
+  fixed_access_probability *
+  (1 - fixed_access_probability / M)^(active_clusterhead_count - 1)
+
+optimized_success_ewma[t] =
+  decay * optimized_success_ewma[t - 1]
+  + (1 - decay) * successful_optimized_d2d_ch_uploads[t - 1]
+
+throughput_ratio = optimized_success_ewma / fixed_success_target
+
+clusterized_fraction = clusterized_devices_rate / 100
+
+effective_trigger_ratio =
+  dense_trigger_ratio
+    if clusterized_fraction >= density_trigger_threshold
+  else redistribution_trigger_ratio
+
+if throughput_ratio < effective_trigger_ratio:
+  target_load_conditional =
+    proportional_clip_load
+    + redistribution_fraction * max(target_load - proportional_clip_load, 0)
+  p_h = floor_h + min(pcomp - floor_h, lambda * utility_h)
+else:
+  p_h = proportional_clip_probability_h
+```
+
+The trigger is based on ACK-observable successful CH uploads, not on attempted
+contenders, the inflated exploratory target, or the true model error. The
+additional density gate uses the clusterization summary produced during D2D
+formation. Dense deployments use a lower trigger by default because extra
+redistribution can add collision pressure after almost all devices already have
+one-hop D2D coverage. This avoids forcing extra redistribution when
+proportional clipping already delivers near-fixed-D2D useful throughput. It
+remains plausible in a deployed wireless FL system: the BS can estimate the
+EWMA from successful CH uploads, know or estimate the clusterized-device
+fraction from cluster formation, and broadcast the target, effective trigger
+ratio, and water-level normalizer, while each CH uses its local utility score
+and a local random ALOHA draw. No individual CH is centrally selected or forced
+to transmit.
+
+The EWMA is initialized at `fixed_success_target`. This prevents every run from
+starting with a forced redistribution burst before the BS has any ACK history.
+When the trigger is off, the allocator returns the legacy proportional clipped
+probabilities exactly; it does not run water-filling with an equivalent total
+load, because that would still reshuffle CH access probabilities.
+
 The enhanced max-weight mode is selected with
 `--optimized-d2d-access-mode max_weight`. It uses the same utility expression,
 but maps the utility through:
@@ -313,6 +396,64 @@ large aggregates. The reference is updated by exponential decay using
 `--optimized-d2d-reference-decay`. This is still a realistic distributed
 control signal: the BS broadcasts the reference direction, while each CH
 computes its own novelty score from its local aggregate update.
+
+The adaptive-diversity mode is selected with
+`--optimized-d2d-access-mode adaptive_diversity`. It is deliberately more than
+a hyperparameter retune of `utility`: it changes the CH priority equation over
+the course of the run while keeping the same load-controlled ALOHA conversion.
+The motivation is consistent with three common ideas in the literature:
+utility-guided participant selection in FL ([Oort](https://arxiv.org/abs/2010.06081)),
+adaptive wireless scheduling ([MAB client scheduling](https://arxiv.org/abs/2007.02315)),
+and freshness/Age-of-Information when stale information loses value
+([WiFresh/AoI](https://arxiv.org/abs/2012.14337)).
+
+```text
+phase(t) = sigmoid(gain * ((t / max_t) - switch_fraction))
+
+early_utility_h =
+  norm_h^early_norm *
+  active_cluster_size_h^size_exp *
+  freshness_h^early_freshness
+
+late_utility_h =
+  norm_h^late_norm *
+  active_cluster_size_h^size_exp *
+  freshness_h^late_freshness *
+  novelty_h^novelty_exp
+
+adaptive_utility_h =
+  (1 - phase(t)) * early_utility_h + phase(t) * late_utility_h
+```
+
+The early phase prioritizes high-norm and large active aggregates because the
+model is far from convergence and a large useful aggregate can move the global
+state quickly. The late phase lowers the norm exponent and introduces novelty
+plus stronger freshness pressure because repeatedly uploading aligned CH
+directions can waste CH contention once the main error has already fallen.
+`phase(t)` depends on `t / max_t`, not on the true error norm, because the true
+error is unavailable in a real deployment; the BS can know the planned horizon
+and broadcast the scalar phase with the FL model.
+
+The required signals preserve the CH-level plausibility of the experiment:
+
+- local at the CH: aggregate update norm, aggregate direction, active aggregate
+  size, and freshness since the CH last uploaded;
+- broadcast or slowly updated by the BS: normalizers, the recent successful
+  optimized-D2D reference direction, `switch_fraction`, `switch_gain`, and the
+  current phase scalar.
+
+Policy differences:
+
+- `norm` is the thesis-compatible optimized-D2D controller based on aggregate
+  norm and the original dual variable.
+- `utility` keeps expected CH contenders near `M` and redistributes access by
+  norm, active size, and freshness.
+- `max_weight` maps the utility score through a threshold gate and is more
+  selective, but can become sensitive to threshold dynamics.
+- `hybrid` keeps smooth utility load control and multiplies the score by
+  directional novelty.
+- `adaptive_diversity` starts from aggressive utility and gradually shifts
+  toward the hybrid diversity/freshness objective using time-normalized phase.
 
 The utility Pareto tuning runner is:
 

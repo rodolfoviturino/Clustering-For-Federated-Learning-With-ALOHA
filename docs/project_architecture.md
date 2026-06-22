@@ -46,6 +46,14 @@ outputs.
 - Re-ranks all candidates and regenerates the consolidated top-10 and Pareto
   plot.
 
+## Strategy Documentation
+
+`docs/optimized_d2d_strategy_report.md`
+
+- Records the optimized-D2D strategy evolution, representative results,
+  required control information, and plausible real-world deployment
+  arrangement for the strategies tested so far.
+
 ## Core Modules
 
 `Clustering/jax_clustering_algorithm.py`

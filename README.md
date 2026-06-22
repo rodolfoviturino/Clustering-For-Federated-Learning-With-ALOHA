@@ -46,6 +46,7 @@ docs/
   project_architecture.md                   Where entry points, modules, and notebooks belong
   gpu_jax_backend.md                        GPU backend notes, validation, and Colab guidance
   modeling_assumptions.md                   Thesis defaults and realism switches
+  optimized_d2d_strategy_report.md          Strategy evolution, results, and deployment notes
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
   run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
@@ -202,6 +203,8 @@ clusterization summary and ACK-observed CH throughput.
 Use `proportional_clip` to reproduce the older enhanced-mode allocator exactly,
 `selective_water_filling` to always redistribute a partial amount, and
 `water_filling` to force the full target load when testing high-usage ablations.
+For the full strategy history, observed results, and a deployment-oriented
+control-plane discussion, see `docs/optimized_d2d_strategy_report.md`.
 
 The more selective optimized-D2D ablation is `max_weight`. It keeps the same
 utility terms, but maps them through an adaptive threshold. This concentrates

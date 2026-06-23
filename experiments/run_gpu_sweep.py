@@ -1079,6 +1079,7 @@ def build_parser():
             "adaptive_diversity",
             "aoi_aware_utility",
             "aoi_floor_utility",
+            "aoi_tail_utility",
         ),
         default="norm",
         help=(
@@ -1089,7 +1090,8 @@ def build_parser():
             "adaptive_diversity shifts from early utility to late novelty/freshness; "
             "aoi_aware_utility adds a bounded stale-cluster AoI bonus to utility; "
             "aoi_floor_utility preserves base utility and only raises very stale "
-            "clusters to a conservative minimum probability."
+            "clusters to a conservative minimum probability; aoi_tail_utility "
+            "reserves part of the load budget for stale-tail clusters."
         ),
     )
     parser.add_argument(
@@ -1269,7 +1271,9 @@ def build_parser():
         help=(
             "AoI-enhanced utility weight. For aoi_aware_utility it is a "
             "multiplicative stale-tail bonus; for aoi_floor_utility it is the "
-            "maximum stale floor as a fraction of fixed-D2D access probability."
+            "maximum stale floor as a fraction of fixed-D2D access probability; "
+            "for aoi_tail_utility it is a reserved load-budget fraction clipped "
+            "to [0, 1]."
         ),
     )
     parser.add_argument(

@@ -84,6 +84,11 @@ SUMMARY_FIELDS = (
     "optimized_d2d_energy_efficiency_t200",
     "optimized_d2d_clusterhead_battery_t200",
     "optimized_d2d_clusterhead_energy_used_t200",
+    "optimized_d2d_aoi_t200",
+    "optimized_d2d_p75_aoi_t200",
+    "optimized_d2d_p90_aoi_t200",
+    "optimized_d2d_p95_aoi_t200",
+    "optimized_d2d_stale_fraction_75_t200",
     "result_csv",
 )
 
@@ -149,6 +154,13 @@ def select_candidate_slice(candidates, candidate_start=0, candidate_count=None):
 
 def _float(row, key):
     return float(row[key])
+
+
+def _optional_float(row, key, default=math.nan):
+    value = row.get(key)
+    if value in (None, ""):
+        return default
+    return float(value)
 
 
 def _safe_log10(value):
@@ -277,6 +289,26 @@ def summarize_candidate(candidate, rows, result_csv, candidate_index=None):
             row_200,
             "optimized_aloha_d2d_clusterhead_energy_used_mean",
         ),
+        "optimized_d2d_aoi_t200": _optional_float(
+            row_200,
+            "optimized_aloha_d2d_aoi_mean",
+        ),
+        "optimized_d2d_p75_aoi_t200": _optional_float(
+            row_200,
+            "optimized_aloha_d2d_p75_aoi_mean",
+        ),
+        "optimized_d2d_p90_aoi_t200": _optional_float(
+            row_200,
+            "optimized_aloha_d2d_p90_aoi_mean",
+        ),
+        "optimized_d2d_p95_aoi_t200": _optional_float(
+            row_200,
+            "optimized_aloha_d2d_p95_aoi_mean",
+        ),
+        "optimized_d2d_stale_fraction_75_t200": _optional_float(
+            row_200,
+            "optimized_aloha_d2d_stale_fraction_75_mean",
+        ),
         "result_csv": str(result_csv),
     }
 
@@ -368,6 +400,15 @@ def _format_ratio(value):
     return f"{float(value):.4f}"
 
 
+def _format_metric(value, digits=3):
+    if value in ("", None):
+        return ""
+    value = float(value)
+    if math.isnan(value):
+        return ""
+    return f"{value:.{digits}f}"
+
+
 def _write_markdown(rows, output_path):
     lines = [
         "# Energy-Aware CH Rotation Sweep",
@@ -377,14 +418,15 @@ def _write_markdown(rows, output_path):
         "then maximize final optimized-D2D CH battery.",
         "",
         "| Rank | Candidate | Feasible | t1e-3 | t200 error | Error/static | "
-        "Energy/static | CH battery gain | Energy eff | CH uploads | Device uploads |",
-        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "Energy/static | CH battery gain | Energy eff | p90 AoI | stale75 | "
+        "CH uploads | Device uploads |",
+        "| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         lines.append(
             "| {rank} | `{candidate_id}` | {feasible} | {t3} | {t200:.3e} | "
             "{err_ratio} | {energy_ratio} | {battery_gain} | {eff:.3f} | "
-            "{ch:.2f} | {uploads:.2f} |".format(
+            "{p90_aoi} | {stale75} | {ch:.2f} | {uploads:.2f} |".format(
                 rank=row["rank"],
                 candidate_id=row["candidate_id"],
                 feasible=row["energy_feasible"],
@@ -394,6 +436,11 @@ def _write_markdown(rows, output_path):
                 energy_ratio=_format_ratio(row["energy_ratio_vs_static"]),
                 battery_gain=_format_ratio(row["ch_battery_gain_vs_static"]),
                 eff=float(row["optimized_d2d_energy_efficiency_t200"]),
+                p90_aoi=_format_metric(row["optimized_d2d_p90_aoi_t200"], 1),
+                stale75=_format_metric(
+                    row["optimized_d2d_stale_fraction_75_t200"],
+                    3,
+                ),
                 ch=float(row["optimized_d2d_ch_uploads_t200"]),
                 uploads=float(row["optimized_d2d_uploads_t200"]),
             )

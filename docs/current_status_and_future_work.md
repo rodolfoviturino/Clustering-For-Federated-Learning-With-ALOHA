@@ -347,6 +347,8 @@ What is implemented:
 - `hybrid`
 - `adaptive_diversity`
 - `aoi_aware_utility`
+- `aoi_floor_utility`
+- `aoi_tail_utility`
 - `proportional_clip`
 - `water_filling`
 - `selective_water_filling`
@@ -432,7 +434,10 @@ on error, energy, mean AoI, p75/p90/p95 AoI, stale-tail fractions, and peak AoI
 together.  The initial multiplicative AoI-aware test improved mean AoI but did
 not improve the full error/energy tradeoff, so the code also includes
 `aoi_floor_utility`, a conservative variant that preserves base utility access
-and only gives very stale clusters a bounded minimum probability.
+and only gives very stale clusters a bounded minimum probability.  The latest
+continuation is `aoi_tail_utility`, which reserves a bounded share of the load
+budget for the differentiated stale AoI tail because previous AoI policies and
+AoI-triggered CH rotation did not reduce the p75/p90/p95 tail enough.
 
 ## Current Main Limitations
 
@@ -454,9 +459,10 @@ following points should be explicitly disclosed:
   coding, or shadowing;
 - member-to-CH link success is not distance/SINR dependent;
 - utility exponents and allocator thresholds are hyperparameters;
-- AoI is now measured explicitly and can drive `aoi_aware_utility` or
-  `aoi_floor_utility`, but the weight, exponent, and stale-tail threshold are
-  policy hyperparameters that need sensitivity analysis;
+- AoI is now measured explicitly and can drive `aoi_aware_utility`,
+  `aoi_floor_utility`, or `aoi_tail_utility`, but the weight, exponent,
+  stale-tail threshold, and quota are policy hyperparameters that need
+  sensitivity analysis;
 - data are synthetic linear-regression data, not non-IID task data.
 
 ## Current Empirical Findings
@@ -512,16 +518,22 @@ The most important current results are:
     p75/p90/p95 AoI = 201/201/201
   ```
 
-  This means the current AoI access policies should be kept as ablations, not
-  promoted as the main optimized-D2D strategy. The next better AoI idea is
-  likely CH-side: re-elect a better CH for stale clusters instead of only
-  increasing stale-cluster access probability.
+  This means the first AoI access policies should be kept as ablations, not
+  promoted as the main optimized-D2D strategy.
 
-- The implementation now supports that next CH-side test through
-  `--d2d-ch-rotation-trigger-mode aoi` or `interval_or_aoi`. This keeps the
-  cluster membership fixed and only re-elects valid one-hop CHs for stale
-  clusters, so it is more realistic than forcing more access attempts from a
-  poor CH.
+- AoI-triggered CH rotation was then tested as a CH-side correction. In
+  `k1000_energy_rotation_aoi_profiles_r100`, it did not materially improve
+  AoI: final mean AoI stayed around `161`, p90 AoI stayed at `201`, and stale75
+  stayed around `72%`. The strongest result in that sweep was still the
+  energy/battery tradeoff from `energy_eco` and `energy_balanced`, not the AoI
+  trigger itself.
+
+- The implementation now supports the next access-side test through
+  `--optimized-d2d-access-mode aoi_tail_utility`. Unlike the older AoI bonus or
+  floor, this mode reserves a real quota of the load budget for stale-tail
+  clusters while returning exact base utility when no differentiated stale tail
+  exists. It is specifically meant to test whether p75/p90/p95 AoI can be
+  reduced without discarding the tuned utility policy.
 
 ## Recommended Future Work Order
 
@@ -618,11 +630,16 @@ non-D2D: per-device AoI
 D2D:     per-cluster AoI
 ```
 
-The next experiment should tune the implemented AoI-aware policy, then compare:
+The next experiment should test `aoi_tail_utility`, because the mean-AoI bonus
+and floor policies did not clear the stale tail and AoI-triggered CH rotation
+mostly changed energy/battery tradeoffs. Compare:
 
 ```text
 mean AoI
+p75 AoI
+p90 AoI
 p95 AoI
+stale_fraction_75
 peak AoI
 error norm
 energy efficiency
@@ -632,8 +649,8 @@ CH upload ratio
 Expected benefit:
 
 - freshness becomes measurable, not only a scheduling weight;
-- enables analysis of `freshness_exp` and AoI-tail parameters against
-  mean/p95/peak AoI;
+- enables analysis of `freshness_exp`, AoI quota, exponent, and threshold
+  against mean/percentile/stale-tail AoI;
 - provides another scientific objective beyond final error norm.
 
 ### Step 5: Sensitivity Analysis For Policy Hyperparameters

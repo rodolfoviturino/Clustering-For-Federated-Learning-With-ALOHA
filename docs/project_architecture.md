@@ -154,8 +154,8 @@ outputs.
   coverage of the fixed cluster membership. Rotation can be periodic,
   AoI-triggered, or both.
 - Contains thesis-compatible optimized D2D plus enhanced `utility`,
-  `max_weight`, `hybrid`, `adaptive_diversity`, `aoi_aware_utility`, and
-  `aoi_floor_utility` CH access policies.
+  `max_weight`, `hybrid`, `adaptive_diversity`, `aoi_aware_utility`,
+  `aoi_floor_utility`, and `aoi_tail_utility` CH access policies.
 - Load-controlled enhanced policies share the same allocator family:
   `proportional_clip`, `water_filling`, `selective_water_filling`, and the
   default `conditional_selective_water_filling`, which only redistributes lost

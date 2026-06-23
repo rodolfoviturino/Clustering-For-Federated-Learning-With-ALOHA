@@ -284,6 +284,25 @@ member-to-CH availability.
   Here `aoi_weight` is a fraction of the fixed-D2D access probability, not a
   multiplicative utility boost. This keeps stale clusters from being completely
   ignored while preserving most of the original utility ranking.
+- `--optimized-d2d-access-mode aoi_tail_utility` is the stronger stale-tail
+  quota ablation. It computes the base utility probability and a second
+  probability using only AoI-tail pressure:
+
+  ```text
+  base_probability_h = load_control(base_utility_h)
+  tail_probability_h = load_control(tail_h^aoi_exp, floor = 0)
+
+  p_h =
+    (1 - quota) * base_probability_h +
+    quota * tail_probability_h
+  ```
+
+  In this mode `quota = clip(aoi_weight, 0, 1)`. The policy returns
+  `base_probability_h` exactly when active clusters have no differentiated AoI
+  tail, so early rounds with uniform AoI are not disturbed. The motivation is
+  the latest physical-energy observation that mean AoI can improve while
+  p75/p90/p95 AoI remain saturated; this policy reserves a real share of the
+  load budget for the stale tail instead of only multiplying utility.
 - `conditional_selective_water_filling` is the default allocator for enhanced
   load-controlled policies. It is intentionally not a centralized scheduler:
   the BS can broadcast only the target load, trigger ratio, redistribution

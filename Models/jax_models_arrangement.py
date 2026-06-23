@@ -29,6 +29,9 @@ The simulation follows the same thesis-level structure as the original model:
   it first computes the base utility access probability and only raises stale
   clusters to a bounded minimum probability when they would otherwise be almost
   ignored.
+* the AoI-tail utility D2D policy reserves a bounded share of the load budget
+  for clusters in a differentiated AoI tail while returning exact base utility
+  when all active clusters have similar AoI.
 * optional CH-to-BS link realism can make a collision-free CH upload succeed
   with probability derived from the elected CH's BS channel quality and battery.
 * optional device-to-BS link realism can apply the same physical decoding model
@@ -752,6 +755,160 @@ def _aoi_floor_utility_access_probability(
     return jnp.where(cluster_mask, jnp.clip(probability, 0.0, pcomp), 0.0)
 
 
+def _aoi_tail_utility_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    cluster_aoi,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    aoi_weight,
+    aoi_exponent,
+    aoi_threshold_fraction,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Reserve part of the optimized-D2D load budget for stale AoI-tail clusters.
+
+    The previous AoI policies used AoI as a multiplicative utility bonus or as
+    a minimum probability floor.  The latest experiments showed that those
+    policies can lower mean AoI while leaving the p75/p90/p95 tail saturated.
+    This policy attacks that specific tail problem: it keeps a normal utility
+    allocator for most of the expected CH contender load, then computes a
+    second allocator whose utility is only the stale-tail AoI pressure.
+
+    Deployment interpretation:
+    - Each CH can maintain ``cluster_aoi`` from ACK/no-ACK feedback.  The BS can
+      broadcast the stale-tail normalizer and the quota scalar, but it does not
+      centrally select which CH must transmit.
+    - ``aoi_weight`` is interpreted as a reserved-load fraction and clipped to
+      ``[0, 1]``.  For example, ``0.25`` means 75% of the probability follows
+      norm/size/freshness utility and up to 25% follows stale-tail AoI.
+    - If active clusters have no differentiated stale-tail AoI, the function
+      returns the base utility probability exactly.  This avoids disturbing
+      early rounds where every cluster has nearly identical AoI.
+
+    Array contracts:
+    - aggregate_norms: float[max_clusters], one aggregate norm per CH.
+    - cluster_sizes: int[max_clusters], active members represented by the CH.
+    - freshness: float[max_clusters], rounds since optimized-D2D success.
+    - cluster_aoi: float[max_clusters], ACK age for each optimized-D2D cluster.
+    - cluster_mask: bool[max_clusters], true for real padded cluster rows.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    aoi_quota = jnp.clip(jnp.asarray(aoi_weight, dtype=dtype), 0.0, 1.0)
+    aoi_exponent = jnp.asarray(aoi_exponent, dtype=dtype)
+    aoi_threshold_fraction = jnp.asarray(aoi_threshold_fraction, dtype=dtype)
+
+    base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+    base_probability = _load_controlled_access_from_utility(
+        utility=base_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+    # cluster_aoi: float[max_clusters], age of each active optimized-D2D
+    # aggregate.  Normalization by the current active maximum makes the same
+    # threshold usable for 200-round thesis curves and longer Colab sweeps.
+    # A separate spread test prevents the quota from activating when every
+    # cluster has the same AoI and there is no differentiated stale tail.
+    active_aoi = jnp.where(cluster_mask, cluster_aoi, 0.0)
+    max_active_aoi = jnp.max(active_aoi)
+    min_active_aoi = jnp.min(jnp.where(cluster_mask, cluster_aoi, max_active_aoi))
+    has_differentiated_tail = (max_active_aoi - min_active_aoi) > eps
+    normalized_aoi = (active_aoi + eps) / (max_active_aoi + eps)
+
+    # tail_pressure is zero for ordinary clusters and one for the currently
+    # oldest cluster(s).  The exponent controls whether the reserved load is
+    # spread across the stale tail or concentrated on the oldest rows.
+    remaining_tail_width = jnp.maximum(1.0 - aoi_threshold_fraction, eps)
+    tail_pressure = jnp.clip(
+        (normalized_aoi - aoi_threshold_fraction) / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+    tail_active = has_differentiated_tail & (jnp.max(tail_pressure) > eps)
+    tail_priority = jnp.where(
+        tail_pressure > eps,
+        tail_pressure**aoi_exponent,
+        0.0,
+    )
+    tail_utility = jnp.where(
+        cluster_mask,
+        tail_priority,
+        0.0,
+    )
+    tail_utility_for_allocation = jnp.where(
+        tail_active,
+        tail_utility,
+        base_utility,
+    )
+
+    # The tail allocator uses zero extra floor.  The base allocator already
+    # provides the configured floor, so the reserved quota should be spent on
+    # stale clusters instead of being reintroduced uniformly to all CHs.
+    tail_probability = _load_controlled_access_from_utility(
+        utility=tail_utility_for_allocation,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=jnp.asarray(0.0, dtype=dtype),
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+    mixed_probability = (1.0 - aoi_quota) * base_probability + (
+        aoi_quota * tail_probability
+    )
+    bounded_probability = jnp.where(
+        cluster_mask,
+        jnp.clip(mixed_probability, 0.0, pcomp),
+        0.0,
+    )
+    return jnp.where(tail_active, bounded_probability, base_probability)
+
+
 def _load_controlled_access_from_utility(
     utility,
     cluster_mask,
@@ -1467,11 +1624,12 @@ def error_calculator_trace_jax(
         "adaptive_diversity",
         "aoi_aware_utility",
         "aoi_floor_utility",
+        "aoi_tail_utility",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
             "'max_weight', 'hybrid', 'adaptive_diversity', or "
-            "'aoi_aware_utility'/'aoi_floor_utility'"
+            "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -2514,6 +2672,33 @@ def error_calculator_trace_jax(
             )
         elif optimized_d2d_access_mode == "aoi_floor_utility":
             optimized_probability_d2d = _aoi_floor_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                cluster_aoi=d2d_aoi[2],
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                aoi_weight=d2d_aoi_weight,
+                aoi_exponent=d2d_aoi_exponent,
+                aoi_threshold_fraction=d2d_aoi_threshold_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
+        elif optimized_d2d_access_mode == "aoi_tail_utility":
+            optimized_probability_d2d = _aoi_tail_utility_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
                 cluster_sizes=active_member_counts_3,
                 freshness=optimized_d2d_freshness,

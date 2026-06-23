@@ -228,8 +228,20 @@ minimum probability. In this mode, `--optimized-d2d-aoi-weight` is interpreted
 as a fraction of the fixed-D2D access probability. For example, `0.25` means
 the oldest stale clusters receive at least `25%` of fixed-D2D access
 probability, while all probabilities remain capped by `pcomp`. This is the
-preferred next test after the stronger multiplicative AoI-aware policy, because
-it should reduce stale tails with less disruption to error-norm convergence.
+lower-risk ablation after the stronger multiplicative AoI-aware policy, because
+it can reduce mean AoI with less disruption to error-norm convergence.
+
+The stronger stale-tail experiment is
+`--optimized-d2d-access-mode aoi_tail_utility`. It keeps the base utility
+allocator, computes a second allocator using only stale-tail AoI pressure, and
+mixes the two. In this mode, `--optimized-d2d-aoi-weight` is interpreted as the
+reserved load-budget fraction for stale clusters and is clipped to `[0, 1]`.
+For example, `0.25` keeps roughly 75% of the optimized-D2D CH access budget on
+norm/size/freshness utility and reserves up to 25% for the stale AoI tail. If
+active clusters have no differentiated AoI tail, the mode returns the base
+utility probability exactly. This is the next recommended AoI access test
+because the previous AoI bonus/floor and AoI-triggered CH-rotation experiments
+improved some means but did not clear the p75/p90/p95 AoI tail.
 
 Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
@@ -468,12 +480,42 @@ python main.py --run-name k1000_physical_energy_aoi_floor_r100 \
   --optimized-d2d-aoi-threshold-fraction 0.85
 ```
 
+Recommended stale-tail AoI quota comparison:
+
+```bash
+python main.py --run-name k1000_physical_energy_aoi_tail_r100 \
+  --devices 1000 \
+  --rounds 100 \
+  --precision float64 \
+  --energy-drain-mode dynamic \
+  --energy-model first_order_radio \
+  --battery-feasibility-mode required_energy \
+  --d2d-ch-bs-success-mode rayleigh_outage \
+  --device-bs-success-mode rayleigh_outage \
+  --cluster-head-selection-mode quality \
+  --cluster-head-channel-score-mode rayleigh_outage \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --optimized-d2d-access-mode aoi_tail_utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1 \
+  --optimized-d2d-aoi-weight 0.25 \
+  --optimized-d2d-aoi-exponent 1.0 \
+  --optimized-d2d-aoi-threshold-fraction 0.75
+```
+
 After two or more runs are complete, compare them without rerunning JAX:
 
 ```bash
 python -m experiments.compare_runs \
   Runs/k1000_physical_energy_r100 \
-  Runs/k1000_physical_energy_aoi_floor_r100
+  Runs/k1000_physical_energy_aoi_floor_r100 \
+  Runs/k1000_physical_energy_aoi_tail_r100
 ```
 
 The comparator writes `run_comparison_summary.csv` and
@@ -746,7 +788,8 @@ skip cleanly when JAX is not installed in the local interpreter.
   still uses same-channel ALOHA collisions as the interference abstraction; it
   is not a full SINR/FER/BER link-layer simulator.
 - AoI is tracked as an output metric. It alters scheduling only when an
-  enhanced policy such as `aoi_aware_utility` is explicitly selected.
+  enhanced policy such as `aoi_aware_utility`, `aoi_floor_utility`, or
+  `aoi_tail_utility` is explicitly selected.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation
   candidate, not the default implementation.

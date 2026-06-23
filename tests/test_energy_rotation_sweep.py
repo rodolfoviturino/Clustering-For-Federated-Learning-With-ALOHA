@@ -28,6 +28,11 @@ def _fake_rows(final_error, final_energy, final_efficiency, final_ch_battery):
                     final_ch_battery
                 ),
                 "optimized_aloha_d2d_clusterhead_energy_used_mean": "0.018",
+                "optimized_aloha_d2d_aoi_mean": "120.0",
+                "optimized_aloha_d2d_p75_aoi_mean": "150.0",
+                "optimized_aloha_d2d_p90_aoi_mean": "180.0",
+                "optimized_aloha_d2d_p95_aoi_mean": "190.0",
+                "optimized_aloha_d2d_stale_fraction_75_mean": "0.4",
             }
         )
     return rows

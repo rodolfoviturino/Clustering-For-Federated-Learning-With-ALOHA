@@ -673,6 +673,16 @@ undercount devices when collisions are frequent.
 - Is intended as the lower-risk AoI strategy after the stronger multiplicative
   AoI-aware policy reduced mean AoI but hurt error/energy in the first test.
 
+`aoi_tail_utility`
+
+- Keeps the same base utility probability as `utility`.
+- Computes a second probability from stale-tail AoI pressure only.
+- Interprets `aoi_weight` as a reserved load-budget quota clipped to `[0, 1]`.
+- Returns exact base utility when active clusters have no differentiated
+  stale-tail AoI.
+- Is intended to attack p75/p90/p95 AoI directly after the AoI bonus/floor and
+  AoI-triggered CH rotation tests did not clear the stale tail.
+
 ## Control-Plane Arrangement In A Real System
 
 A plausible real deployment would separate control signaling from FL update
@@ -881,8 +891,9 @@ should be stated clearly:
 - No non-IID data or data-similarity-aware clustering is included.
 - The BS does not model full control-plane overhead explicitly. The only
   control overhead currently exposed is the optional CH-rotation control cost.
-- AoI is now tracked explicitly as mean, peak, and p95 metrics. It drives
-  scheduling only in opt-in policies such as `aoi_aware_utility`; it remains
+- AoI is now tracked explicitly as mean, peak, percentile, and stale-tail
+  metrics. It drives scheduling only in opt-in policies such as
+  `aoi_aware_utility`, `aoi_floor_utility`, or `aoi_tail_utility`; it remains
   information-age over successful uploads, not semantic freshness of labels or
   data distribution.
 
@@ -897,8 +908,8 @@ The most productive next implementation steps are summarized in
    member success is not only a global probability.
 3. Extend Rayleigh outage toward an SINR/PER abstraction if co-channel
    interference power, modulation, and coding need to be represented.
-4. Tune the AoI-aware utility ablation, then compare mean/p95/peak AoI against
-   error norm and energy efficiency.
+4. Test `aoi_tail_utility`, then compare mean/p75/p90/p95/stale AoI against
+   error norm, energy efficiency, and CH battery.
 5. Run structured sensitivity sweeps for utility exponents, allocator
    thresholds, CH-rotation weights, energy coefficients, and Rayleigh SNR
    thresholds.

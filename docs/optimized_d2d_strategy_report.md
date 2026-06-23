@@ -98,10 +98,12 @@ Observed conclusions:
   likely stale because their CH-to-BS channel, energy state, or aggregate value
   is poor. Giving them extra access probability can consume energy and
   contention without improving the model enough.
-- Therefore, AoI-aware access should remain an ablation. The next more
-  promising AoI strategy is CH-side: when a cluster becomes stale, re-elect a
-  better CH for BS delivery rather than only increasing that cluster's access
-  probability.
+- Therefore, the first AoI-aware access policies should remain ablations. A
+  CH-side AoI-triggered rotation was implemented and tested next; it preserved
+  energy-rotation tradeoffs but did not materially clear the stale tail. The
+  current access-side continuation is `aoi_tail_utility`, which reserves an
+  explicit load quota for stale-tail clusters instead of only multiplying score
+  or applying a small floor.
 
 The latest `K=3000` CH-quality and energy-rotation runs also clarified the
 physical enhanced direction:
@@ -676,6 +678,49 @@ Observed status:
   the stale-tail problem. The stale clusters likely need better CH selection,
   better CH rotation, or a different control mechanism.
 
+### AoI-Tail Utility
+
+The AoI-tail policy is the next access-side test after the multiplicative
+AoI-aware and AoI-floor ablations. Those previous modes changed the score or
+minimum probability, but the p75/p90/p95 AoI tail could still remain saturated.
+`aoi_tail_utility` reserves an explicit fraction of the optimized-D2D load
+budget for stale-tail clusters:
+
+```text
+base_probability_h = load_control(base_utility_h)
+tail_probability_h = load_control(tail_h^aoi_exp, floor = 0)
+
+p_h =
+  (1 - quota) * base_probability_h +
+  quota * tail_probability_h
+```
+
+where:
+
+```text
+quota = clip(aoi_weight, 0, 1)
+```
+
+Real-world plausibility:
+
+- The CH still performs a local ALOHA trial; the BS does not assign individual
+  CH transmissions.
+- The CH can maintain AoI from ACK/no-ACK feedback, and the BS can broadcast
+  scalar normalizers, the stale-tail threshold, and the quota.
+- If active clusters have no differentiated AoI tail, the mode returns the base
+  utility probability exactly. This avoids unnecessary disturbance when AoI is
+  still uniform.
+
+Status:
+
+- Implemented as an opt-in policy with
+  `--optimized-d2d-access-mode aoi_tail_utility`.
+- Recommended first test:
+
+  ```bash
+  python main.py --run-name k1000_physical_energy_aoi_tail_r100 --devices 1000 --rounds 100 --precision float64 --energy-drain-mode dynamic --energy-model first_order_radio --battery-feasibility-mode required_energy --d2d-ch-bs-success-mode rayleigh_outage --device-bs-success-mode rayleigh_outage --cluster-head-selection-mode quality --cluster-head-channel-score-mode rayleigh_outage --cluster-head-degree-weight 0.0 --cluster-head-channel-weight 1.0 --cluster-head-battery-weight 0.0 --optimized-d2d-access-mode aoi_tail_utility --optimized-d2d-load-allocation-mode conditional_selective_water_filling --optimized-d2d-access-floor-fraction 0.02 --optimized-d2d-norm-exponent 3.5 --optimized-d2d-cluster-size-exponent 1.5 --optimized-d2d-freshness-exponent 0.25 --optimized-d2d-load-target-factor 1.1 --optimized-d2d-aoi-weight 0.25 --optimized-d2d-aoi-exponent 1.0 --optimized-d2d-aoi-threshold-fraction 0.75
+  ```
+
 ## Plausible Real Deployment Arrangement
 
 A realistic implementation should separate control signaling from FL update
@@ -792,6 +837,7 @@ updates, hybrid novelty, and adaptive-diversity state.
 | Adaptive diversity | norm, size, freshness, direction | reference direction, phase scalar | higher | phase schedule may not fit the task |
 | AoI-aware utility | utility plus ACK age | AoI normalizers and load parameters | low to moderate | can trade too much error/energy for mean AoI |
 | AoI-floor utility | base utility probability plus ACK age | stale-tail threshold and floor scalar | low to moderate | mean AoI can improve while stale tail remains severe |
+| AoI-tail utility | utility plus ACK age | stale-tail threshold, quota, and load normalizers | moderate | quota can steal too much load from high-value aggregates |
 
 ## Current Recommendation
 
@@ -854,24 +900,25 @@ It preserved about `+0.108` normalized CH battery versus static while keeping
 energy near static and slightly improving final optimized-D2D error in the
 representative run.
 
-Do not promote `aoi_aware_utility` or `aoi_floor_utility` as the main current
-optimized-D2D policy. They are documented ablations: both improved mean AoI,
-but both worsened error/energy, and `aoi_floor_utility` showed that p75/p90/p95
-AoI can remain saturated even when mean AoI falls.
+Do not promote `aoi_aware_utility`, `aoi_floor_utility`, or AoI-triggered CH
+rotation as the main current optimized-D2D policy yet. They are documented
+ablations: the access modes improved mean AoI but worsened error/energy, while
+AoI-triggered CH rotation preserved the energy-rotation tradeoff but did not
+clear the p75/p90/p95 AoI tail.
 
-The next implemented test point is AoI-triggered CH rotation:
+The next implemented test point is `aoi_tail_utility`:
 
 ```text
---d2d-ch-rotation-mode energy_aware
---d2d-ch-rotation-trigger-mode interval_or_aoi
---d2d-ch-rotation-aoi-threshold-fraction 0.75
---d2d-energy-efficiency-level performance
+--optimized-d2d-access-mode aoi_tail_utility
+--optimized-d2d-aoi-weight 0.25
+--optimized-d2d-aoi-exponent 1.0
+--optimized-d2d-aoi-threshold-fraction 0.75
 ```
 
-This keeps the tuned utility access policy unchanged and attacks the stale
-cluster problem through CH choice. A stale cluster is re-elected internally only
-to a member that still covers the cluster in one hop; no cluster membership or
-global scheduling assumption changes.
+This keeps most access probability on tuned utility but reserves a controlled
+quota for stale-tail clusters. It remains scalar-control ALOHA rather than
+central scheduling, and it directly targets the stale-tail failure mode that
+the latest AoI-triggered rotation sweep exposed.
 
 ## Open Validation Work
 
@@ -887,8 +934,9 @@ global scheduling assumption changes.
   reference-vector policies such as hybrid/adaptive diversity.
 - Separate "better final numerical floor" from "better convergence before
   numerical saturation" by emphasizing target times and log-error AUC.
-- Validate AoI-triggered CH rotation. It is now implemented, but still needs
-  paired runs against static rotation, periodic performance rotation, and the
-  AoI access ablations.
+- Validate `aoi_tail_utility` against `utility`, `aoi_aware_utility`,
+  `aoi_floor_utility`, and AoI-triggered CH rotation. The key question is
+  whether p75/p90/p95 AoI and stale75 fall without giving up too much
+  log-error AUC, energy efficiency, or CH battery.
 - Calibrate AoI objectives using p75/p90/stale-fraction metrics, not only mean
   AoI. Mean AoI can improve while the stale tail remains near the horizon.

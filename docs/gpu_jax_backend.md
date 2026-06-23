@@ -561,6 +561,25 @@ of the fixed-D2D access probability, unless `pcomp` is smaller. This keeps the
 policy distributed and deployable: CHs still perform local ALOHA trials, and
 the BS only needs scalar load/AoI normalizers plus ACK feedback.
 
+The stale-tail AoI quota mode is selected with
+`--optimized-d2d-access-mode aoi_tail_utility`. It was added after the
+AoI-aware/floor access modes and AoI-triggered CH rotation failed to clear the
+p75/p90/p95 AoI tail. The policy computes one probability from base utility and
+one probability from stale-tail AoI pressure, then mixes them:
+
+```text
+base_probability_h = load_control(base_utility_h)
+tail_probability_h = load_control(tail_h^aoi_exp, floor = 0)
+p_h = (1 - quota) * base_probability_h + quota * tail_probability_h
+```
+
+where `quota = clip(aoi_weight, 0, 1)`. If active clusters have no
+differentiated AoI tail, `p_h` is exactly the base utility probability. This
+keeps early rounds and non-stale deployments from paying unnecessary fairness
+overhead. The deployment model remains the same scalar-control ALOHA model:
+ACK age is local to the CH, and the BS can broadcast normalizers, threshold,
+and quota.
+
 Policy differences:
 
 - `norm` is the thesis-compatible optimized-D2D controller based on aggregate
@@ -578,6 +597,9 @@ Policy differences:
 - `aoi_floor_utility` keeps base utility probabilities and only enforces a
   bounded minimum probability for stale-tail clusters; it is the lower-risk
   AoI ablation when the multiplicative bonus harms error or energy.
+- `aoi_tail_utility` keeps most probability on base utility but reserves an
+  explicit quota for stale-tail clusters; it is the current test aimed at p75,
+  p90, p95, and stale-fraction AoI rather than only mean AoI.
 
 The utility Pareto tuning runner is:
 

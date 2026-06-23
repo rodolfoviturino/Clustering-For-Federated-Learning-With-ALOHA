@@ -831,18 +831,22 @@ should be stated clearly:
 
 ## Best Next Architecture Improvements
 
-The most productive next implementation steps are:
+The most productive next implementation steps are summarized in
+`docs/current_status_and_future_work.md`.  In priority order, they are:
 
-1. Calibrate the dynamic energy costs and CH-rotation interval against a simple
-   radio-power/control-overhead model or sensitivity sweep.
-2. Compare `performance`, `balanced`, and `eco` CH-rotation profiles on
-   `error_norm`, `energy_efficiency`, and `clusterhead_energy_used`, not only
-   on final error.  Use `experiments.run_energy_rotation_sweep` for this paired
-   comparison instead of manually running four separate commands.
-3. Make member-to-CH D2D link success depend on D2D distance or D2D channel
-   quality.
-4. Add noisy or delayed cluster-summary reporting to test whether the
-   density-aware allocator remains robust.
+1. Replace normalized energy costs with a physical radio-energy model that
+   separates member D2D transmission, CH reception/listening, CH aggregation,
+   CH-to-BS transmission, direct device-to-BS transmission, and optional
+   control overhead.
+2. Treat battery primarily as an energy-feasibility constraint for attempted
+   transmissions rather than as a loose multiplicative decoding-probability
+   factor.
+3. Replace the current inverse-pathloss channel proxy with an outage/SINR or
+   packet-success abstraction that can justify the CH-election channel weight.
+4. Add explicit AoI/freshness metrics so the freshness exponent can be evaluated
+   against mean/peak information age, not only final error norm.
+5. Run structured sensitivity sweeps for utility exponents, allocator
+   thresholds, CH-rotation weights, and CH-rotation interval.
 
 For confirming the current channel-heavy CH election choice, use the focused
 runner instead of manually comparing long one-off commands:

@@ -196,7 +196,10 @@ member-to-CH availability.
   proportional information gain.
 - Dynamic energy drain is an enhanced ablation, not a calibrated power model.
   It uses normalized per-attempt costs and does not model recharge, voltage,
-  thermal effects, detailed transmit power control, or intra-run CH re-election.
+  thermal effects, detailed transmit power control, CH receive/listening energy,
+  aggregation energy, or control-plane overhead. Intra-run CH re-election is
+  available separately through `--d2d-ch-rotation-mode energy_aware`, but that
+  rotation currently uses the same normalized energy abstraction.
 - Channel-aware CH-to-BS success is implemented as a decoding-probability
   ablation. When dynamic energy is also enabled, repeated CH duty can reduce
   later battery-aware decoding probability; when dynamic energy is disabled,

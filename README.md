@@ -47,6 +47,7 @@ Models/
 docs/
   project_architecture.md                   Where entry points, modules, and notebooks belong
   current_architecture_considerations.md     Current architecture signals, assumptions, and limits
+  current_status_and_future_work.md         Implemented features, current findings, and next steps
   gpu_jax_backend.md                        GPU backend notes, validation, and Colab guidance
   modeling_assumptions.md                   Thesis defaults and realism switches
   optimized_d2d_strategy_report.md          Strategy evolution, results, and deployment notes

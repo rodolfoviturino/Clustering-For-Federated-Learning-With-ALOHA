@@ -96,6 +96,13 @@ outputs.
   ablations, and which limitations remain before claiming real-world
   comparability.
 
+`docs/current_status_and_future_work.md`
+
+- Summarizes what has already been implemented, what the current experimental
+  results mean, which pieces remain heuristic, and the recommended future-work
+  order for physical energy modeling, battery feasibility, outage/SINR-based
+  channel success, AoI metrics, and hyperparameter validation.
+
 ## Core Modules
 
 `Clustering/jax_clustering_algorithm.py`

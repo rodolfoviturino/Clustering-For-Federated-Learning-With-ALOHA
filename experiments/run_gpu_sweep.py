@@ -183,6 +183,10 @@ def run_gpu_sweep(args):
             d2d_ch_bs_min_success_probability=args.d2d_ch_bs_min_success_probability,
             d2d_ch_bs_pathloss_exponent=args.d2d_ch_bs_pathloss_exponent,
             d2d_ch_bs_battery_exponent=args.d2d_ch_bs_battery_exponent,
+            device_bs_success_mode=args.device_bs_success_mode,
+            device_bs_min_success_probability=args.device_bs_min_success_probability,
+            device_bs_pathloss_exponent=args.device_bs_pathloss_exponent,
+            device_bs_battery_exponent=args.device_bs_battery_exponent,
             device_distance_to_bs=devices.distance_to_bs,
             device_battery=devices.battery,
             optimized_access_floor_fraction=args.optimized_access_floor_fraction,
@@ -321,6 +325,12 @@ def run_gpu_sweep(args):
         ),
         "d2d_ch_bs_pathloss_exponent": float(args.d2d_ch_bs_pathloss_exponent),
         "d2d_ch_bs_battery_exponent": float(args.d2d_ch_bs_battery_exponent),
+        "device_bs_success_mode": args.device_bs_success_mode,
+        "device_bs_min_success_probability": float(
+            args.device_bs_min_success_probability
+        ),
+        "device_bs_pathloss_exponent": float(args.device_bs_pathloss_exponent),
+        "device_bs_battery_exponent": float(args.device_bs_battery_exponent),
         "optimized_access_floor_fraction": float(args.optimized_access_floor_fraction),
         "optimized_d2d_access_floor_fraction": float(
             args.optimized_d2d_access_floor_fraction
@@ -582,6 +592,45 @@ def build_parser():
         default=0.0,
         help=(
             "Optional battery exponent for channel_quality CH-to-BS decoding. "
+            "The default 0 uses channel quality only."
+        ),
+    )
+    parser.add_argument(
+        "--device-bs-success-mode",
+        choices=("none", "channel_quality"),
+        default="none",
+        help=(
+            "Optional device-to-BS decoding realism for non-D2D curves. none "
+            "preserves the thesis-compatible collision-only behavior; "
+            "channel_quality makes each collision-free direct upload succeed "
+            "according to the transmitting device distance-to-BS and optional "
+            "battery factor."
+        ),
+    )
+    parser.add_argument(
+        "--device-bs-min-success-probability",
+        type=float,
+        default=0.20,
+        help=(
+            "Minimum collision-free device-to-BS decoding probability used by "
+            "channel_quality mode. Ignored when success mode is none."
+        ),
+    )
+    parser.add_argument(
+        "--device-bs-pathloss-exponent",
+        type=float,
+        default=2.0,
+        help=(
+            "Pathloss exponent used to convert device distance-to-BS into "
+            "normalized BS channel quality for direct channel_quality mode."
+        ),
+    )
+    parser.add_argument(
+        "--device-bs-battery-exponent",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional battery exponent for direct device-to-BS decoding. "
             "The default 0 uses channel quality only."
         ),
     )

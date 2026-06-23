@@ -127,16 +127,14 @@ Real-world plausibility:
 - The decision can be negotiated inside the cluster after formation.  The BS
   does not need to solve a global assignment or directly appoint every CH.
 
-Current modeling limitation:
+Modeling interpretation:
 
-- The current HFL/ALOHA simulator is still mostly collision/load driven on the
-  CH-to-BS uplink.  Because the aggregate member set is unchanged, quality CH
-  election should not be expected to create a large deterministic error-curve
-  gain unless the model also makes CH-to-BS success, energy cost, or retry
-  behavior depend on the elected CH's channel/battery.
-- For that reason, this strategy is best understood as the structural first
-  half of a more realistic uplink-quality model.  It is still useful because it
-  makes the chosen CH identity scientifically meaningful and testable.
+- In thesis-compatible collision-only runs, quality CH election is mostly a
+  structural ablation because the aggregate member set is unchanged.
+- When `--d2d-ch-bs-success-mode channel_quality` is enabled, the elected CH's
+  channel/battery affects whether a collision-free D2D aggregate reaches the
+  BS.  In that setting, quality CH election becomes a physical uplink strategy,
+  not only a clustering reshuffle.
 
 ### Channel-Aware CH-to-BS Success
 
@@ -171,6 +169,17 @@ q_i =
 The default remains `--d2d-ch-bs-success-mode none`, so thesis-compatible runs
 do not change.  The enhanced mode is enabled with
 `--d2d-ch-bs-success-mode channel_quality`.
+
+For fair D2D vs non-D2D figures, enable the direct counterpart too:
+
+```text
+--device-bs-success-mode channel_quality
+```
+
+That applies the same distance/pathloss and optional battery decoding model to
+polling, fixed ALOHA, and optimized ALOHA without D2D.  The difference is that
+the transmitter is an individual device instead of an elected CH carrying an
+aggregate.
 
 Real-world plausibility:
 

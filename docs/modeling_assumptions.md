@@ -25,16 +25,23 @@ This document records the simulation defaults after the code cleanup.
   `--cluster-head-selection-mode quality`. This does not change cluster
   membership. It only moves the CH role to the highest-scoring member that can
   still directly cover the whole cluster. The score uses local D2D degree,
-  normalized BS channel quality, and battery. In the current collision-oriented
-  ALOHA model, this is a structural CH-selection ablation; strong deterministic
-  gains require a follow-up CH-to-BS channel or energy model that makes the
-  elected CH's quality affect successful uplink delivery or cost.
+  normalized BS channel quality, and battery. In the collision-only default it
+  is mostly a structural CH-selection ablation; its physical effect becomes
+  measurable when channel-aware CH-to-BS decoding or future energy drain is
+  enabled.
 - Enhanced runs can enable channel-aware CH-to-BS decoding with
   `--d2d-ch-bs-success-mode channel_quality`. A CH still contends through
   ALOHA and can still collide; only after a collision-free attempt does the BS
   decode the packet with probability derived from the elected CH's normalized
   inverse pathloss and optional battery factor. The default `none` preserves
   thesis-compatible collision-only D2D uploads.
+- Enhanced runs can enable the same channel-aware decoding for direct non-D2D
+  device-to-BS uploads with `--device-bs-success-mode channel_quality`. This
+  affects polling, fixed ALOHA, and optimized ALOHA without D2D. A direct
+  device still needs to compute/access and avoid collision first; only then is
+  the packet decoded according to the device's normalized inverse pathloss and
+  optional battery factor. Use both device-BS and D2D CH-BS channel modes when
+  the goal is a physically fair D2D vs non-D2D comparison.
 - First-tier HFL aggregation at the CH is a sum of member updates.
 - The thesis figure code applies the BS update as an unscaled SGD step:
   `w <- w - u1 * gradient`.
@@ -179,3 +186,7 @@ member-to-CH availability.
 - Channel-aware CH-to-BS success is implemented as a decoding-probability
   ablation, not a full energy-drain model. It changes whether a collision-free
   D2D aggregate reaches the BS; it does not yet reduce battery over time.
+- Channel-aware direct device-to-BS success is implemented with the same
+  probability model as CH-to-BS decoding, but it is still not a full physical
+  layer. The current abstraction uses distance/pathloss and optional battery,
+  not SINR, coding rate, fading, or shadowing.

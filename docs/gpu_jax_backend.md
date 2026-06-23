@@ -54,6 +54,9 @@ fixed-shape arrays with additional profiling.
 - Uses `jax.lax.scan` to advance one trajectory from `t = 1` to `max_t`.
 - Returns metrics at all requested checkpoints without rerunning earlier
   iterations.
+- Can keep the thesis-compatible collision-only uplink model, or apply
+  optional channel-aware decoding to direct device-to-BS uploads and D2D
+  CH-to-BS uploads after ALOHA collision resolution.
 
 `experiments/run_gpu_sweep.py`
 
@@ -223,17 +226,22 @@ which member represents an already formed cluster on the BS uplink. It is
 plausible as an intra-cluster control step: members exchange local degree,
 battery, and BS reference-signal quality, then elect the best candidate that
 preserves one-hop coverage. It does not require the BS to assign CHs globally.
-In the current collision-oriented ALOHA model, this is mainly a structural
-uplink-quality ablation: because the member set is unchanged, large systematic
-curve gains require a follow-up model where CH-to-BS success, energy cost, or
-retry behavior depends on the elected CH's BS channel and battery.
+In the thesis-compatible collision-only ALOHA model, this is mainly a
+structural uplink-quality ablation: because the member set is unchanged,
+systematic curve gains require a physical model where CH-to-BS success, energy
+cost, or retry behavior depends on the elected CH's BS channel and battery.
 
-That follow-up is available as
+The channel-aware decoding ablation is available as
 `--d2d-ch-bs-success-mode channel_quality`.  In this mode, an attempted CH still
 enters the same multichannel ALOHA contention process.  If the CH avoids
 collision, the BS decodes the aggregate with probability derived from normalized
 inverse pathloss and optional battery weighting.  This makes elected-CH
 identity matter while preserving distributed ALOHA decisions.
+
+Use `--device-bs-success-mode channel_quality` as the direct device-to-BS
+counterpart for non-D2D curves.  This keeps D2D and non-D2D comparisons under
+the same channel-quality abstraction: first ALOHA contention, then physical
+decoding for collision-free packets.
 
 SciPy `cKDTree` is not used in the GPU backend. It is CPU-side and remains a
 useful validation/profiling reference only:

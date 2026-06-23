@@ -51,6 +51,7 @@ docs/
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
   run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
+  run_ch_quality_weight_sweep.py            Focused quality-CH weight comparison and plots
   merge_utility_pareto_summaries.py         Merge utility Pareto partial runs
   plot_gpu_sweep.py                         CSV-to-figure plotting CLI
   run_ablation.py                           Compatibility wrapper around the GPU sweep runner
@@ -159,15 +160,54 @@ behavior, or `--normalize-by-k` for the smaller normalized SGD update.
 Use `--cluster-head-selection-mode quality` as an enhanced ablation that keeps
 cluster membership fixed but elects, inside each cluster, the best valid CH
 according to D2D degree, BS channel quality, and battery. A member can become
-CH only when it still directly covers all cluster members. Because current
-CH-to-BS upload success is still modeled mainly through ALOHA contention, this
-is most useful as preparation for channel-aware or energy-aware uplink
-experiments.
+CH only when it still directly covers all cluster members. This becomes most
+meaningful when paired with channel-aware CH-to-BS decoding or energy-aware
+uplink ablations, because the selected CH then affects physical delivery or
+cost, not only cluster structure.
 Enable that channel-aware uplink ablation with
 `--d2d-ch-bs-success-mode channel_quality`. In that mode a CH still attempts
 ALOHA normally and can still collide, but a collision-free CH packet is decoded
 with probability based on the elected CH distance-to-BS and optional battery
 factor.
+For physically symmetric comparisons, also enable
+`--device-bs-success-mode channel_quality`. That applies the same second-stage
+decoding model to the non-D2D polling, fixed ALOHA, and optimized ALOHA curves:
+direct devices still contend through ALOHA first, and only collision-free
+packets draw a device-to-BS decoding success probability. Keep both modes at
+`none` when reproducing the original collision-only thesis behavior.
+
+Recommended fair channel-aware comparison:
+
+```bash
+python main.py --run-name k3000_channel_fair \
+  --devices 3000 \
+  --rounds 200 \
+  --precision float64 \
+  --cluster-head-selection-mode quality \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --d2d-ch-bs-success-mode channel_quality \
+  --d2d-ch-bs-min-success-probability 0.35 \
+  --d2d-ch-bs-pathloss-exponent 2.0 \
+  --d2d-ch-bs-battery-exponent 0.25 \
+  --device-bs-success-mode channel_quality \
+  --device-bs-min-success-probability 0.35 \
+  --device-bs-pathloss-exponent 2.0 \
+  --device-bs-battery-exponent 0.25 \
+  --optimized-d2d-access-mode utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-redistribution-fraction 0.25 \
+  --optimized-d2d-redistribution-trigger-ratio 0.95 \
+  --optimized-d2d-density-trigger-threshold 0.95 \
+  --optimized-d2d-dense-trigger-ratio 0.0 \
+  --optimized-d2d-throughput-ewma-decay 0.90 \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1
+```
 
 When optimized ALOHA with D2D underuses the channel after fast convergence,
 enable the guarded optimized-D2D access floor:

@@ -14,7 +14,7 @@ thesis-compatible mode
 
 enhanced mode
   -> test realistic improvements such as utility access, quality CH election,
-     freshness, load control, and channel-aware CH-to-BS decoding
+     freshness, load control, and channel-aware CH-to-BS/device-to-BS decoding
 ```
 
 Do not compare enhanced runs directly against thesis-compatible runs unless the
@@ -279,12 +279,29 @@ Important interpretation:
 - The BS can estimate the channel part from reference signals or historical
   ACK/NACK/CQI-like feedback.
 
+The same physical decoding model can now be applied to direct non-D2D uploads
+with:
+
+```text
+--device-bs-success-mode channel_quality
+```
+
+When both flags are enabled, the comparison is physically symmetric:
+
+```text
+--d2d-ch-bs-success-mode channel_quality
+--device-bs-success-mode channel_quality
+```
+
+The D2D curves still differ because the transmitter is the elected CH and the
+payload may aggregate multiple active members.  The non-D2D curves use the same
+ALOHA contention model, but the transmitter is each individual device.
+
 Current limitation:
 
-- Channel-aware success is currently applied to D2D CH-to-BS uploads.
-- Direct non-D2D device-to-BS uploads are still idealized compared with D2D.
-- A fully fair physical-layer comparison should add the equivalent
-  device-to-BS channel-aware success for polling/fixed/optimized non-D2D curves.
+- The channel-aware success model is still a distance/pathloss proxy.
+- It does not include explicit SINR, fading, shadowing, coding rate, or
+  inter-cell interference.
 
 ## FL Update And Aggregation Model
 
@@ -561,13 +578,14 @@ true optimization error.
 ## Current Best Enhanced Configuration
 
 The current best tested enhanced architecture for `K=3000` with channel-aware
-CH-to-BS success is:
+CH-to-BS success uses strongly channel-heavy CH election:
 
 ```text
 dense geometric clustering
 quality CH election
-CH weights = 0.1 / 0.8 / 0.1
+CH weights = 0.0 / 1.0 / 0.0
 d2d_ch_bs_success_mode = channel_quality
+device_bs_success_mode = channel_quality for fair non-D2D comparison
 utility optimized D2D access
 conditional selective water-filling
 density-aware trigger
@@ -581,13 +599,17 @@ python main.py --run-name <name> \
   --rounds 100 \
   --precision float64 \
   --cluster-head-selection-mode quality \
-  --cluster-head-degree-weight 0.1 \
-  --cluster-head-channel-weight 0.8 \
-  --cluster-head-battery-weight 0.1 \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
   --d2d-ch-bs-success-mode channel_quality \
   --d2d-ch-bs-min-success-probability 0.35 \
   --d2d-ch-bs-pathloss-exponent 2.0 \
   --d2d-ch-bs-battery-exponent 0.25 \
+  --device-bs-success-mode channel_quality \
+  --device-bs-min-success-probability 0.35 \
+  --device-bs-pathloss-exponent 2.0 \
+  --device-bs-battery-exponent 0.25 \
   --optimized-d2d-access-mode utility \
   --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
   --optimized-d2d-redistribution-fraction 0.25 \
@@ -633,8 +655,9 @@ Important comparison warning:
 
 - Runs with `--d2d-ch-bs-success-mode channel_quality` are not directly
   comparable to old thesis-compatible collision-only runs.
-- Direct non-D2D uploads are still more idealized unless a future
-  device-to-BS channel-aware model is enabled.
+- If D2D uses `--d2d-ch-bs-success-mode channel_quality`, use
+  `--device-bs-success-mode channel_quality` when the goal is to compare D2D
+  and non-D2D curves under the same physical-link abstraction.
 
 ## Current Limitations
 
@@ -642,9 +665,7 @@ The current architecture is useful for research iteration, but these limits
 should be stated clearly:
 
 - Battery is static; there is no energy drain model yet.
-- CH-to-BS channel quality uses distance/pathloss only.
-- Direct device-to-BS links are not yet channel-aware in the same way as D2D
-  CH-to-BS links.
+- CH-to-BS and direct device-to-BS channel quality use distance/pathloss only.
 - Member-to-CH D2D link success is a global probability, not a per-link channel
   model.
 - No fading, shadowing, interference beyond ALOHA collisions, modulation, or
@@ -659,13 +680,32 @@ should be stated clearly:
 
 The most productive next implementation steps are:
 
-1. Add channel-aware direct device-to-BS success for non-D2D curves, so D2D and
-   non-D2D physical-layer comparisons are fair.
-2. Add battery drain for CH duty, D2D member transmission, and direct BS
+1. Add battery drain for CH duty, D2D member transmission, and direct BS
    transmission.
-3. Make member-to-CH D2D link success depend on D2D distance or D2D channel
+2. Make member-to-CH D2D link success depend on D2D distance or D2D channel
    quality.
-4. Add noisy or delayed cluster-summary reporting to test whether the
+3. Add noisy or delayed cluster-summary reporting to test whether the
    density-aware allocator remains robust.
-5. Add a stronger CH rotation policy that balances BS channel gain against
+4. Add a stronger CH rotation policy that balances BS channel gain against
    long-term CH duty/fairness.
+
+For confirming the current channel-heavy CH election choice, use the focused
+runner instead of manually comparing long one-off commands:
+
+```bash
+python -m experiments.run_ch_quality_weight_sweep --run-name k3000_ch_quality_finalists --devices 3000 --rounds 200
+```
+
+The default `finalists` profile compares:
+
+```text
+w001000_channel_only   -> degree/channel/battery = 0.0 / 1.0 / 0.0
+w009010_channel_battery -> degree/channel/battery = 0.0 / 0.9 / 0.1
+```
+
+It uses the current enhanced defaults: channel-aware CH-to-BS decoding,
+channel-aware direct device-to-BS decoding for fair figures, utility
+optimized-D2D access, density-aware conditional selective water-filling, and
+`float64` precision.  The runner writes `ch_quality_weight_summary.csv`,
+`ch_quality_weight_top.md`, `ch_quality_weight_best_fair_error_norm.*`, and
+`ch_quality_weight_optimized_d2d_error_norm.*`.

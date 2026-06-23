@@ -89,6 +89,10 @@ class GpuSweepTests(unittest.TestCase):
                 d2d_ch_bs_min_success_probability=0.3,
                 d2d_ch_bs_pathloss_exponent=2.5,
                 d2d_ch_bs_battery_exponent=0.25,
+                device_bs_success_mode="channel_quality",
+                device_bs_min_success_probability=0.4,
+                device_bs_pathloss_exponent=2.2,
+                device_bs_battery_exponent=0.10,
                 optimized_d2d_load_allocation_mode="proportional_clip",
                 optimized_d2d_redistribution_fraction=0.0,
                 optimized_d2d_redistribution_trigger_ratio=0.90,
@@ -109,6 +113,10 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["d2d_ch_bs_min_success_probability"], 0.3)
         self.assertEqual(metadata["d2d_ch_bs_pathloss_exponent"], 2.5)
         self.assertEqual(metadata["d2d_ch_bs_battery_exponent"], 0.25)
+        self.assertEqual(metadata["device_bs_success_mode"], "channel_quality")
+        self.assertEqual(metadata["device_bs_min_success_probability"], 0.4)
+        self.assertEqual(metadata["device_bs_pathloss_exponent"], 2.2)
+        self.assertEqual(metadata["device_bs_battery_exponent"], 0.10)
         self.assertEqual(
             metadata["optimized_d2d_load_allocation_mode"],
             "proportional_clip",

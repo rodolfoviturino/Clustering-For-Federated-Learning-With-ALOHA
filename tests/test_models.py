@@ -112,6 +112,28 @@ class JaxModelTests(unittest.TestCase):
         self.assertLess(probability[1], probability[0])
         self.assertEqual(probability[2], 0.0)
 
+    def test_device_bs_success_probability_uses_channel_and_battery(self):
+        jnp = jax_models.jnp
+        probability = jax_models._device_bs_success_probability(
+            number_of_devices=3,
+            dtype=jnp.float32,
+            success_mode="channel_quality",
+            min_success_probability=jnp.asarray(0.25, dtype=jnp.float32),
+            pathloss_exponent=jnp.asarray(2.0, dtype=jnp.float32),
+            battery_exponent=jnp.asarray(1.0, dtype=jnp.float32),
+            device_distance_to_bs=jnp.asarray([1.0, 10.0, 20.0], dtype=jnp.float32),
+            device_battery=jnp.asarray([100.0, 50.0, 10.0], dtype=jnp.float32),
+        )
+
+        probability = np.asarray(probability)
+
+        self.assertEqual(probability.shape, (3,))
+        self.assertAlmostEqual(probability[0], 1.0, places=6)
+        self.assertGreater(probability[1], 0.25)
+        self.assertLess(probability[1], probability[0])
+        self.assertGreaterEqual(probability[2], 0.25)
+        self.assertLess(probability[2], probability[1])
+
     def test_ch_bs_channel_quality_trace_returns_finite_outputs(self):
         clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
         jnp = jax_models.jnp
@@ -145,6 +167,36 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(uploads >= 0))
         self.assertTrue(np.all(clusterhead_uploads >= 0))
 
+    def test_device_bs_channel_quality_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
+        jnp = jax_models.jnp
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=19,
+            device_bs_success_mode="channel_quality",
+            device_bs_min_success_probability=0.3,
+            device_bs_pathloss_exponent=2.0,
+            device_bs_battery_exponent=0.5,
+            device_distance_to_bs=jnp.asarray([5.0, 80.0, 10.0, 70.0]),
+            device_battery=jnp.asarray([100.0, 30.0, 90.0, 20.0]),
+            checkpoints=[1, 3],
+        )
+
+        error_norms = np.asarray(result.error_norms)
+        uploads = np.asarray(result.successful_uploads)
+
+        self.assertEqual(error_norms.shape, (2, 6))
+        self.assertEqual(uploads.shape, (2, 6))
+        self.assertTrue(np.all(np.isfinite(error_norms)))
+        self.assertTrue(np.all(uploads >= 0))
+
     def test_ch_bs_success_parameters_are_validated(self):
         invalid_kwargs = (
             {"d2d_ch_bs_success_mode": "invalid"},
@@ -152,6 +204,31 @@ class JaxModelTests(unittest.TestCase):
             {"d2d_ch_bs_min_success_probability": 1.1},
             {"d2d_ch_bs_pathloss_exponent": -0.1},
             {"d2d_ch_bs_battery_exponent": -0.1},
+        )
+
+        for kwargs in invalid_kwargs:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    error_calculator(
+                        number_of_mobile_devices__k=4,
+                        data_dimension__L=2,
+                        number_of_parallel_channels__M=2,
+                        probability_that_user_can_compute_its_local_update__pcomp=1.0,
+                        number_of_iterations__t=1,
+                        learning_rate__u1=0.01,
+                        step_size__u=0.1,
+                        clusters_list=[[0, 1], [2, 3]],
+                        seed=17,
+                        **kwargs,
+                    )
+
+    def test_device_bs_success_parameters_are_validated(self):
+        invalid_kwargs = (
+            {"device_bs_success_mode": "invalid"},
+            {"device_bs_min_success_probability": -0.1},
+            {"device_bs_min_success_probability": 1.1},
+            {"device_bs_pathloss_exponent": -0.1},
+            {"device_bs_battery_exponent": -0.1},
         )
 
         for kwargs in invalid_kwargs:

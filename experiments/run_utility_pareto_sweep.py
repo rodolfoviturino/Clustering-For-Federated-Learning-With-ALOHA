@@ -555,6 +555,18 @@ def run_utility_pareto_sweep(args):
         "candidate_start": candidate_start,
         "candidate_end_exclusive": candidate_end,
         "full_grid_candidate_count": len(full_grid),
+        "d2d_ch_bs_success_mode": args.d2d_ch_bs_success_mode,
+        "d2d_ch_bs_min_success_probability": float(
+            args.d2d_ch_bs_min_success_probability
+        ),
+        "d2d_ch_bs_pathloss_exponent": float(args.d2d_ch_bs_pathloss_exponent),
+        "d2d_ch_bs_battery_exponent": float(args.d2d_ch_bs_battery_exponent),
+        "device_bs_success_mode": args.device_bs_success_mode,
+        "device_bs_min_success_probability": float(
+            args.device_bs_min_success_probability
+        ),
+        "device_bs_pathloss_exponent": float(args.device_bs_pathloss_exponent),
+        "device_bs_battery_exponent": float(args.device_bs_battery_exponent),
         "optimized_d2d_load_allocation_mode": args.optimized_d2d_load_allocation_mode,
         "optimized_d2d_redistribution_fraction": float(
             args.optimized_d2d_redistribution_fraction

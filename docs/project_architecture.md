@@ -40,6 +40,21 @@ outputs.
 - Supports `--candidate-start` and `--candidate-count` for Colab-friendly
   partial grid runs.
 
+`experiments/run_ch_quality_weight_sweep.py`
+
+- Runs focused quality-CH election weight comparisons using the current
+  channel-aware enhanced defaults.
+- The default `finalists` profile compares the current two strongest
+  channel-heavy CH election candidates: channel-only and channel-plus-battery.
+- Writes per-candidate result folders plus `ch_quality_weight_summary.csv`,
+  `ch_quality_weight_top.md`, metadata, a best-candidate fair error-norm plot,
+  and a candidate overlay plot for optimized-D2D error norm.
+- The summary includes fair D2D-vs-direct metrics, including direct optimized
+  error at `t=200`, D2D/direct error ratio, D2D log10 gain, and D2D/direct
+  upload ratio.
+- Use `--summarize-existing-run-dir Runs/<name>` to regenerate those summaries
+  and error-norm plots from an already completed sweep without rerunning JAX.
+
 `experiments/merge_utility_pareto_summaries.py`
 
 - Combines summary CSVs from multiple utility Pareto parts.
@@ -58,7 +73,8 @@ outputs.
 
 - Explains the current enhanced architecture in terms of implementable wireless
   signals: battery, BS channel quality, D2D degree, freshness, CH election,
-  member-to-CH availability, CH-to-BS decoding, and load allocation.
+  member-to-CH availability, direct device-to-BS decoding, CH-to-BS decoding,
+  and load allocation.
 - Records which assumptions are thesis-compatible, which are enhanced
   ablations, and which limitations remain before claiming real-world
   comparability.
@@ -80,9 +96,10 @@ outputs.
 - JAX HFL/ALOHA simulation.
 - Uses `jax.lax.scan` to run one trajectory and record all requested
   checkpoints.
-- Supports optional channel-aware CH-to-BS decoding for D2D curves: CHs still
-  contend through ALOHA, but collision-free CH packets may fail based on the
-  elected CH's BS channel quality and battery.
+- Supports optional channel-aware direct device-to-BS decoding for non-D2D
+  curves and optional channel-aware CH-to-BS decoding for D2D curves. Devices
+  and CHs still contend through ALOHA first; collision-free packets may then
+  fail based on transmitter BS channel quality and battery.
 - Contains thesis-compatible optimized D2D plus enhanced `utility`,
   `max_weight`, `hybrid`, and `adaptive_diversity` CH access policies.
 - Load-controlled enhanced policies share the same allocator family:

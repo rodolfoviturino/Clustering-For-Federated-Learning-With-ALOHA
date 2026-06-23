@@ -783,7 +783,7 @@ updates, hybrid novelty, and adaptive-diversity state.
 | Quality CH election | local D2D degree, BS channel estimate, battery, one-hop coverage | optional score weights | low to moderate | limited gain unless CH-BS channel quality affects success/cost |
 | Channel-aware CH-BS success | elected CH channel quality and battery | optional pathloss/min-success parameters | low to moderate | makes enhanced runs less thesis-comparable |
 | Dynamic energy drain | local battery estimate, attempted direct/D2D/CH transmissions | energy-cost coefficients, optional battery classes | moderate | useful for energy/fairness ablations, but not calibrated yet |
-| Energy-aware CH rotation | current battery, BS channel estimate, current CH identity, one-hop coverage | rotation interval and profile weights | moderate | rotation overhead may outweigh error/energy gains |
+| Energy-aware CH rotation | current battery, BS channel estimate, current CH identity, one-hop coverage | rotation interval, optional AoI trigger, and profile weights | moderate | rotation overhead may outweigh error/energy gains |
 | First-order radio energy | per-role distance, packet size, residual battery | energy coefficients and pathloss exponents | moderate | coefficients must be calibrated before physical claims |
 | Rayleigh outage decoding | BS distance or channel estimate | reference SNR and SNR threshold | low to moderate | still abstracts interference through ALOHA collisions only |
 | Battery feasibility | residual battery and role energy requirement | energy model parameters | low to moderate | normalized battery scale must be reported |
@@ -859,6 +859,20 @@ optimized-D2D policy. They are documented ablations: both improved mean AoI,
 but both worsened error/energy, and `aoi_floor_utility` showed that p75/p90/p95
 AoI can remain saturated even when mean AoI falls.
 
+The next implemented test point is AoI-triggered CH rotation:
+
+```text
+--d2d-ch-rotation-mode energy_aware
+--d2d-ch-rotation-trigger-mode interval_or_aoi
+--d2d-ch-rotation-aoi-threshold-fraction 0.75
+--d2d-energy-efficiency-level performance
+```
+
+This keeps the tuned utility access policy unchanged and attacks the stale
+cluster problem through CH choice. A stale cluster is re-elected internally only
+to a member that still covers the cluster in one hop; no cluster membership or
+global scheduling assumption changes.
+
 ## Open Validation Work
 
 - Test robustness when `clusterized_devices_fraction` is noisy or delayed.
@@ -873,8 +887,8 @@ AoI can remain saturated even when mean AoI falls.
   reference-vector policies such as hybrid/adaptive diversity.
 - Separate "better final numerical floor" from "better convergence before
   numerical saturation" by emphasizing target times and log-error AUC.
-- Test AoI-aware CH rotation: when a cluster becomes stale, re-elect a CH with
-  stronger BS channel/energy feasibility inside the same one-hop cluster before
-  increasing access probability.
+- Validate AoI-triggered CH rotation. It is now implemented, but still needs
+  paired runs against static rotation, periodic performance rotation, and the
+  AoI access ablations.
 - Calibrate AoI objectives using p75/p90/stale-fraction metrics, not only mean
   AoI. Mean AoI can improve while the stale tail remains near the horizon.

@@ -51,6 +51,8 @@ SUMMARY_FIELDS = (
     "candidate_index",
     "candidate_id",
     "d2d_ch_rotation_mode",
+    "d2d_ch_rotation_trigger_mode",
+    "d2d_ch_rotation_aoi_threshold_fraction",
     "d2d_energy_efficiency_level",
     "rotation_channel_weight",
     "rotation_battery_weight",
@@ -90,12 +92,14 @@ def _default_sweep_name():
     return "energy_rotation_" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
 
-def energy_rotation_candidates(include_static=True):
+def energy_rotation_candidates(include_static=True, include_aoi_triggered=False):
     """Return the fixed rotation-profile comparison set.
 
     ``static`` is the control: no intra-run CH re-election.  The three
     energy-aware candidates use the named profile weights from
-    ``D2D_ENERGY_EFFICIENCY_PROFILES``.
+    ``D2D_ENERGY_EFFICIENCY_PROFILES``.  AoI-triggered candidates are optional
+    because they are a newer CH-side freshness experiment and should not change
+    historical static/performance/balanced/eco sweeps unless explicitly asked.
     """
     candidates = []
     if include_static:
@@ -103,6 +107,8 @@ def energy_rotation_candidates(include_static=True):
             {
                 "candidate_id": "static",
                 "d2d_ch_rotation_mode": "static",
+                "d2d_ch_rotation_trigger_mode": "interval",
+                "d2d_ch_rotation_aoi_threshold_fraction": 0.75,
                 "d2d_energy_efficiency_level": "balanced",
             }
         )
@@ -111,9 +117,22 @@ def energy_rotation_candidates(include_static=True):
             {
                 "candidate_id": f"energy_{level}",
                 "d2d_ch_rotation_mode": "energy_aware",
+                "d2d_ch_rotation_trigger_mode": "interval",
+                "d2d_ch_rotation_aoi_threshold_fraction": 0.75,
                 "d2d_energy_efficiency_level": level,
             }
         )
+    if include_aoi_triggered:
+        for trigger_mode in ("aoi", "interval_or_aoi"):
+            candidates.append(
+                {
+                    "candidate_id": f"energy_performance_{trigger_mode}",
+                    "d2d_ch_rotation_mode": "energy_aware",
+                    "d2d_ch_rotation_trigger_mode": trigger_mode,
+                    "d2d_ch_rotation_aoi_threshold_fraction": 0.75,
+                    "d2d_energy_efficiency_level": "performance",
+                }
+            )
     return candidates
 
 
@@ -209,6 +228,14 @@ def summarize_candidate(candidate, rows, result_csv, candidate_index=None):
         **candidate,
         "rank": 0,
         "candidate_index": "" if candidate_index is None else int(candidate_index),
+        "d2d_ch_rotation_trigger_mode": candidate.get(
+            "d2d_ch_rotation_trigger_mode",
+            "interval",
+        ),
+        "d2d_ch_rotation_aoi_threshold_fraction": candidate.get(
+            "d2d_ch_rotation_aoi_threshold_fraction",
+            0.75,
+        ),
         "rotation_channel_weight": channel_weight,
         "rotation_battery_weight": battery_weight,
         "rotation_stability_weight": stability_weight,
@@ -561,6 +588,15 @@ def build_parser():
         ),
     )
     parser.add_argument(
+        "--include-aoi-triggered-rotation",
+        action="store_true",
+        help=(
+            "Add performance-profile candidates triggered by AoI stale-tail "
+            "rotation. Default off preserves the historical four-candidate "
+            "static/performance/balanced/eco sweep."
+        ),
+    )
+    parser.add_argument(
         "--energy-feasibility-tolerance",
         type=float,
         default=1.05,
@@ -580,7 +616,8 @@ def build_parser():
 def run_energy_rotation_sweep(args):
     """Run static/performance/balanced/eco CH-rotation candidates."""
     full_candidates = energy_rotation_candidates(
-        include_static=not args.no_static_baseline
+        include_static=not args.no_static_baseline,
+        include_aoi_triggered=args.include_aoi_triggered_rotation,
     )
     selected_candidates = select_candidate_slice(
         full_candidates,
@@ -682,6 +719,10 @@ def run_energy_rotation_sweep(args):
             "energy_d2d_member_cost": args.energy_d2d_member_cost,
             "energy_ch_bs_cost": args.energy_ch_bs_cost,
             "d2d_ch_rotation_interval": args.d2d_ch_rotation_interval,
+            "d2d_ch_rotation_trigger_mode": args.d2d_ch_rotation_trigger_mode,
+            "d2d_ch_rotation_aoi_threshold_fraction": (
+                args.d2d_ch_rotation_aoi_threshold_fraction
+            ),
             "d2d_energy_efficiency_profiles": D2D_ENERGY_EFFICIENCY_PROFILES,
             "optimized_d2d_access_mode": args.optimized_d2d_access_mode,
             "optimized_d2d_load_allocation_mode": args.optimized_d2d_load_allocation_mode,

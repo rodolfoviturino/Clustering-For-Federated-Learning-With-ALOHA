@@ -293,10 +293,24 @@ eco         -> channel 0.45, battery 0.45, stability 0.10
 What is implemented:
 
 - periodic CH re-election inside each fixed cluster;
+- optional AoI-triggered CH re-election for clusters in the stale tail;
 - re-election per D2D scenario, not globally shared between scenarios;
 - one-hop coverage validation for the new CH;
 - dynamic CH identity used for ALOHA, CH-to-BS success, aggregation, and energy
   drain.
+
+Trigger modes:
+
+```text
+interval         -> previous periodic behavior
+aoi              -> rotate only stale-tail clusters
+interval_or_aoi  -> periodic rotation plus extra stale-tail rotation
+```
+
+The AoI trigger normalizes cluster AoI within each D2D scenario and rotates
+clusters whose AoI is above `--d2d-ch-rotation-aoi-threshold-fraction` of the
+current maximum active-cluster AoI.  It does not rotate on the initial AoI
+value, so it avoids a cold-start mass rotation.
 
 Current empirical conclusion:
 
@@ -309,9 +323,11 @@ Current empirical conclusion:
 
 Current limitation:
 
-- CH-rotation control overhead is not charged.
+- CH-rotation control overhead is optional and defaults to zero.
 - The interval and profile weights are still policy parameters that need
   sensitivity analysis.
+- The AoI trigger still uses the same channel/battery/stability CH score; it
+  does not yet have a separate score specifically optimized for stale clusters.
 
 ### Optimized D2D Utility Access
 
@@ -500,6 +516,12 @@ The most important current results are:
   promoted as the main optimized-D2D strategy. The next better AoI idea is
   likely CH-side: re-elect a better CH for stale clusters instead of only
   increasing stale-cluster access probability.
+
+- The implementation now supports that next CH-side test through
+  `--d2d-ch-rotation-trigger-mode aoi` or `interval_or_aoi`. This keeps the
+  cluster membership fixed and only re-elects valid one-hop CHs for stale
+  clusters, so it is more realistic than forcing more access attempts from a
+  poor CH.
 
 ## Recommended Future Work Order
 

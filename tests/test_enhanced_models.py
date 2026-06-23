@@ -115,6 +115,8 @@ class GpuSweepTests(unittest.TestCase):
                 energy_rotation_control_cost=0.00001,
                 d2d_ch_rotation_mode="energy_aware",
                 d2d_ch_rotation_interval=2,
+                d2d_ch_rotation_trigger_mode="interval_or_aoi",
+                d2d_ch_rotation_aoi_threshold_fraction=0.80,
                 d2d_energy_efficiency_level="eco",
                 optimized_d2d_load_allocation_mode="proportional_clip",
                 optimized_d2d_redistribution_fraction=0.0,
@@ -165,6 +167,8 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["energy_rotation_control_cost"], 0.00001)
         self.assertEqual(metadata["d2d_ch_rotation_mode"], "energy_aware")
         self.assertEqual(metadata["d2d_ch_rotation_interval"], 2)
+        self.assertEqual(metadata["d2d_ch_rotation_trigger_mode"], "interval_or_aoi")
+        self.assertEqual(metadata["d2d_ch_rotation_aoi_threshold_fraction"], 0.80)
         self.assertEqual(metadata["d2d_energy_efficiency_level"], "eco")
         self.assertEqual(
             metadata["d2d_energy_efficiency_profile_weights"],

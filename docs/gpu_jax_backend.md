@@ -764,14 +764,27 @@ The thesis-compatible default keeps the post-clustering CH fixed:
 --d2d-ch-rotation-mode static
 ```
 
-Enhanced energy experiments can enable periodic CH re-election:
+Enhanced energy experiments can enable periodic or AoI-triggered CH
+re-election:
 
 ```bash
 --energy-drain-mode dynamic \
 --d2d-ch-rotation-mode energy_aware \
 --d2d-ch-rotation-interval 10 \
+--d2d-ch-rotation-trigger-mode interval \
 --d2d-energy-efficiency-level balanced
 ```
+
+Trigger modes:
+
+- `interval`: previous periodic behavior;
+- `aoi`: rotate only clusters whose AoI is in the stale tail;
+- `interval_or_aoi`: periodic rotation plus stale-tail rotation.
+
+The AoI trigger uses `--d2d-ch-rotation-aoi-threshold-fraction` as a fraction of
+the current maximum active-cluster AoI within each D2D scenario.  It is designed
+to test whether stale clusters are better helped by replacing a weak CH than by
+only increasing that cluster's ALOHA access probability.
 
 The re-election is performed separately for polling+D2D, fixed+D2D, and
 optimized+D2D because each curve has its own battery trajectory.  A candidate
@@ -791,10 +804,10 @@ Profiles:
 - `balanced`: channel `0.65`, battery `0.25`, stability `0.10`;
 - `eco`: channel `0.45`, battery `0.45`, stability `0.10`.
 
-This is not centralized CH scheduling.  The BS can broadcast profile weights
-and interval, while each cluster performs a local control exchange to verify
-which candidates still cover all members.  The elected CH then uses the same
-ALOHA access logic as before.
+This is not centralized CH scheduling.  The BS can broadcast profile weights,
+interval, and AoI threshold, while each cluster performs a local control
+exchange to verify which candidates still cover all members.  The elected CH
+then uses the same ALOHA access logic as before.
 
 Scale gradually:
 

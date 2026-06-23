@@ -43,7 +43,22 @@ class EnergyRotationSweepTests(unittest.TestCase):
         )
         self.assertEqual(candidates[0]["d2d_ch_rotation_mode"], "static")
         self.assertEqual(candidates[1]["d2d_ch_rotation_mode"], "energy_aware")
+        self.assertEqual(candidates[1]["d2d_ch_rotation_trigger_mode"], "interval")
         self.assertEqual(candidates[-1]["d2d_energy_efficiency_level"], "eco")
+
+    def test_energy_rotation_candidates_can_include_aoi_triggered_profiles(self):
+        candidates = energy_rotation_candidates(include_aoi_triggered=True)
+
+        candidate_ids = [candidate["candidate_id"] for candidate in candidates]
+        self.assertIn("energy_performance_aoi", candidate_ids)
+        self.assertIn("energy_performance_interval_or_aoi", candidate_ids)
+        aoi_candidate = next(
+            candidate
+            for candidate in candidates
+            if candidate["candidate_id"] == "energy_performance_aoi"
+        )
+        self.assertEqual(aoi_candidate["d2d_ch_rotation_trigger_mode"], "aoi")
+        self.assertEqual(aoi_candidate["d2d_energy_efficiency_level"], "performance")
 
     def test_candidate_slice_validation(self):
         candidates = energy_rotation_candidates()

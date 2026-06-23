@@ -214,6 +214,10 @@ def run_gpu_sweep(args):
             energy_rotation_control_cost=args.energy_rotation_control_cost,
             d2d_ch_rotation_mode=args.d2d_ch_rotation_mode,
             d2d_ch_rotation_interval=args.d2d_ch_rotation_interval,
+            d2d_ch_rotation_trigger_mode=args.d2d_ch_rotation_trigger_mode,
+            d2d_ch_rotation_aoi_threshold_fraction=(
+                args.d2d_ch_rotation_aoi_threshold_fraction
+            ),
             d2d_energy_efficiency_level=args.d2d_energy_efficiency_level,
             device_coords=devices.coords,
             device_radius=args.device_radius,
@@ -505,6 +509,10 @@ def run_gpu_sweep(args):
         "energy_rotation_control_cost": float(args.energy_rotation_control_cost),
         "d2d_ch_rotation_mode": args.d2d_ch_rotation_mode,
         "d2d_ch_rotation_interval": int(args.d2d_ch_rotation_interval),
+        "d2d_ch_rotation_trigger_mode": args.d2d_ch_rotation_trigger_mode,
+        "d2d_ch_rotation_aoi_threshold_fraction": float(
+            args.d2d_ch_rotation_aoi_threshold_fraction
+        ),
         "d2d_energy_efficiency_level": args.d2d_energy_efficiency_level,
         "d2d_energy_efficiency_profile_weights": {
             "channel": float(
@@ -1011,6 +1019,26 @@ def build_parser():
         help=(
             "Number of FL iterations between energy-aware D2D CH re-elections. "
             "Ignored when --d2d-ch-rotation-mode static."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-rotation-trigger-mode",
+        choices=("interval", "aoi", "interval_or_aoi"),
+        default="interval",
+        help=(
+            "Trigger for energy-aware D2D CH re-election. interval preserves "
+            "the previous periodic behavior; aoi rotates only clusters whose "
+            "AoI is in the stale tail; interval_or_aoi applies either trigger."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-rotation-aoi-threshold-fraction",
+        type=float,
+        default=0.75,
+        help=(
+            "AoI-trigger threshold as a fraction of the current maximum active "
+            "cluster AoI within each D2D scenario. Used when the trigger mode "
+            "contains aoi."
         ),
     )
     parser.add_argument(

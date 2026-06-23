@@ -411,8 +411,29 @@ fixed ALOHA with D2D CHs
 optimized ALOHA with D2D CHs
 ```
 
-Every `--d2d-ch-rotation-interval` FL iterations, each D2D curve re-elects a CH
-inside each existing cluster.  Membership does not change.  The candidate must:
+The trigger is controlled separately from the score:
+
+```text
+--d2d-ch-rotation-trigger-mode interval
+--d2d-ch-rotation-trigger-mode aoi
+--d2d-ch-rotation-trigger-mode interval_or_aoi
+```
+
+`interval` is the original periodic behavior. `aoi` rotates only clusters whose
+AoI is in the stale tail for that D2D scenario. `interval_or_aoi` performs a
+periodic rotation and also reacts to stale clusters between periodic rotations.
+The stale threshold is:
+
+```text
+--d2d-ch-rotation-aoi-threshold-fraction
+```
+
+It is interpreted as a fraction of the current maximum active-cluster AoI in
+that scenario.  The initial AoI value does not trigger rotation, avoiding a
+cold-start mass re-election.
+
+When the trigger activates, each D2D curve re-elects a CH inside each selected
+existing cluster.  Membership does not change.  The candidate must:
 
 ```text
 be a member of the cluster
@@ -447,11 +468,12 @@ original column-0 CH.
 ### Real Deployment Interpretation
 
 This remains a distributed/plausible policy.  The cluster can run a local
-control mini-round every rotation interval.  Members advertise coarse battery
-and BS-channel class, or the current CH polls them.  A candidate only needs
-neighbor measurements or received control packets to prove one-hop coverage of
-the current member set.  The BS can broadcast the profile weights and interval;
-it does not centrally schedule a specific CH for every ALOHA slot.
+control mini-round every rotation interval or when a cluster's ACK age crosses
+the AoI threshold.  Members advertise coarse battery and BS-channel class, or
+the current CH polls them.  A candidate only needs neighbor measurements or
+received control packets to prove one-hop coverage of the current member set.
+The BS can broadcast the profile weights, interval, and AoI threshold; it does
+not centrally schedule a specific CH for every ALOHA slot.
 
 ## FL Update And Aggregation Model
 

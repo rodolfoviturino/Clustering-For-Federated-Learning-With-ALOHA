@@ -525,6 +525,9 @@ class JaxModelTests(unittest.TestCase):
         invalid_kwargs = (
             {"d2d_ch_rotation_mode": "invalid"},
             {"d2d_ch_rotation_interval": 0},
+            {"d2d_ch_rotation_trigger_mode": "invalid"},
+            {"d2d_ch_rotation_aoi_threshold_fraction": -0.1},
+            {"d2d_ch_rotation_aoi_threshold_fraction": 1.1},
             {
                 "d2d_ch_rotation_mode": "energy_aware",
                 "energy_drain_mode": "none",
@@ -567,6 +570,7 @@ class JaxModelTests(unittest.TestCase):
             energy_ch_bs_cost=0.02,
             d2d_ch_rotation_mode="energy_aware",
             d2d_ch_rotation_interval=1,
+            d2d_ch_rotation_trigger_mode="interval",
             d2d_energy_efficiency_level="balanced",
             d2d_ch_bs_success_mode="channel_quality",
             d2d_ch_bs_min_success_probability=0.35,
@@ -587,6 +591,57 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(mean_clusterhead_energy_used)))
         self.assertTrue(np.all(mean_energy_used >= 0.0))
         self.assertTrue(np.all(mean_clusterhead_energy_used >= 0.0))
+
+    def test_aoi_triggered_d2d_ch_rotation_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1, 2], [3, 4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=37,
+            device_coords=jax_models.jnp.asarray(
+                [
+                    [0.0, 0.0],
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                    [10.0, 10.0],
+                    [11.0, 10.0],
+                    [10.0, 11.0],
+                ]
+            ),
+            device_radius=2.0,
+            device_distance_to_bs=jax_models.jnp.asarray(
+                [80.0, 5.0, 60.0, 70.0, 6.0, 65.0]
+            ),
+            device_battery=jax_models.jnp.asarray(
+                [100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
+            ),
+            energy_drain_mode="dynamic",
+            energy_direct_bs_cost=0.01,
+            energy_d2d_member_cost=0.005,
+            energy_ch_bs_cost=0.02,
+            d2d_ch_rotation_mode="energy_aware",
+            d2d_ch_rotation_interval=10,
+            d2d_ch_rotation_trigger_mode="aoi",
+            d2d_ch_rotation_aoi_threshold_fraction=0.75,
+            d2d_energy_efficiency_level="performance",
+            d2d_ch_bs_success_mode="channel_quality",
+            d2d_ch_bs_min_success_probability=0.35,
+            d2d_ch_bs_pathloss_exponent=2.0,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.mean_clusterhead_battery).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.mean_clusterhead_battery)))
+        )
 
     def test_static_d2d_ch_rotation_preserves_default_behavior(self):
         clusters = prepare_clusters_for_jax([[0, 1, 2], [3]])

@@ -1306,6 +1306,8 @@ def error_calculator_trace_jax(
     energy_rotation_control_cost: float = 0.0,
     d2d_ch_rotation_mode: str = "static",
     d2d_ch_rotation_interval: int = 10,
+    d2d_ch_rotation_trigger_mode: str = "interval",
+    d2d_ch_rotation_aoi_threshold_fraction: float = 0.75,
     d2d_energy_efficiency_level: str = "balanced",
     device_coords=None,
     device_radius=None,
@@ -1430,6 +1432,19 @@ def error_calculator_trace_jax(
         raise ValueError("d2d_ch_rotation_mode must be 'static' or 'energy_aware'")
     if d2d_ch_rotation_interval < 1:
         raise ValueError("d2d_ch_rotation_interval must be at least 1")
+    if d2d_ch_rotation_trigger_mode not in {
+        "interval",
+        "aoi",
+        "interval_or_aoi",
+    }:
+        raise ValueError(
+            "d2d_ch_rotation_trigger_mode must be 'interval', 'aoi', "
+            "or 'interval_or_aoi'"
+        )
+    if not 0.0 <= d2d_ch_rotation_aoi_threshold_fraction <= 1.0:
+        raise ValueError(
+            "d2d_ch_rotation_aoi_threshold_fraction must be in [0, 1]"
+        )
     _d2d_energy_efficiency_profile_weights(d2d_energy_efficiency_level)
     if d2d_ch_rotation_mode == "energy_aware":
         if energy_drain_mode != "dynamic":
@@ -1578,6 +1593,10 @@ def error_calculator_trace_jax(
     )
     battery_feasibility_enabled = battery_feasibility_mode == "required_energy"
     d2d_ch_rotation_enabled = d2d_ch_rotation_mode == "energy_aware"
+    d2d_ch_rotation_aoi_threshold_fraction = jnp.asarray(
+        d2d_ch_rotation_aoi_threshold_fraction,
+        dtype=dtype,
+    )
     d2d_rotation_channel_weight, d2d_rotation_battery_weight, d2d_rotation_stability_weight = (
         _d2d_energy_efficiency_profile_weights(d2d_energy_efficiency_level, dtype)
     )
@@ -2059,10 +2078,42 @@ def error_calculator_trace_jax(
         direct_polling_link_key = jax.random.fold_in(polling_key, 101)
         direct_fixed_link_key = jax.random.fold_in(channel_key_2, 101)
         direct_optimized_link_key = jax.random.fold_in(channel_key_3, 101)
-        should_rotate_d2d_heads = (
+        interval_rotation_due = (
             d2d_ch_rotation_enabled
             & ((iteration_index % d2d_ch_rotation_interval) == 0)
         )
+        interval_rotation_mask = (
+            jnp.ones_like(d2d_aoi, dtype=jnp.bool_)
+            & interval_rotation_due
+            & cluster_mask[None, :]
+        )
+
+        # d2d_aoi: float[3, max_clusters], one AoI row for each D2D scenario.
+        # A stale-triggered rotation is local to the existing cluster: it does
+        # not change members or Cmax, it only re-elects a valid CH when that
+        # cluster's ACK age is in the tail for its scenario.  Normalizing by
+        # the scenario maximum keeps the trigger independent of the final time
+        # horizon, and the `> 1` guard prevents cold-start rotation when all
+        # clusters have the initial AoI value.
+        active_d2d_aoi = jnp.where(cluster_mask[None, :], d2d_aoi, 0.0)
+        max_d2d_aoi = jnp.maximum(
+            jnp.max(active_d2d_aoi, axis=1, keepdims=True),
+            jnp.asarray(1.0, dtype=dtype),
+        )
+        normalized_d2d_aoi = active_d2d_aoi / max_d2d_aoi
+        aoi_rotation_mask = (
+            d2d_ch_rotation_enabled
+            & cluster_mask[None, :]
+            & (d2d_aoi > jnp.asarray(1.0, dtype=dtype))
+            & (normalized_d2d_aoi >= d2d_ch_rotation_aoi_threshold_fraction)
+        )
+        if d2d_ch_rotation_trigger_mode == "interval":
+            rotation_mask = interval_rotation_mask
+        elif d2d_ch_rotation_trigger_mode == "aoi":
+            rotation_mask = aoi_rotation_mask
+        else:
+            rotation_mask = interval_rotation_mask | aoi_rotation_mask
+
         proposed_d2d_heads = jnp.stack(
             [
                 select_energy_aware_cluster_heads(
@@ -2081,7 +2132,7 @@ def error_calculator_trace_jax(
             axis=0,
         )
         d2d_heads = jnp.where(
-            should_rotate_d2d_heads,
+            rotation_mask,
             proposed_d2d_heads,
             current_d2d_heads,
         )
@@ -2701,9 +2752,9 @@ def error_calculator_trace_jax(
             )
             return ch_drain + member_drain, ch_drain
 
-        def rotation_control_drain(heads):
+        def rotation_control_drain(heads, scenario_rotation_mask):
             per_cluster_cost = jnp.where(
-                should_rotate_d2d_heads & cluster_mask,
+                scenario_rotation_mask & cluster_mask,
                 energy_rotation_control_cost,
                 0.0,
             )
@@ -2738,9 +2789,18 @@ def error_calculator_trace_jax(
             optimized_d2d_heads,
             member_energy_3,
         )
-        polling_rotation_drain = rotation_control_drain(polling_d2d_heads)
-        fixed_rotation_drain = rotation_control_drain(fixed_d2d_heads)
-        optimized_rotation_drain = rotation_control_drain(optimized_d2d_heads)
+        polling_rotation_drain = rotation_control_drain(
+            polling_d2d_heads,
+            rotation_mask[0],
+        )
+        fixed_rotation_drain = rotation_control_drain(
+            fixed_d2d_heads,
+            rotation_mask[1],
+        )
+        optimized_rotation_drain = rotation_control_drain(
+            optimized_d2d_heads,
+            rotation_mask[2],
+        )
         polling_d2d_drain = polling_d2d_drain + polling_rotation_drain
         fixed_d2d_drain = fixed_d2d_drain + fixed_rotation_drain
         optimized_d2d_drain = optimized_d2d_drain + optimized_rotation_drain
@@ -3076,6 +3136,8 @@ def error_calculator(
     energy_rotation_control_cost: float = 0.0,
     d2d_ch_rotation_mode: str = "static",
     d2d_ch_rotation_interval: int = 10,
+    d2d_ch_rotation_trigger_mode: str = "interval",
+    d2d_ch_rotation_aoi_threshold_fraction: float = 0.75,
     d2d_energy_efficiency_level: str = "balanced",
     device_coords=None,
     device_radius=None,
@@ -3151,6 +3213,10 @@ def error_calculator(
         energy_rotation_control_cost=energy_rotation_control_cost,
         d2d_ch_rotation_mode=d2d_ch_rotation_mode,
         d2d_ch_rotation_interval=d2d_ch_rotation_interval,
+        d2d_ch_rotation_trigger_mode=d2d_ch_rotation_trigger_mode,
+        d2d_ch_rotation_aoi_threshold_fraction=(
+            d2d_ch_rotation_aoi_threshold_fraction
+        ),
         d2d_energy_efficiency_level=d2d_energy_efficiency_level,
         device_coords=device_coords,
         device_radius=device_radius,

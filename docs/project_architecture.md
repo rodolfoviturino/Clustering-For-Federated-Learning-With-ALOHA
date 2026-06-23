@@ -75,6 +75,8 @@ outputs.
 `experiments/run_energy_rotation_sweep.py`
 
 - Runs the fixed static/performance/balanced/eco D2D CH-rotation comparison.
+- Can optionally add AoI-triggered performance-profile candidates with
+  `--include-aoi-triggered-rotation`.
 - Uses the current channel-aware utility optimized-D2D defaults and dynamic
   energy drain, then writes one subfolder per rotation profile.
 - Writes `energy_rotation_summary.csv`, `energy_rotation_summary.md`, an
@@ -145,10 +147,12 @@ outputs.
   CH-rotation control overhead.
 - Supports optional battery feasibility, where a device or CH only attempts a
   role if its current battery can pay the required energy.
-- Tracks mean, peak, and p95 Age of Information for every scenario.
+- Tracks mean, peak, p75, p90, p95, and stale-tail Age of Information metrics
+  for every scenario.
 - Supports optional energy-aware intra-run CH rotation for the three D2D curves.
   The selected CH must be an existing cluster member and preserve one-hop
-  coverage of the fixed cluster membership.
+  coverage of the fixed cluster membership. Rotation can be periodic,
+  AoI-triggered, or both.
 - Contains thesis-compatible optimized D2D plus enhanced `utility`,
   `max_weight`, `hybrid`, `adaptive_diversity`, `aoi_aware_utility`, and
   `aoi_floor_utility` CH access policies.

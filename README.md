@@ -234,12 +234,13 @@ it should reduce stale tails with less disruption to error-norm convergence.
 Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
 `--d2d-ch-rotation-mode energy_aware` together with
-`--energy-drain-mode dynamic`. The simulator then periodically re-elects a CH
-inside each existing D2D cluster for each D2D curve. The candidate must still
-cover all members in one hop, so the cluster membership and `Cmax` constraint
-do not change. The selectable profiles are `performance`, `balanced`, and
-`eco`, trading BS-channel quality against current battery and a small stability
-bonus for keeping the current CH.
+`--energy-drain-mode dynamic`. The simulator can then periodically re-elect a
+CH or re-elect only clusters whose AoI is in the stale tail, depending on
+`--d2d-ch-rotation-trigger-mode`. The candidate must still cover all members in
+one hop, so the cluster membership and `Cmax` constraint do not change. The
+selectable profiles are `performance`, `balanced`, and `eco`, trading
+BS-channel quality against current battery and a small stability bonus for
+keeping the current CH.
 
 Recommended fair channel-aware comparison:
 
@@ -324,6 +325,7 @@ python main.py --run-name k1000_energy_rotation_smoke \
   --energy-ch-bs-cost 0.005 \
   --d2d-ch-rotation-mode energy_aware \
   --d2d-ch-rotation-interval 10 \
+  --d2d-ch-rotation-trigger-mode interval \
   --d2d-energy-efficiency-level balanced \
   --cluster-head-selection-mode quality \
   --cluster-head-degree-weight 0.0 \
@@ -344,6 +346,37 @@ python main.py --run-name k1000_energy_rotation_smoke \
   --optimized-d2d-density-trigger-threshold 0.95 \
   --optimized-d2d-dense-trigger-ratio 0.0 \
   --optimized-d2d-throughput-ewma-decay 0.90 \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1
+```
+
+Recommended short AoI-triggered CH-rotation smoke:
+
+```bash
+python main.py --run-name k1000_aoi_triggered_ch_rotation_smoke \
+  --devices 1000 \
+  --rounds 20 \
+  --precision float64 \
+  --energy-drain-mode dynamic \
+  --energy-model first_order_radio \
+  --battery-feasibility-mode required_energy \
+  --d2d-ch-bs-success-mode rayleigh_outage \
+  --device-bs-success-mode rayleigh_outage \
+  --cluster-head-selection-mode quality \
+  --cluster-head-channel-score-mode rayleigh_outage \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --d2d-ch-rotation-mode energy_aware \
+  --d2d-ch-rotation-trigger-mode interval_or_aoi \
+  --d2d-ch-rotation-interval 25 \
+  --d2d-ch-rotation-aoi-threshold-fraction 0.75 \
+  --d2d-energy-efficiency-level performance \
+  --optimized-d2d-access-mode utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
   --optimized-d2d-access-floor-fraction 0.02 \
   --optimized-d2d-norm-exponent 3.5 \
   --optimized-d2d-cluster-size-exponent 1.5 \
@@ -464,6 +497,13 @@ subfolder per profile, and creates `energy_rotation_summary.csv`,
 `energy_rotation_tradeoff.*`.  Its ranking prioritizes profiles that keep final
 optimized-D2D error and energy close to the static baseline while preserving
 more CH battery.
+
+To include the new AoI-triggered performance-profile candidates in the same
+sweep, add:
+
+```bash
+--include-aoi-triggered-rotation
+```
 
 When optimized ALOHA with D2D underuses the channel after fast convergence,
 enable the guarded optimized-D2D access floor:

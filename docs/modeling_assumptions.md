@@ -100,11 +100,12 @@ This document records the simulation defaults after the code cleanup.
   legacy/heuristic unless a specific experiment is studying them.
 - Enhanced runs can enable intra-run D2D CH rotation with
   `--d2d-ch-rotation-mode energy_aware`. This requires
-  `--energy-drain-mode dynamic`, keeps cluster membership fixed, and periodically
-  re-elects a CH per D2D curve from valid members that still cover the full
-  cluster in one hop. The score combines normalized BS channel quality, current
-  battery, and a stability bonus for keeping the current CH. The default
-  `static` preserves thesis-compatible fixed CH identity.
+  `--energy-drain-mode dynamic`, keeps cluster membership fixed, and re-elects a
+  CH per D2D curve from valid members that still cover the full cluster in one
+  hop. The trigger can be periodic (`interval`), AoI-tail based (`aoi`), or the
+  union of both (`interval_or_aoi`). The score combines normalized BS channel
+  quality, current battery, and a stability bonus for keeping the current CH.
+  The default `static` preserves thesis-compatible fixed CH identity.
 - First-tier HFL aggregation at the CH is a sum of member updates.
 - The thesis figure code applies the BS update as an unscaled SGD step:
   `w <- w - u1 * gradient`.

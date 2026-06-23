@@ -243,6 +243,41 @@ counterpart for non-D2D curves.  This keeps D2D and non-D2D comparisons under
 the same channel-quality abstraction: first ALOHA contention, then physical
 decoding for collision-free packets.
 
+The enhanced physical-link option is `rayleigh_outage` for both
+`--d2d-ch-bs-success-mode` and `--device-bs-success-mode`:
+
+```text
+avg_snr_i = reference_snr / max(distance_i, 1)^pathloss_exponent
+q_i       = exp(-snr_threshold / max(avg_snr_i, eps))
+```
+
+This is still not a full SINR simulator: ALOHA collisions remain the explicit
+interference abstraction, and Rayleigh outage is the collision-free packet
+decoding probability.  Use
+`--cluster-head-channel-score-mode rayleigh_outage` when quality CH election
+should rank candidate CHs by the same outage metric rather than normalized
+inverse pathloss.  The BS can estimate or configure the reference SNR and
+threshold as control parameters; clusters still elect only from members that
+preserve one-hop D2D coverage.
+
+The preferred enhanced energy model is `--energy-model first_order_radio`.
+The previous `constant` model is retained for reproducibility and uses the
+three fixed normalized costs.  The first-order radio model separates:
+
+```text
+direct device: E_tx_bs(update_size, d_device_bs)
+D2D member:    E_tx_d2d(update_size, d_member_ch)
+CH receive:    active_non_ch_members * E_rx(update_size)
+CH aggregate:  active_updates * E_agg(update_size)
+CH uplink:     E_tx_bs(aggregate_size, d_ch_bs)
+```
+
+With `--battery-feasibility-mode required_energy`, each role attempts only if
+the current scenario-specific battery can pay the required energy.  This makes
+battery a physical availability constraint rather than a loose multiplicative
+decode-probability factor.  The older battery exponents remain available for
+legacy channel-quality ablations.
+
 SciPy `cKDTree` is not used in the GPU backend. It is CPU-side and remains a
 useful validation/profiling reference only:
 https://docs.scipy.org/doc/scipy/reference/generated/scipy.spatial.cKDTree.html
@@ -551,6 +586,8 @@ The returned `JaxTraceResult` contains:
 - `mean_energy_used`: `float[checkpoints, 6]`.
 - `energy_efficiency`: `float[checkpoints, 6]`.
 - `mean_clusterhead_energy_used`: `float[checkpoints, 3]`.
+- `mean_aoi`: `float[checkpoints, 6]`.
+- `peak_aoi`: `float[checkpoints, 6]`.
 - `checkpoints`: `int32[checkpoints]`.
 
 Cluster quality scalars such as CH row count, singleton count,
@@ -635,6 +672,8 @@ That command writes:
   energy-efficiency columns exist;
 - `Runs/gpu_smoke/results_clusterhead_energy_used.png` and `.pdf` when D2D CH
   energy-use columns exist.
+- `Runs/gpu_smoke/results_aoi.png` and `.pdf` when AoI columns exist;
+- `Runs/gpu_smoke/results_peak_aoi.png` and `.pdf` when peak-AoI columns exist.
 
 The thesis-style figure plots every checkpoint saved in the CSV. Omit
 `--checkpoints` to save and plot the full curve for every iteration
@@ -736,6 +775,10 @@ Every thesis-scale result should preserve:
 - initial dense cluster size;
 - channel-aware direct/CH decoding mode and battery exponents;
 - energy drain mode and normalized per-attempt energy costs;
+- energy model, first-order radio coefficients, battery-feasibility mode, and
+  optional CH-rotation control overhead;
+- direct/CH Rayleigh reference SNR and threshold when outage decoding is used;
+- quality CH channel-score mode;
 - number of rounds and checkpoints;
 - batch size or effective `vmap` size;
 - elapsed time including compile time;

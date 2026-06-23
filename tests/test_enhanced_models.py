@@ -85,18 +85,34 @@ class GpuSweepTests(unittest.TestCase):
                 cluster_head_degree_weight=0.5,
                 cluster_head_channel_weight=0.3,
                 cluster_head_battery_weight=0.2,
-                d2d_ch_bs_success_mode="channel_quality",
+                cluster_head_channel_score_mode="rayleigh_outage",
+                d2d_ch_bs_success_mode="rayleigh_outage",
                 d2d_ch_bs_min_success_probability=0.3,
                 d2d_ch_bs_pathloss_exponent=2.5,
                 d2d_ch_bs_battery_exponent=0.25,
-                device_bs_success_mode="channel_quality",
+                d2d_ch_bs_reference_snr=12345.0,
+                d2d_ch_bs_snr_threshold=0.8,
+                device_bs_success_mode="rayleigh_outage",
                 device_bs_min_success_probability=0.4,
                 device_bs_pathloss_exponent=2.2,
                 device_bs_battery_exponent=0.10,
+                device_bs_reference_snr=23456.0,
+                device_bs_snr_threshold=0.7,
                 energy_drain_mode="dynamic",
+                energy_model="first_order_radio",
+                battery_feasibility_mode="required_energy",
                 energy_direct_bs_cost=0.01,
                 energy_d2d_member_cost=0.005,
                 energy_ch_bs_cost=0.02,
+                energy_electronics_cost=0.0003,
+                energy_bs_amplifier_cost=3e-8,
+                energy_d2d_amplifier_cost=2e-6,
+                energy_bs_pathloss_exponent=2.1,
+                energy_d2d_pathloss_exponent=2.2,
+                energy_aggregation_cost=0.00003,
+                energy_update_size=1.2,
+                energy_aggregate_size=0.8,
+                energy_rotation_control_cost=0.00001,
                 d2d_ch_rotation_mode="energy_aware",
                 d2d_ch_rotation_interval=2,
                 d2d_energy_efficiency_level="eco",
@@ -116,18 +132,34 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["cluster_head_degree_weight"], 0.5)
         self.assertEqual(metadata["cluster_head_channel_weight"], 0.3)
         self.assertEqual(metadata["cluster_head_battery_weight"], 0.2)
-        self.assertEqual(metadata["d2d_ch_bs_success_mode"], "channel_quality")
+        self.assertEqual(metadata["cluster_head_channel_score_mode"], "rayleigh_outage")
+        self.assertEqual(metadata["d2d_ch_bs_success_mode"], "rayleigh_outage")
         self.assertEqual(metadata["d2d_ch_bs_min_success_probability"], 0.3)
         self.assertEqual(metadata["d2d_ch_bs_pathloss_exponent"], 2.5)
         self.assertEqual(metadata["d2d_ch_bs_battery_exponent"], 0.25)
-        self.assertEqual(metadata["device_bs_success_mode"], "channel_quality")
+        self.assertEqual(metadata["d2d_ch_bs_reference_snr"], 12345.0)
+        self.assertEqual(metadata["d2d_ch_bs_snr_threshold"], 0.8)
+        self.assertEqual(metadata["device_bs_success_mode"], "rayleigh_outage")
         self.assertEqual(metadata["device_bs_min_success_probability"], 0.4)
         self.assertEqual(metadata["device_bs_pathloss_exponent"], 2.2)
         self.assertEqual(metadata["device_bs_battery_exponent"], 0.10)
+        self.assertEqual(metadata["device_bs_reference_snr"], 23456.0)
+        self.assertEqual(metadata["device_bs_snr_threshold"], 0.7)
         self.assertEqual(metadata["energy_drain_mode"], "dynamic")
+        self.assertEqual(metadata["energy_model"], "first_order_radio")
+        self.assertEqual(metadata["battery_feasibility_mode"], "required_energy")
         self.assertEqual(metadata["energy_direct_bs_cost"], 0.01)
         self.assertEqual(metadata["energy_d2d_member_cost"], 0.005)
         self.assertEqual(metadata["energy_ch_bs_cost"], 0.02)
+        self.assertEqual(metadata["energy_electronics_cost"], 0.0003)
+        self.assertEqual(metadata["energy_bs_amplifier_cost"], 3e-8)
+        self.assertEqual(metadata["energy_d2d_amplifier_cost"], 2e-6)
+        self.assertEqual(metadata["energy_bs_pathloss_exponent"], 2.1)
+        self.assertEqual(metadata["energy_d2d_pathloss_exponent"], 2.2)
+        self.assertEqual(metadata["energy_aggregation_cost"], 0.00003)
+        self.assertEqual(metadata["energy_update_size"], 1.2)
+        self.assertEqual(metadata["energy_aggregate_size"], 0.8)
+        self.assertEqual(metadata["energy_rotation_control_cost"], 0.00001)
         self.assertEqual(metadata["d2d_ch_rotation_mode"], "energy_aware")
         self.assertEqual(metadata["d2d_ch_rotation_interval"], 2)
         self.assertEqual(metadata["d2d_energy_efficiency_level"], "eco")
@@ -147,6 +179,8 @@ class GpuSweepTests(unittest.TestCase):
         self.assertIn("optimized_aloha_d2d_energy_used_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_energy_efficiency_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_clusterhead_energy_used_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_peak_aoi_mean", rows[0])
 
     def test_gpu_sweep_records_adaptive_diversity_parameters(self):
         rows, metadata = run_gpu_sweep(

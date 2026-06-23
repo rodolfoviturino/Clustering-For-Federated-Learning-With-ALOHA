@@ -23,14 +23,15 @@ outputs.
 - Records optional dynamic-energy metrics, including per-scenario mean battery,
   D2D cluster-head mean battery, energy used, energy efficiency, and D2D
   cluster-head energy used.
+- Records AoI metrics for all six scenarios: mean AoI and peak AoI.
 - Creates `Runs/<timestamp>/` by default after the simulation succeeds.
 
 `experiments/plot_gpu_sweep.py`
 
 - Regenerates figures from an existing sweep CSV.
 - Generates battery, D2D cluster-head battery, energy-used, energy-efficiency,
-  and D2D cluster-head energy-used plots only when the CSV has those optional
-  dynamic-energy columns.
+  D2D cluster-head energy-used, mean-AoI, and peak-AoI plots only when the CSV
+  has the corresponding optional columns.
 - Does not rerun the simulation.
 
 `experiments/run_utility_pareto_sweep.py`
@@ -114,20 +115,27 @@ outputs.
 - Optional quality CH election keeps cluster membership fixed but rotates the
   CH role to the best valid member according to D2D degree, BS channel quality,
   and battery.
+- Quality CH election can score the BS channel with normalized inverse
+  pathloss or Rayleigh outage probability.
 
 `Models/jax_models_arrangement.py`
 
 - JAX HFL/ALOHA simulation.
 - Uses `jax.lax.scan` to run one trajectory and record all requested
   checkpoints.
-- Supports optional channel-aware direct device-to-BS decoding for non-D2D
-  curves and optional channel-aware CH-to-BS decoding for D2D curves. Devices
-  and CHs still contend through ALOHA first; collision-free packets may then
-  fail based on transmitter BS channel quality and battery.
+- Supports optional direct device-to-BS decoding for non-D2D curves and
+  optional CH-to-BS decoding for D2D curves. Devices and CHs still contend
+  through ALOHA first; collision-free packets may then fail under either the
+  legacy inverse-pathloss `channel_quality` model or the enhanced
+  `rayleigh_outage` model.
 - Supports optional dynamic battery drain with independent battery state for
-  each of the six counterfactual curves. Direct device attempts, D2D member
-  transmissions, and CH aggregate attempts can pay separate normalized energy
-  costs.
+  each of the six counterfactual curves. Energy can use legacy constant costs
+  or the enhanced first-order radio model that separates direct BS transmit,
+  D2D member transmit, CH receive, CH aggregation, CH-BS transmit, and optional
+  CH-rotation control overhead.
+- Supports optional battery feasibility, where a device or CH only attempts a
+  role if its current battery can pay the required energy.
+- Tracks mean and peak Age of Information for every scenario.
 - Supports optional energy-aware intra-run CH rotation for the three D2D curves.
   The selected CH must be an existing cluster member and preserve one-hop
   coverage of the fixed cluster membership.

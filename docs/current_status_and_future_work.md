@@ -409,58 +409,75 @@ This makes the freshness weight scientifically easier to analyze.
 The current enhanced simulator is useful for research iteration, but the
 following points should be explicitly disclosed:
 
-- energy drain is normalized and not yet a calibrated radio model;
-- CH receive/listening cost is not yet separated from CH transmission cost;
-- CH rotation control overhead is not charged;
-- battery currently can enter decode probability through a heuristic exponent;
-- channel quality is inverse-pathloss based, not an outage/SINR/FER/PER model;
+- the first-order radio model is normalized and not yet calibrated in joules
+  for a specific IoT transceiver;
+- CH receive, aggregation, and BS-transmit costs are separated in the enhanced
+  first-order model, but idle listening, sleep states, retransmissions, and full
+  MAC control overhead are still absent;
+- optional CH rotation control overhead exists, but defaults to zero and is not
+  a full control-plane traffic model;
+- battery can now be used as an energy-feasibility constraint, but the old
+  battery exponent remains as a legacy heuristic for backward-compatible
+  channel-quality runs;
+- channel quality can use inverse pathloss or Rayleigh outage probability, but
+  there is no explicit SINR/FER/PER model with interference powers, modulation,
+  coding, or shadowing;
 - member-to-CH link success is not distance/SINR dependent;
-- fading, shadowing, explicit interference, coding, and modulation are absent;
 - utility exponents and allocator thresholds are hyperparameters;
-- freshness is not yet formal AoI;
+- AoI is now measured explicitly, but it is not yet a first-class scheduling
+  objective beyond freshness-based utility terms;
 - data are synthetic linear-regression data, not non-IID task data.
 
 ## Recommended Future Work Order
 
-### Step 1: Replace Normalized Energy Costs With A Physical Energy Model
+### Step 1: Calibrate The First-Order Energy Model
 
-Implement per-attempt energy using packet size and distance:
+The code now implements opt-in first-order radio accounting:
 
 ```text
-E_tx(l, d)
-E_rx(l)
-E_agg(l)
+E_tx_bs(size, d)
+E_tx_d2d(size, d)
+E_rx(size)
+E_agg(size)
 ```
 
-Add CLI/API parameters:
+The next scientific step is calibration, not another formula rewrite. Choose
+literature or datasheet values for an IoT radio and map them into the normalized
+battery scale used by the simulation. Report the source and the normalization.
+
+Relevant CLI/API parameters now available:
 
 ```text
---energy-model {normalized, first_order_radio}
---energy-e-elec
---energy-e-amp
---energy-pathloss-exponent
---energy-e-agg
---energy-update-bits
---energy-aggregate-bits
---energy-control-bits
+--energy-model {constant, first_order_radio}
+--energy-electronics-cost
+--energy-bs-amplifier-cost
+--energy-d2d-amplifier-cost
+--energy-bs-pathloss-exponent
+--energy-d2d-pathloss-exponent
+--energy-aggregation-cost
+--energy-update-size
+--energy-aggregate-size
+--energy-rotation-control-cost
 ```
 
 Expected benefit:
 
-- answers how each device energy is updated;
-- differentiates member, CH receive, CH aggregation, CH-BS transmit, and direct
-  device-BS transmit costs;
-- makes energy-efficiency metrics more physically interpretable.
+- makes energy-efficiency metrics physically interpretable;
+- allows energy/error/AoI tradeoffs to be reported with defensible units or
+  normalized units derived from a source.
 
-### Step 2: Use Battery As Feasibility, Not Decode Multiplier
+### Step 2: Keep Battery As Feasibility In New Experiments
 
-Replace or demote:
+The preferred enhanced path is now:
 
 ```text
-q_i *= battery_i^battery_exponent
+--battery-feasibility-mode required_energy
+--d2d-ch-bs-battery-exponent 0.0
+--device-bs-battery-exponent 0.0
 ```
 
-with:
+Use the legacy battery exponent only for backward-compatible ablations. Battery
+should primarily decide whether a role can pay the required energy:
 
 ```text
 attempt_allowed_i = residual_energy_i >= E_required_i
@@ -473,21 +490,22 @@ Expected benefit:
 - allows low-battery devices to skip or fail transmission because energy is
   insufficient, not because decoding magically degrades.
 
-### Step 3: Replace Channel Proxy With Outage/SINR-Based Success
+### Step 3: Extend Rayleigh Outage Toward SINR/PER If Needed
 
-Implement a channel model such as:
+The code now supports Rayleigh outage for collision-free direct and CH-to-BS
+decoding:
 
 ```text
-pathloss + optional fading + noise + optional ALOHA interference
-success if SINR >= threshold
+avg_snr_i = reference_snr / max(distance_i, 1)^pathloss_exponent
+q_i       = exp(-snr_threshold / avg_snr_i)
 ```
 
-Report:
+The next step, if the paper needs more physical detail, is:
 
 ```text
-outage probability
-success probability
-optional PER/FER proxy
+pathloss + fading + noise + co-channel interference powers
+success if SINR >= threshold
+optional FER/PER mapping
 ```
 
 Expected benefit:
@@ -496,9 +514,24 @@ Expected benefit:
   communication-performance metric;
 - D2D and non-D2D comparisons become easier to defend.
 
-### Step 4: Add AoI Metrics
+### Step 4: Use AoI As A Policy Objective
 
-Track per-cluster AoI alongside freshness.
+AoI is now tracked for all six scenarios:
+
+```text
+non-D2D: per-device AoI
+D2D:     per-cluster AoI
+```
+
+The next experiment should use AoI explicitly in a policy, then compare:
+
+```text
+mean AoI
+peak AoI
+error norm
+energy efficiency
+CH upload ratio
+```
 
 Expected benefit:
 
@@ -547,4 +580,3 @@ Expected benefit:
 - Guided FL participant selection motivation: [Oort](https://arxiv.org/abs/2010.06081).
 - Freshness/AoI motivation: [WiFresh](https://arxiv.org/abs/2012.14337) and
   [Age of Information: An Introduction and Survey](https://arxiv.org/abs/2007.08564).
-

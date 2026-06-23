@@ -356,6 +356,28 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
         )
     )
     generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="aoi",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Mean AoI",
+            title="Mean Age of Information over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_aoi"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="peak_aoi",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Peak AoI",
+            title="Peak Age of Information over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_peak_aoi"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
         _plot_cluster_rate(
             frame,
             output_stem=base_stem.with_name(f"{base_stem.name}_cluster_rate"),

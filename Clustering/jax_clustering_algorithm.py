@@ -197,6 +197,32 @@ def _normalized_inverse_pathloss(distance_to_bs, pathloss_exponent):
     return raw_quality / jnp.maximum(jnp.max(raw_quality), 1e-12)
 
 
+def _rayleigh_outage_success_probability(
+    distance_to_bs,
+    pathloss_exponent,
+    reference_snr,
+    snr_threshold,
+):
+    """Return Rayleigh outage success probability for each BS uplink.
+
+    This score maps the CH-channel term to a physical-layer quantity instead
+    of a purely normalized inverse-distance proxy.  For a Rayleigh fading
+    channel with average SNR ``gamma_bar``, the probability that instantaneous
+    SNR exceeds a threshold is ``exp(-threshold / gamma_bar)``.  The score is
+    deterministic here because clustering uses channel statistics, not future
+    packet draws.
+    """
+    dtype = distance_to_bs.dtype
+    safe_distance = jnp.maximum(distance_to_bs, jnp.asarray(1.0, dtype=dtype))
+    average_snr = jnp.asarray(reference_snr, dtype=dtype) / (
+        safe_distance ** jnp.asarray(pathloss_exponent, dtype=dtype)
+    )
+    return jnp.exp(
+        -jnp.asarray(snr_threshold, dtype=dtype)
+        / jnp.maximum(average_snr, jnp.asarray(1e-12, dtype=dtype))
+    )
+
+
 def neighbor_counts_tiled_jax(coords, device_radius, tile_size: int = 1024):
     """Count one-hop neighbors using GPU-sized distance tiles.
 
@@ -596,6 +622,9 @@ def _cluster_head_quality_scores(
     degree_weight: float,
     channel_weight: float,
     battery_weight: float,
+    channel_score_mode: str,
+    reference_snr: float,
+    snr_threshold: float,
 ):
     """Return a high-is-good score for CH rotation candidates.
 
@@ -605,8 +634,10 @@ def _cluster_head_quality_scores(
     - D2D degree: local neighbor count inside ``R_D2D``.  A high-degree CH is
       likely to be a stronger local representative and robust to small changes
       in neighborhood membership.
-    - BS channel quality: normalized inverse pathloss from device to BS.  A CH
-      closer to the BS is a better uplink representative for the cluster.
+    - BS channel quality: either normalized inverse pathloss or Rayleigh outage
+      success probability from device to BS.  The Rayleigh option ties the CH
+      channel score to a collision-free decoding metric, while the default
+      inverse-pathloss mode preserves earlier experiments.
     - Battery: local battery percentage.  Higher battery makes repeated CH duty
       more realistic.
 
@@ -620,10 +651,18 @@ def _cluster_head_quality_scores(
         tile_size=tile_size,
     ).astype(dtype)
     degree_score = neighbor_counts / jnp.maximum(jnp.max(neighbor_counts), 1.0)
-    channel_score = _normalized_inverse_pathloss(
-        devices.distance_to_bs,
-        pathloss_exponent,
-    )
+    if channel_score_mode == "rayleigh_outage":
+        channel_score = _rayleigh_outage_success_probability(
+            devices.distance_to_bs,
+            pathloss_exponent=pathloss_exponent,
+            reference_snr=reference_snr,
+            snr_threshold=snr_threshold,
+        )
+    else:
+        channel_score = _normalized_inverse_pathloss(
+            devices.distance_to_bs,
+            pathloss_exponent,
+        )
     battery_score = devices.battery.astype(dtype) / 100.0
 
     return (
@@ -754,6 +793,9 @@ def _dense_greedy_clusters(
     cluster_head_degree_weight: float,
     cluster_head_channel_weight: float,
     cluster_head_battery_weight: float,
+    cluster_head_channel_score_mode: str,
+    cluster_head_reference_snr: float,
+    cluster_head_snr_threshold: float,
 ) -> JaxClusterResult:
     """Build one-hop clusters from the full radius graph.
 
@@ -926,6 +968,9 @@ def _dense_greedy_clusters(
             degree_weight=cluster_head_degree_weight,
             channel_weight=cluster_head_channel_weight,
             battery_weight=cluster_head_battery_weight,
+            channel_score_mode=cluster_head_channel_score_mode,
+            reference_snr=cluster_head_reference_snr,
+            snr_threshold=cluster_head_snr_threshold,
         )
         cluster_members = _rotate_cluster_heads_by_quality(
             cluster_members=cluster_members,
@@ -973,6 +1018,9 @@ def clusterizer_jax(
     cluster_head_degree_weight: float = 0.40,
     cluster_head_channel_weight: float = 0.40,
     cluster_head_battery_weight: float = 0.20,
+    cluster_head_channel_score_mode: str = "inverse_pathloss",
+    cluster_head_reference_snr: float = 100000.0,
+    cluster_head_snr_threshold: float = 1.0,
 ) -> JaxClusterResult:
     """Build padded one-hop clusters with GPU-friendly fixed-shape arrays.
 
@@ -1005,6 +1053,15 @@ def clusterizer_jax(
         raise ValueError("cluster_head_channel_weight must be non-negative")
     if cluster_head_battery_weight < 0.0:
         raise ValueError("cluster_head_battery_weight must be non-negative")
+    if cluster_head_channel_score_mode not in {"inverse_pathloss", "rayleigh_outage"}:
+        raise ValueError(
+            "cluster_head_channel_score_mode must be 'inverse_pathloss' or "
+            "'rayleigh_outage'"
+        )
+    if cluster_head_reference_snr <= 0.0:
+        raise ValueError("cluster_head_reference_snr must be positive")
+    if cluster_head_snr_threshold < 0.0:
+        raise ValueError("cluster_head_snr_threshold must be non-negative")
     if (
         cluster_head_selection_mode == "quality"
         and cluster_head_degree_weight
@@ -1040,6 +1097,9 @@ def clusterizer_jax(
             cluster_head_degree_weight=cluster_head_degree_weight,
             cluster_head_channel_weight=cluster_head_channel_weight,
             cluster_head_battery_weight=cluster_head_battery_weight,
+            cluster_head_channel_score_mode=cluster_head_channel_score_mode,
+            cluster_head_reference_snr=cluster_head_reference_snr,
+            cluster_head_snr_threshold=cluster_head_snr_threshold,
         )
 
     # Grid cell side in meters.  Any two points inside the same cell are within
@@ -1150,6 +1210,9 @@ def clusterizer_jax(
             degree_weight=cluster_head_degree_weight,
             channel_weight=cluster_head_channel_weight,
             battery_weight=cluster_head_battery_weight,
+            channel_score_mode=cluster_head_channel_score_mode,
+            reference_snr=cluster_head_reference_snr,
+            snr_threshold=cluster_head_snr_threshold,
         )
         cluster_members = _rotate_cluster_heads_by_quality(
             cluster_members=cluster_members,

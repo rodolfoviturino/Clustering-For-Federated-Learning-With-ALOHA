@@ -45,11 +45,19 @@ class JaxModelTests(unittest.TestCase):
 
         error_norms = np.asarray(result.error_norms)
         uploads = np.asarray(result.successful_uploads)
+        mean_aoi = np.asarray(result.mean_aoi)
+        peak_aoi = np.asarray(result.peak_aoi)
 
         self.assertEqual(error_norms.shape, (2, 6))
         self.assertEqual(uploads.shape, (2, 6))
+        self.assertEqual(mean_aoi.shape, (2, 6))
+        self.assertEqual(peak_aoi.shape, (2, 6))
         self.assertTrue(np.all(np.isfinite(error_norms)))
         self.assertTrue(np.all(uploads >= 0))
+        self.assertTrue(np.all(np.isfinite(mean_aoi)))
+        self.assertTrue(np.all(np.isfinite(peak_aoi)))
+        self.assertTrue(np.all(mean_aoi >= 1.0))
+        self.assertTrue(np.all(peak_aoi >= 1.0))
 
     def test_legacy_error_calculator_tuple_shape(self):
         result = error_calculator(
@@ -133,6 +141,109 @@ class JaxModelTests(unittest.TestCase):
         self.assertLess(probability[1], probability[0])
         self.assertGreaterEqual(probability[2], 0.25)
         self.assertLess(probability[2], probability[1])
+
+    def test_rayleigh_outage_probability_is_monotonic(self):
+        jnp = jax_models.jnp
+        distances = jnp.asarray([1.0, 10.0, 50.0], dtype=jnp.float32)
+        probability = np.asarray(
+            jax_models._rayleigh_outage_success_probability(
+                number_of_devices=3,
+                dtype=jnp.float32,
+                device_distance_to_bs=distances,
+                pathloss_exponent=2.0,
+                reference_snr=1000.0,
+                snr_threshold=1.0,
+            )
+        )
+        higher_snr = np.asarray(
+            jax_models._rayleigh_outage_success_probability(
+                number_of_devices=3,
+                dtype=jnp.float32,
+                device_distance_to_bs=distances,
+                pathloss_exponent=2.0,
+                reference_snr=2000.0,
+                snr_threshold=1.0,
+            )
+        )
+        higher_threshold = np.asarray(
+            jax_models._rayleigh_outage_success_probability(
+                number_of_devices=3,
+                dtype=jnp.float32,
+                device_distance_to_bs=distances,
+                pathloss_exponent=2.0,
+                reference_snr=1000.0,
+                snr_threshold=2.0,
+            )
+        )
+
+        self.assertGreater(probability[0], probability[1])
+        self.assertGreater(probability[1], probability[2])
+        self.assertTrue(np.all(higher_snr >= probability))
+        self.assertTrue(np.all(higher_threshold <= probability))
+
+    def test_first_order_radio_energy_increases_with_distance_and_size(self):
+        jnp = jax_models.jnp
+        distances = jnp.asarray([1.0, 10.0, 20.0], dtype=jnp.float32)
+        energy = np.asarray(
+            jax_models._first_order_bs_tx_energy(
+                distances,
+                packet_size=1.0,
+                electronics_cost=0.0002,
+                amplifier_cost=1e-6,
+                pathloss_exponent=2.0,
+            )
+        )
+        larger_packet = np.asarray(
+            jax_models._first_order_bs_tx_energy(
+                distances,
+                packet_size=2.0,
+                electronics_cost=0.0002,
+                amplifier_cost=1e-6,
+                pathloss_exponent=2.0,
+            )
+        )
+        d2d_energy = np.asarray(
+            jax_models._first_order_d2d_tx_energy(
+                distances,
+                packet_size=1.0,
+                electronics_cost=0.0002,
+                amplifier_cost=1e-6,
+                pathloss_exponent=2.0,
+            )
+        )
+
+        self.assertGreater(energy[1], energy[0])
+        self.assertGreater(energy[2], energy[1])
+        self.assertTrue(np.all(larger_packet > energy))
+        np.testing.assert_allclose(d2d_energy, energy, rtol=1e-6)
+
+    def test_rayleigh_outage_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
+        jnp = jax_models.jnp
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=21,
+            d2d_ch_bs_success_mode="rayleigh_outage",
+            d2d_ch_bs_reference_snr=100000.0,
+            d2d_ch_bs_snr_threshold=1.0,
+            device_bs_success_mode="rayleigh_outage",
+            device_bs_reference_snr=100000.0,
+            device_bs_snr_threshold=1.0,
+            device_distance_to_bs=jnp.asarray([5.0, 80.0, 10.0, 70.0]),
+            checkpoints=[1, 3],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.mean_aoi).shape, (2, 6))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.mean_aoi))))
 
     def test_ch_bs_channel_quality_trace_returns_finite_outputs(self):
         clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
@@ -238,6 +349,35 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(energy_efficiency)))
         self.assertTrue(np.all(mean_clusterhead_energy_used >= 0.0))
 
+    def test_battery_feasibility_blocks_attempts_when_energy_is_insufficient(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
+        jnp = jax_models.jnp
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=4,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=2,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=25,
+            device_coords=jnp.asarray(
+                [[0.0, 0.0], [1.0, 0.0], [10.0, 0.0], [11.0, 0.0]],
+                dtype=jnp.float32,
+            ),
+            device_distance_to_bs=jnp.asarray([100.0, 100.0, 100.0, 100.0]),
+            device_battery=jnp.zeros(4, dtype=jnp.float32),
+            energy_drain_mode="dynamic",
+            energy_model="first_order_radio",
+            battery_feasibility_mode="required_energy",
+            checkpoints=[1, 2],
+        )
+
+        uploads = np.asarray(result.successful_uploads)
+        self.assertEqual(uploads.shape, (2, 6))
+        self.assertTrue(np.all(uploads == 0))
+
     def test_ch_bs_success_parameters_are_validated(self):
         invalid_kwargs = (
             {"d2d_ch_bs_success_mode": "invalid"},
@@ -245,6 +385,8 @@ class JaxModelTests(unittest.TestCase):
             {"d2d_ch_bs_min_success_probability": 1.1},
             {"d2d_ch_bs_pathloss_exponent": -0.1},
             {"d2d_ch_bs_battery_exponent": -0.1},
+            {"d2d_ch_bs_reference_snr": 0.0},
+            {"d2d_ch_bs_snr_threshold": -0.1},
         )
 
         for kwargs in invalid_kwargs:
@@ -270,6 +412,8 @@ class JaxModelTests(unittest.TestCase):
             {"device_bs_min_success_probability": 1.1},
             {"device_bs_pathloss_exponent": -0.1},
             {"device_bs_battery_exponent": -0.1},
+            {"device_bs_reference_snr": 0.0},
+            {"device_bs_snr_threshold": -0.1},
         )
 
         for kwargs in invalid_kwargs:
@@ -291,9 +435,20 @@ class JaxModelTests(unittest.TestCase):
     def test_energy_drain_parameters_are_validated(self):
         invalid_kwargs = (
             {"energy_drain_mode": "invalid"},
+            {"energy_model": "invalid"},
+            {"battery_feasibility_mode": "invalid"},
             {"energy_direct_bs_cost": -0.1},
             {"energy_d2d_member_cost": -0.1},
             {"energy_ch_bs_cost": -0.1},
+            {"energy_electronics_cost": -0.1},
+            {"energy_bs_amplifier_cost": -0.1},
+            {"energy_d2d_amplifier_cost": -0.1},
+            {"energy_bs_pathloss_exponent": -0.1},
+            {"energy_d2d_pathloss_exponent": -0.1},
+            {"energy_aggregation_cost": -0.1},
+            {"energy_update_size": 0.0},
+            {"energy_aggregate_size": 0.0},
+            {"energy_rotation_control_cost": -0.1},
         )
 
         for kwargs in invalid_kwargs:

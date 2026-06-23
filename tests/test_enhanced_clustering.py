@@ -265,6 +265,34 @@ class EnhancedClusteringTests(unittest.TestCase):
         )
 
     @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_quality_ch_selection_accepts_rayleigh_channel_score(self):
+        devices = devices_generator_jax(40, 80, seed=9)
+        clusters = clusterizer_jax(
+            devices=devices,
+            device_radius=15.0,
+            max_devices_per_cluster=8,
+            min_devices_per_cluster=1,
+            clustering_mode="geometric",
+            cluster_head_selection_mode="quality",
+            cluster_head_degree_weight=0.0,
+            cluster_head_channel_weight=1.0,
+            cluster_head_battery_weight=0.0,
+            cluster_head_channel_score_mode="rayleigh_outage",
+            cluster_head_reference_snr=100000.0,
+            cluster_head_snr_threshold=1.0,
+        )
+
+        self.assertTrue(
+            validate_jax_cluster_result(
+                clusters,
+                devices.coords,
+                device_radius=15.0,
+                max_devices_per_cluster=8,
+                n_devices=40,
+            )
+        )
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
     def test_jax_quality_ch_selection_rejects_invalid_weights(self):
         devices = devices_generator_jax(10, 50, seed=3)
 
@@ -286,6 +314,35 @@ class EnhancedClusteringTests(unittest.TestCase):
                 max_devices_per_cluster=4,
                 cluster_head_selection_mode="quality",
                 cluster_head_degree_weight=-0.1,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_head_selection_mode="quality",
+                cluster_head_channel_score_mode="invalid",
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_head_selection_mode="quality",
+                cluster_head_channel_score_mode="rayleigh_outage",
+                cluster_head_reference_snr=0.0,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_head_selection_mode="quality",
+                cluster_head_channel_score_mode="rayleigh_outage",
+                cluster_head_snr_threshold=-0.1,
             )
 
 

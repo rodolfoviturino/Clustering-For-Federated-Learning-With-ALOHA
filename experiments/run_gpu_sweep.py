@@ -167,6 +167,9 @@ def run_gpu_sweep(args):
             cluster_head_degree_weight=args.cluster_head_degree_weight,
             cluster_head_channel_weight=args.cluster_head_channel_weight,
             cluster_head_battery_weight=args.cluster_head_battery_weight,
+            cluster_head_channel_score_mode=args.cluster_head_channel_score_mode,
+            cluster_head_reference_snr=args.d2d_ch_bs_reference_snr,
+            cluster_head_snr_threshold=args.d2d_ch_bs_snr_threshold,
         )
         cluster_quality = _cluster_quality_vector(clusters, compute_dtype)
         trace = error_calculator_trace_jax(
@@ -186,14 +189,29 @@ def run_gpu_sweep(args):
             d2d_ch_bs_min_success_probability=args.d2d_ch_bs_min_success_probability,
             d2d_ch_bs_pathloss_exponent=args.d2d_ch_bs_pathloss_exponent,
             d2d_ch_bs_battery_exponent=args.d2d_ch_bs_battery_exponent,
+            d2d_ch_bs_reference_snr=args.d2d_ch_bs_reference_snr,
+            d2d_ch_bs_snr_threshold=args.d2d_ch_bs_snr_threshold,
             device_bs_success_mode=args.device_bs_success_mode,
             device_bs_min_success_probability=args.device_bs_min_success_probability,
             device_bs_pathloss_exponent=args.device_bs_pathloss_exponent,
             device_bs_battery_exponent=args.device_bs_battery_exponent,
+            device_bs_reference_snr=args.device_bs_reference_snr,
+            device_bs_snr_threshold=args.device_bs_snr_threshold,
             energy_drain_mode=args.energy_drain_mode,
+            energy_model=args.energy_model,
+            battery_feasibility_mode=args.battery_feasibility_mode,
             energy_direct_bs_cost=args.energy_direct_bs_cost,
             energy_d2d_member_cost=args.energy_d2d_member_cost,
             energy_ch_bs_cost=args.energy_ch_bs_cost,
+            energy_electronics_cost=args.energy_electronics_cost,
+            energy_bs_amplifier_cost=args.energy_bs_amplifier_cost,
+            energy_d2d_amplifier_cost=args.energy_d2d_amplifier_cost,
+            energy_bs_pathloss_exponent=args.energy_bs_pathloss_exponent,
+            energy_d2d_pathloss_exponent=args.energy_d2d_pathloss_exponent,
+            energy_aggregation_cost=args.energy_aggregation_cost,
+            energy_update_size=args.energy_update_size,
+            energy_aggregate_size=args.energy_aggregate_size,
+            energy_rotation_control_cost=args.energy_rotation_control_cost,
             d2d_ch_rotation_mode=args.d2d_ch_rotation_mode,
             d2d_ch_rotation_interval=args.d2d_ch_rotation_interval,
             d2d_energy_efficiency_level=args.d2d_energy_efficiency_level,
@@ -244,6 +262,8 @@ def run_gpu_sweep(args):
             trace.mean_energy_used,
             trace.energy_efficiency,
             trace.mean_clusterhead_energy_used,
+            trace.mean_aoi,
+            trace.peak_aoi,
             trace.clusterized_devices_rate,
             cluster_quality,
         )
@@ -260,6 +280,8 @@ def run_gpu_sweep(args):
         mean_energy_used,
         energy_efficiency,
         mean_clusterhead_energy_used,
+        mean_aoi,
+        peak_aoi,
         cluster_rates,
         cluster_quality,
     ) = batched_runner(seeds)
@@ -274,6 +296,8 @@ def run_gpu_sweep(args):
     mean_energy_used = np.asarray(mean_energy_used)
     energy_efficiency = np.asarray(energy_efficiency)
     mean_clusterhead_energy_used = np.asarray(mean_clusterhead_energy_used)
+    mean_aoi = np.asarray(mean_aoi)
+    peak_aoi = np.asarray(peak_aoi)
     cluster_rates = np.asarray(cluster_rates)
     cluster_quality = np.asarray(cluster_quality)
 
@@ -326,6 +350,18 @@ def run_gpu_sweep(args):
             row[f"{scenario_name}_energy_efficiency_mean"] = mean
             row[f"{scenario_name}_energy_efficiency_ci95"] = ci95
 
+            mean, ci95 = _confidence_interval_95(
+                mean_aoi[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_aoi_mean"] = mean
+            row[f"{scenario_name}_aoi_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                peak_aoi[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_peak_aoi_mean"] = mean
+            row[f"{scenario_name}_peak_aoi_ci95"] = ci95
+
         for d2d_index, scenario_name in enumerate(SCENARIOS[3:]):
             mean, ci95 = _confidence_interval_95(
                 clusterhead_uploads[:, checkpoint_index, d2d_index]
@@ -375,6 +411,7 @@ def run_gpu_sweep(args):
         "cluster_head_degree_weight": float(args.cluster_head_degree_weight),
         "cluster_head_channel_weight": float(args.cluster_head_channel_weight),
         "cluster_head_battery_weight": float(args.cluster_head_battery_weight),
+        "cluster_head_channel_score_mode": args.cluster_head_channel_score_mode,
         "cluster_quality_metrics": list(CLUSTER_QUALITY_METRICS),
         "d2d_ch_bs_success_mode": args.d2d_ch_bs_success_mode,
         "d2d_ch_bs_min_success_probability": float(
@@ -382,16 +419,31 @@ def run_gpu_sweep(args):
         ),
         "d2d_ch_bs_pathloss_exponent": float(args.d2d_ch_bs_pathloss_exponent),
         "d2d_ch_bs_battery_exponent": float(args.d2d_ch_bs_battery_exponent),
+        "d2d_ch_bs_reference_snr": float(args.d2d_ch_bs_reference_snr),
+        "d2d_ch_bs_snr_threshold": float(args.d2d_ch_bs_snr_threshold),
         "device_bs_success_mode": args.device_bs_success_mode,
         "device_bs_min_success_probability": float(
             args.device_bs_min_success_probability
         ),
         "device_bs_pathloss_exponent": float(args.device_bs_pathloss_exponent),
         "device_bs_battery_exponent": float(args.device_bs_battery_exponent),
+        "device_bs_reference_snr": float(args.device_bs_reference_snr),
+        "device_bs_snr_threshold": float(args.device_bs_snr_threshold),
         "energy_drain_mode": args.energy_drain_mode,
+        "energy_model": args.energy_model,
+        "battery_feasibility_mode": args.battery_feasibility_mode,
         "energy_direct_bs_cost": float(args.energy_direct_bs_cost),
         "energy_d2d_member_cost": float(args.energy_d2d_member_cost),
         "energy_ch_bs_cost": float(args.energy_ch_bs_cost),
+        "energy_electronics_cost": float(args.energy_electronics_cost),
+        "energy_bs_amplifier_cost": float(args.energy_bs_amplifier_cost),
+        "energy_d2d_amplifier_cost": float(args.energy_d2d_amplifier_cost),
+        "energy_bs_pathloss_exponent": float(args.energy_bs_pathloss_exponent),
+        "energy_d2d_pathloss_exponent": float(args.energy_d2d_pathloss_exponent),
+        "energy_aggregation_cost": float(args.energy_aggregation_cost),
+        "energy_update_size": float(args.energy_update_size),
+        "energy_aggregate_size": float(args.energy_aggregate_size),
+        "energy_rotation_control_cost": float(args.energy_rotation_control_cost),
         "d2d_ch_rotation_mode": args.d2d_ch_rotation_mode,
         "d2d_ch_rotation_interval": int(args.d2d_ch_rotation_interval),
         "d2d_energy_efficiency_level": args.d2d_energy_efficiency_level,
@@ -635,18 +687,30 @@ def build_parser():
         default=0.20,
         help="Quality CH rotation weight for normalized battery percentage.",
     )
+    parser.add_argument(
+        "--cluster-head-channel-score-mode",
+        choices=("inverse_pathloss", "rayleigh_outage"),
+        default="inverse_pathloss",
+        help=(
+            "Channel score used inside quality CH election. inverse_pathloss "
+            "preserves the older normalized-distance score; rayleigh_outage "
+            "uses the same reference SNR and threshold as the D2D CH-to-BS "
+            "Rayleigh link model."
+        ),
+    )
     parser.add_argument("--uniform-area", action="store_true")
     parser.add_argument("--d2d-member-compute-probability", type=float, default=1.0)
     parser.add_argument("--d2d-member-link-success-probability", type=float, default=1.0)
     parser.add_argument(
         "--d2d-ch-bs-success-mode",
-        choices=("none", "channel_quality"),
+        choices=("none", "channel_quality", "rayleigh_outage"),
         default="none",
         help=(
             "Optional CH-to-BS decoding realism for D2D curves. none preserves "
             "the collision-only thesis-compatible behavior; channel_quality "
             "makes a collision-free CH upload succeed according to the elected "
-            "CH distance-to-BS and optional battery factor."
+            "CH distance-to-BS and optional battery factor; rayleigh_outage "
+            "uses a Rayleigh fading outage probability from average SNR."
         ),
     )
     parser.add_argument(
@@ -677,15 +741,34 @@ def build_parser():
         ),
     )
     parser.add_argument(
+        "--d2d-ch-bs-reference-snr",
+        type=float,
+        default=100000.0,
+        help=(
+            "Reference average SNR used by rayleigh_outage CH-to-BS decoding "
+            "and optional Rayleigh-based CH election."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-bs-snr-threshold",
+        type=float,
+        default=1.0,
+        help=(
+            "SNR threshold for rayleigh_outage CH-to-BS decoding. The success "
+            "probability is exp(-threshold / average_snr)."
+        ),
+    )
+    parser.add_argument(
         "--device-bs-success-mode",
-        choices=("none", "channel_quality"),
+        choices=("none", "channel_quality", "rayleigh_outage"),
         default="none",
         help=(
             "Optional device-to-BS decoding realism for non-D2D curves. none "
             "preserves the thesis-compatible collision-only behavior; "
             "channel_quality makes each collision-free direct upload succeed "
             "according to the transmitting device distance-to-BS and optional "
-            "battery factor."
+            "battery factor; rayleigh_outage uses a Rayleigh fading outage "
+            "probability from average SNR."
         ),
     )
     parser.add_argument(
@@ -716,6 +799,21 @@ def build_parser():
         ),
     )
     parser.add_argument(
+        "--device-bs-reference-snr",
+        type=float,
+        default=100000.0,
+        help="Reference average SNR used by rayleigh_outage direct device-to-BS decoding.",
+    )
+    parser.add_argument(
+        "--device-bs-snr-threshold",
+        type=float,
+        default=1.0,
+        help=(
+            "SNR threshold for rayleigh_outage direct device-to-BS decoding. "
+            "The success probability is exp(-threshold / average_snr)."
+        ),
+    )
+    parser.add_argument(
         "--energy-drain-mode",
         choices=("none", "dynamic"),
         default="none",
@@ -723,6 +821,26 @@ def build_parser():
             "Battery evolution model. none keeps battery fixed; dynamic drains "
             "per-scenario battery after transmission attempts and lets "
             "battery-aware channel-quality modes see the updated energy."
+        ),
+    )
+    parser.add_argument(
+        "--energy-model",
+        choices=("constant", "first_order_radio"),
+        default="constant",
+        help=(
+            "Energy accounting model used when --energy-drain-mode dynamic is "
+            "enabled. constant uses the legacy fixed costs below; "
+            "first_order_radio computes normalized transmit/receive/aggregate "
+            "costs from packet size and link distance."
+        ),
+    )
+    parser.add_argument(
+        "--battery-feasibility-mode",
+        choices=("off", "required_energy"),
+        default="off",
+        help=(
+            "When required_energy is enabled, a device/CH only attempts if its "
+            "current normalized battery can pay the required role energy."
         ),
     )
     parser.add_argument(
@@ -751,6 +869,63 @@ def build_parser():
             "Normalized battery cost for one CH-to-BS aggregate transmission "
             "attempt. The cost is paid even when the attempt collides or fails "
             "physical decoding."
+        ),
+    )
+    parser.add_argument(
+        "--energy-electronics-cost",
+        type=float,
+        default=0.0002,
+        help="First-order radio electronics cost per normalized packet-size unit.",
+    )
+    parser.add_argument(
+        "--energy-bs-amplifier-cost",
+        type=float,
+        default=2e-8,
+        help="First-order radio amplifier coefficient for device/CH-to-BS links.",
+    )
+    parser.add_argument(
+        "--energy-d2d-amplifier-cost",
+        type=float,
+        default=1e-6,
+        help="First-order radio amplifier coefficient for member-to-CH D2D links.",
+    )
+    parser.add_argument(
+        "--energy-bs-pathloss-exponent",
+        type=float,
+        default=2.0,
+        help="Distance exponent used by first-order radio BS transmit energy.",
+    )
+    parser.add_argument(
+        "--energy-d2d-pathloss-exponent",
+        type=float,
+        default=2.0,
+        help="Distance exponent used by first-order radio D2D transmit energy.",
+    )
+    parser.add_argument(
+        "--energy-aggregation-cost",
+        type=float,
+        default=0.00002,
+        help="First-order radio CH aggregation processing cost per active update.",
+    )
+    parser.add_argument(
+        "--energy-update-size",
+        type=float,
+        default=1.0,
+        help="Normalized local-update payload size for direct and D2D member transmissions.",
+    )
+    parser.add_argument(
+        "--energy-aggregate-size",
+        type=float,
+        default=1.0,
+        help="Normalized aggregate payload size for CH-to-BS transmissions.",
+    )
+    parser.add_argument(
+        "--energy-rotation-control-cost",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional normalized control overhead charged to elected D2D CHs on "
+            "rotation iterations. Default zero preserves prior results."
         ),
     )
     parser.add_argument(

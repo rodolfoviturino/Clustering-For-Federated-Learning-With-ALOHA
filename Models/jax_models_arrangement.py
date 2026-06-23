@@ -80,6 +80,8 @@ class JaxTraceResult(NamedTuple):
     mean_energy_used: Any
     energy_efficiency: Any
     mean_clusterhead_energy_used: Any
+    mean_aoi: Any
+    peak_aoi: Any
     checkpoints: Any
 
 
@@ -283,6 +285,77 @@ def _normalized_bs_channel_quality(
     return raw_channel / jnp.maximum(jnp.max(raw_channel), eps)
 
 
+def _rayleigh_outage_success_probability(
+    number_of_devices,
+    dtype,
+    device_distance_to_bs=None,
+    pathloss_exponent=2.0,
+    reference_snr=100000.0,
+    snr_threshold=1.0,
+):
+    """Return collision-free packet success probability under Rayleigh outage.
+
+    The model uses the standard outage form for an exponentially distributed
+    channel power gain: a packet succeeds when instantaneous SNR is above a
+    decoding threshold.  ``reference_snr`` is the average SNR at one meter, and
+    distance/pathloss reduce that average SNR before evaluating
+    ``P[SNR >= threshold] = exp(-threshold / avg_snr)``.
+    """
+    if device_distance_to_bs is None:
+        device_distance_to_bs = jnp.ones((number_of_devices,), dtype=dtype)
+    else:
+        device_distance_to_bs = jnp.asarray(device_distance_to_bs, dtype=dtype)
+
+    one = jnp.asarray(1.0, dtype=dtype)
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    pathloss_exponent = jnp.asarray(pathloss_exponent, dtype=dtype)
+    reference_snr = jnp.asarray(reference_snr, dtype=dtype)
+    snr_threshold = jnp.asarray(snr_threshold, dtype=dtype)
+    average_snr = reference_snr / (
+        jnp.maximum(device_distance_to_bs, one) ** pathloss_exponent
+    )
+    probability = jnp.exp(-snr_threshold / jnp.maximum(average_snr, eps))
+    return jnp.clip(probability, 0.0, 1.0).astype(dtype)
+
+
+def _first_order_bs_tx_energy(
+    distance_to_bs,
+    packet_size,
+    electronics_cost,
+    amplifier_cost,
+    pathloss_exponent,
+):
+    """Return normalized first-order radio energy for a BS uplink packet."""
+    distance_to_bs = jnp.asarray(distance_to_bs)
+    dtype = distance_to_bs.dtype
+    packet_size = jnp.asarray(packet_size, dtype=dtype)
+    electronics_cost = jnp.asarray(electronics_cost, dtype=dtype)
+    amplifier_cost = jnp.asarray(amplifier_cost, dtype=dtype)
+    pathloss_exponent = jnp.asarray(pathloss_exponent, dtype=dtype)
+    return packet_size * electronics_cost + packet_size * amplifier_cost * (
+        jnp.maximum(distance_to_bs, 1.0) ** pathloss_exponent
+    )
+
+
+def _first_order_d2d_tx_energy(
+    distance_to_ch,
+    packet_size,
+    electronics_cost,
+    amplifier_cost,
+    pathloss_exponent,
+):
+    """Return normalized first-order radio energy for a D2D member packet."""
+    distance_to_ch = jnp.asarray(distance_to_ch)
+    dtype = distance_to_ch.dtype
+    packet_size = jnp.asarray(packet_size, dtype=dtype)
+    electronics_cost = jnp.asarray(electronics_cost, dtype=dtype)
+    amplifier_cost = jnp.asarray(amplifier_cost, dtype=dtype)
+    pathloss_exponent = jnp.asarray(pathloss_exponent, dtype=dtype)
+    return packet_size * electronics_cost + packet_size * amplifier_cost * (
+        jnp.maximum(distance_to_ch, 1.0) ** pathloss_exponent
+    )
+
+
 def _device_bs_success_probability(
     number_of_devices,
     dtype,
@@ -290,6 +363,8 @@ def _device_bs_success_probability(
     min_success_probability,
     pathloss_exponent,
     battery_exponent,
+    reference_snr=100000.0,
+    snr_threshold=1.0,
     device_distance_to_bs=None,
     device_battery=None,
 ):
@@ -299,10 +374,11 @@ def _device_bs_success_probability(
     whenever the device/CH is allowed to transmit and does not collide on the
     selected ALOHA channel.  In that mode the physical uplink is idealized.
 
-    ``success_mode="channel_quality"`` adds a deployable second-stage decoding
-    model: attempted transmissions still contend and collide exactly as before,
-    but a collision-free packet is decoded by the BS with a probability derived
-    from the transmitter's inverse pathloss and optional battery factor.
+    ``success_mode="channel_quality"`` keeps the legacy inverse-pathloss
+    probability model.  ``success_mode="rayleigh_outage"`` maps distance to an
+    average SNR and evaluates the Rayleigh outage success probability.  In both
+    enhanced modes, attempted transmissions still contend and collide exactly as
+    before; the physical draw happens only after a collision-free ALOHA attempt.
 
     Arrays:
 
@@ -326,6 +402,16 @@ def _device_bs_success_probability(
     one = jnp.asarray(1.0, dtype=dtype)
     min_success = jnp.asarray(min_success_probability, dtype=dtype)
     battery_exponent = jnp.asarray(battery_exponent, dtype=dtype)
+
+    if success_mode == "rayleigh_outage":
+        return _rayleigh_outage_success_probability(
+            number_of_devices,
+            dtype,
+            device_distance_to_bs=device_distance_to_bs,
+            pathloss_exponent=pathloss_exponent,
+            reference_snr=reference_snr,
+            snr_threshold=snr_threshold,
+        )
 
     channel_quality = _normalized_bs_channel_quality(
         number_of_devices,
@@ -352,6 +438,8 @@ def _d2d_ch_bs_success_probability(
     min_success_probability,
     pathloss_exponent,
     battery_exponent,
+    reference_snr=100000.0,
+    snr_threshold=1.0,
     device_distance_to_bs=None,
     device_battery=None,
 ):
@@ -378,6 +466,8 @@ def _d2d_ch_bs_success_probability(
         min_success_probability=min_success_probability,
         pathloss_exponent=pathloss_exponent,
         battery_exponent=battery_exponent,
+        reference_snr=reference_snr,
+        snr_threshold=snr_threshold,
         device_distance_to_bs=device_distance_to_bs,
         device_battery=device_battery,
     )
@@ -972,14 +1062,29 @@ def error_calculator_trace_jax(
     d2d_ch_bs_min_success_probability: float = 0.20,
     d2d_ch_bs_pathloss_exponent: float = 2.0,
     d2d_ch_bs_battery_exponent: float = 0.0,
+    d2d_ch_bs_reference_snr: float = 100000.0,
+    d2d_ch_bs_snr_threshold: float = 1.0,
     device_bs_success_mode: str = "none",
     device_bs_min_success_probability: float = 0.20,
     device_bs_pathloss_exponent: float = 2.0,
     device_bs_battery_exponent: float = 0.0,
+    device_bs_reference_snr: float = 100000.0,
+    device_bs_snr_threshold: float = 1.0,
     energy_drain_mode: str = "none",
+    energy_model: str = "constant",
+    battery_feasibility_mode: str = "off",
     energy_direct_bs_cost: float = 0.0,
     energy_d2d_member_cost: float = 0.0,
     energy_ch_bs_cost: float = 0.0,
+    energy_electronics_cost: float = 0.0002,
+    energy_bs_amplifier_cost: float = 2e-8,
+    energy_d2d_amplifier_cost: float = 1e-6,
+    energy_bs_pathloss_exponent: float = 2.0,
+    energy_d2d_pathloss_exponent: float = 2.0,
+    energy_aggregation_cost: float = 0.00002,
+    energy_update_size: float = 1.0,
+    energy_aggregate_size: float = 1.0,
+    energy_rotation_control_cost: float = 0.0,
     d2d_ch_rotation_mode: str = "static",
     d2d_ch_rotation_interval: int = 10,
     d2d_energy_efficiency_level: str = "balanced",
@@ -1037,9 +1142,10 @@ def error_calculator_trace_jax(
         raise ValueError("d2d_member_compute_probability must be in [0, 1]")
     if not 0.0 <= d2d_member_link_success_probability <= 1.0:
         raise ValueError("d2d_member_link_success_probability must be in [0, 1]")
-    if d2d_ch_bs_success_mode not in {"none", "channel_quality"}:
+    if d2d_ch_bs_success_mode not in {"none", "channel_quality", "rayleigh_outage"}:
         raise ValueError(
-            "d2d_ch_bs_success_mode must be 'none' or 'channel_quality'"
+            "d2d_ch_bs_success_mode must be 'none', 'channel_quality', or "
+            "'rayleigh_outage'"
         )
     if not 0.0 <= d2d_ch_bs_min_success_probability <= 1.0:
         raise ValueError("d2d_ch_bs_min_success_probability must be in [0, 1]")
@@ -1047,9 +1153,14 @@ def error_calculator_trace_jax(
         raise ValueError("d2d_ch_bs_pathloss_exponent must be non-negative")
     if d2d_ch_bs_battery_exponent < 0.0:
         raise ValueError("d2d_ch_bs_battery_exponent must be non-negative")
-    if device_bs_success_mode not in {"none", "channel_quality"}:
+    if d2d_ch_bs_reference_snr <= 0.0:
+        raise ValueError("d2d_ch_bs_reference_snr must be positive")
+    if d2d_ch_bs_snr_threshold < 0.0:
+        raise ValueError("d2d_ch_bs_snr_threshold must be non-negative")
+    if device_bs_success_mode not in {"none", "channel_quality", "rayleigh_outage"}:
         raise ValueError(
-            "device_bs_success_mode must be 'none' or 'channel_quality'"
+            "device_bs_success_mode must be 'none', 'channel_quality', or "
+            "'rayleigh_outage'"
         )
     if not 0.0 <= device_bs_min_success_probability <= 1.0:
         raise ValueError("device_bs_min_success_probability must be in [0, 1]")
@@ -1057,14 +1168,42 @@ def error_calculator_trace_jax(
         raise ValueError("device_bs_pathloss_exponent must be non-negative")
     if device_bs_battery_exponent < 0.0:
         raise ValueError("device_bs_battery_exponent must be non-negative")
+    if device_bs_reference_snr <= 0.0:
+        raise ValueError("device_bs_reference_snr must be positive")
+    if device_bs_snr_threshold < 0.0:
+        raise ValueError("device_bs_snr_threshold must be non-negative")
     if energy_drain_mode not in {"none", "dynamic"}:
         raise ValueError("energy_drain_mode must be 'none' or 'dynamic'")
+    if energy_model not in {"constant", "first_order_radio"}:
+        raise ValueError("energy_model must be 'constant' or 'first_order_radio'")
+    if battery_feasibility_mode not in {"off", "required_energy"}:
+        raise ValueError(
+            "battery_feasibility_mode must be 'off' or 'required_energy'"
+        )
     if energy_direct_bs_cost < 0.0:
         raise ValueError("energy_direct_bs_cost must be non-negative")
     if energy_d2d_member_cost < 0.0:
         raise ValueError("energy_d2d_member_cost must be non-negative")
     if energy_ch_bs_cost < 0.0:
         raise ValueError("energy_ch_bs_cost must be non-negative")
+    if energy_electronics_cost < 0.0:
+        raise ValueError("energy_electronics_cost must be non-negative")
+    if energy_bs_amplifier_cost < 0.0:
+        raise ValueError("energy_bs_amplifier_cost must be non-negative")
+    if energy_d2d_amplifier_cost < 0.0:
+        raise ValueError("energy_d2d_amplifier_cost must be non-negative")
+    if energy_bs_pathloss_exponent < 0.0:
+        raise ValueError("energy_bs_pathloss_exponent must be non-negative")
+    if energy_d2d_pathloss_exponent < 0.0:
+        raise ValueError("energy_d2d_pathloss_exponent must be non-negative")
+    if energy_aggregation_cost < 0.0:
+        raise ValueError("energy_aggregation_cost must be non-negative")
+    if energy_update_size <= 0.0:
+        raise ValueError("energy_update_size must be positive")
+    if energy_aggregate_size <= 0.0:
+        raise ValueError("energy_aggregate_size must be positive")
+    if energy_rotation_control_cost < 0.0:
+        raise ValueError("energy_rotation_control_cost must be non-negative")
     if d2d_ch_rotation_mode not in {"static", "energy_aware"}:
         raise ValueError("d2d_ch_rotation_mode must be 'static' or 'energy_aware'")
     if d2d_ch_rotation_interval < 1:
@@ -1165,6 +1304,8 @@ def error_calculator_trace_jax(
         d2d_ch_bs_battery_exponent,
         dtype=dtype,
     )
+    d2d_ch_bs_reference_snr = jnp.asarray(d2d_ch_bs_reference_snr, dtype=dtype)
+    d2d_ch_bs_snr_threshold = jnp.asarray(d2d_ch_bs_snr_threshold, dtype=dtype)
     device_bs_min_success_probability = jnp.asarray(
         device_bs_min_success_probability,
         dtype=dtype,
@@ -1177,6 +1318,8 @@ def error_calculator_trace_jax(
         device_bs_battery_exponent,
         dtype=dtype,
     )
+    device_bs_reference_snr = jnp.asarray(device_bs_reference_snr, dtype=dtype)
+    device_bs_snr_threshold = jnp.asarray(device_bs_snr_threshold, dtype=dtype)
     energy_enabled = jnp.asarray(
         1.0 if energy_drain_mode == "dynamic" else 0.0,
         dtype=dtype,
@@ -1184,6 +1327,25 @@ def error_calculator_trace_jax(
     energy_direct_bs_cost = jnp.asarray(energy_direct_bs_cost, dtype=dtype)
     energy_d2d_member_cost = jnp.asarray(energy_d2d_member_cost, dtype=dtype)
     energy_ch_bs_cost = jnp.asarray(energy_ch_bs_cost, dtype=dtype)
+    energy_electronics_cost = jnp.asarray(energy_electronics_cost, dtype=dtype)
+    energy_bs_amplifier_cost = jnp.asarray(energy_bs_amplifier_cost, dtype=dtype)
+    energy_d2d_amplifier_cost = jnp.asarray(energy_d2d_amplifier_cost, dtype=dtype)
+    energy_bs_pathloss_exponent = jnp.asarray(
+        energy_bs_pathloss_exponent,
+        dtype=dtype,
+    )
+    energy_d2d_pathloss_exponent = jnp.asarray(
+        energy_d2d_pathloss_exponent,
+        dtype=dtype,
+    )
+    energy_aggregation_cost = jnp.asarray(energy_aggregation_cost, dtype=dtype)
+    energy_update_size = jnp.asarray(energy_update_size, dtype=dtype)
+    energy_aggregate_size = jnp.asarray(energy_aggregate_size, dtype=dtype)
+    energy_rotation_control_cost = jnp.asarray(
+        energy_rotation_control_cost,
+        dtype=dtype,
+    )
+    battery_feasibility_enabled = battery_feasibility_mode == "required_energy"
     d2d_ch_rotation_enabled = d2d_ch_rotation_mode == "energy_aware"
     d2d_rotation_channel_weight, d2d_rotation_battery_weight, d2d_rotation_stability_weight = (
         _d2d_energy_efficiency_profile_weights(d2d_energy_efficiency_level, dtype)
@@ -1310,7 +1472,7 @@ def error_calculator_trace_jax(
     member_positions = jnp.arange(max_cluster_size, dtype=jnp.int32)[None, :]
     member_mask = member_positions < cluster_sizes[:, None]
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], 0)
-    if device_coords is None:
+    if device_coords is None or device_radius is None:
         candidate_can_cover_members = member_mask
     else:
         coords = jnp.asarray(device_coords, dtype=dtype)
@@ -1340,6 +1502,51 @@ def error_calculator_trace_jax(
         k_devices,
         dtype,
     )
+    if device_distance_to_bs is None:
+        device_distance_to_bs_array = jnp.ones((k_devices,), dtype=dtype)
+    else:
+        device_distance_to_bs_array = jnp.asarray(device_distance_to_bs, dtype=dtype)
+
+    if energy_model == "first_order_radio":
+        direct_bs_energy_by_device = _first_order_bs_tx_energy(
+            device_distance_to_bs_array,
+            energy_update_size,
+            energy_electronics_cost,
+            energy_bs_amplifier_cost,
+            energy_bs_pathloss_exponent,
+        ).astype(dtype)
+        ch_bs_energy_by_device = _first_order_bs_tx_energy(
+            device_distance_to_bs_array,
+            energy_aggregate_size,
+            energy_electronics_cost,
+            energy_bs_amplifier_cost,
+            energy_bs_pathloss_exponent,
+        ).astype(dtype)
+        member_rx_energy = energy_update_size * energy_electronics_cost
+        aggregate_update_energy = energy_update_size * energy_aggregation_cost
+        coords_for_energy = (
+            None if device_coords is None else jnp.asarray(device_coords, dtype=dtype)
+        )
+        d2d_member_energy_by_position = None
+    else:
+        coords_for_energy = None
+        direct_bs_energy_by_device = jnp.full(
+            (k_devices,),
+            energy_direct_bs_cost,
+            dtype=dtype,
+        )
+        ch_bs_energy_by_device = jnp.full(
+            (k_devices,),
+            energy_ch_bs_cost,
+            dtype=dtype,
+        )
+        member_rx_energy = jnp.asarray(0.0, dtype=dtype)
+        aggregate_update_energy = jnp.asarray(0.0, dtype=dtype)
+        d2d_member_energy_by_position = jnp.full(
+            cluster_members.shape,
+            energy_d2d_member_cost,
+            dtype=dtype,
+        )
     # Battery state is tracked independently for every curve.  This avoids a
     # modeling artifact where, for example, direct optimized ALOHA could drain
     # the batteries used by optimized D2D in the same Monte Carlo trajectory.
@@ -1353,6 +1560,8 @@ def error_calculator_trace_jax(
         min_success_probability=d2d_ch_bs_min_success_probability,
         pathloss_exponent=d2d_ch_bs_pathloss_exponent,
         battery_exponent=d2d_ch_bs_battery_exponent,
+        reference_snr=d2d_ch_bs_reference_snr,
+        snr_threshold=d2d_ch_bs_snr_threshold,
         device_distance_to_bs=device_distance_to_bs,
         device_battery=initial_device_battery,
     )
@@ -1417,6 +1626,70 @@ def error_calculator_trace_jax(
         has_candidate = jnp.any(valid_ch_candidate, axis=1)
         return jnp.where(cluster_mask & has_candidate, proposed_heads, current_heads)
 
+    def direct_device_has_required_energy(scenario_battery):
+        if not battery_feasibility_enabled:
+            return jnp.ones((k_devices,), dtype=jnp.bool_)
+        return scenario_battery >= direct_bs_energy_by_device
+
+    def member_energy_for_heads(heads):
+        if energy_model != "first_order_radio":
+            return d2d_member_energy_by_position
+        if coords_for_energy is None:
+            distances = jnp.ones(cluster_members.shape, dtype=dtype)
+        else:
+            member_coords = coords_for_energy[safe_members]
+            head_coords = coords_for_energy[heads][:, None, :]
+            deltas = member_coords - head_coords
+            distances = jnp.sqrt(jnp.sum(deltas * deltas, axis=-1))
+        return _first_order_d2d_tx_energy(
+            distances,
+            energy_update_size,
+            energy_electronics_cost,
+            energy_d2d_amplifier_cost,
+            energy_d2d_pathloss_exponent,
+        ).astype(dtype)
+
+    def ch_required_energy_for_heads(heads, active_member_mask):
+        if energy_model != "first_order_radio":
+            return jnp.where(
+                cluster_mask,
+                ch_bs_energy_by_device[heads],
+                0.0,
+            )
+        is_scenario_ch = safe_members == heads[:, None]
+        active_count = jnp.sum(active_member_mask, axis=1).astype(dtype)
+        active_non_ch_count = jnp.sum(
+            active_member_mask & (~is_scenario_ch),
+            axis=1,
+        ).astype(dtype)
+        required = (
+            ch_bs_energy_by_device[heads]
+            + active_non_ch_count * member_rx_energy
+            + active_count * aggregate_update_energy
+        )
+        return jnp.where(cluster_mask, required, 0.0)
+
+    def ch_has_required_energy(heads, scenario_battery, active_member_mask):
+        if not battery_feasibility_enabled:
+            return cluster_mask
+        required = ch_required_energy_for_heads(heads, active_member_mask)
+        return cluster_mask & (scenario_battery[heads] >= required)
+
+    def scenario_aoi_summary(non_d2d_aoi, d2d_aoi):
+        d2d_denominator = jnp.maximum(
+            active_clusterhead_count,
+            jnp.asarray(1.0, dtype=users_input__x.dtype),
+        )
+        d2d_masked = jnp.where(cluster_mask[None, :], d2d_aoi, 0.0)
+        mean_non_d2d = jnp.mean(non_d2d_aoi, axis=1)
+        mean_d2d = jnp.sum(d2d_masked, axis=1) / d2d_denominator
+        peak_non_d2d = jnp.max(non_d2d_aoi, axis=1)
+        peak_d2d = jnp.max(d2d_masked, axis=1)
+        return (
+            jnp.concatenate([mean_non_d2d, mean_d2d], axis=0),
+            jnp.concatenate([peak_non_d2d, peak_d2d], axis=0),
+        )
+
     def scan_iteration(state, iteration_index):
         (
             key,
@@ -1434,6 +1707,8 @@ def error_calculator_trace_jax(
             optimized_d2d_freshness,
             optimized_d2d_reference_direction,
             optimized_d2d_success_ewma,
+            non_d2d_aoi,
+            d2d_aoi,
         ) = state
         (
             key,
@@ -1491,6 +1766,8 @@ def error_calculator_trace_jax(
             min_success_probability=device_bs_min_success_probability,
             pathloss_exponent=device_bs_pathloss_exponent,
             battery_exponent=device_bs_battery_exponent,
+            reference_snr=device_bs_reference_snr,
+            snr_threshold=device_bs_snr_threshold,
             device_distance_to_bs=device_distance_to_bs,
             device_battery=current_batteries[0],
         )
@@ -1501,6 +1778,8 @@ def error_calculator_trace_jax(
             min_success_probability=device_bs_min_success_probability,
             pathloss_exponent=device_bs_pathloss_exponent,
             battery_exponent=device_bs_battery_exponent,
+            reference_snr=device_bs_reference_snr,
+            snr_threshold=device_bs_snr_threshold,
             device_distance_to_bs=device_distance_to_bs,
             device_battery=current_batteries[1],
         )
@@ -1511,6 +1790,8 @@ def error_calculator_trace_jax(
             min_success_probability=device_bs_min_success_probability,
             pathloss_exponent=device_bs_pathloss_exponent,
             battery_exponent=device_bs_battery_exponent,
+            reference_snr=device_bs_reference_snr,
+            snr_threshold=device_bs_snr_threshold,
             device_distance_to_bs=device_distance_to_bs,
             device_battery=current_batteries[2],
         )
@@ -1523,6 +1804,8 @@ def error_calculator_trace_jax(
             min_success_probability=d2d_ch_bs_min_success_probability,
             pathloss_exponent=d2d_ch_bs_pathloss_exponent,
             battery_exponent=d2d_ch_bs_battery_exponent,
+            reference_snr=d2d_ch_bs_reference_snr,
+            snr_threshold=d2d_ch_bs_snr_threshold,
             device_distance_to_bs=device_distance_to_bs,
             device_battery=current_batteries[3],
         )
@@ -1535,6 +1818,8 @@ def error_calculator_trace_jax(
             min_success_probability=d2d_ch_bs_min_success_probability,
             pathloss_exponent=d2d_ch_bs_pathloss_exponent,
             battery_exponent=d2d_ch_bs_battery_exponent,
+            reference_snr=d2d_ch_bs_reference_snr,
+            snr_threshold=d2d_ch_bs_snr_threshold,
             device_distance_to_bs=device_distance_to_bs,
             device_battery=current_batteries[4],
         )
@@ -1547,17 +1832,19 @@ def error_calculator_trace_jax(
             min_success_probability=d2d_ch_bs_min_success_probability,
             pathloss_exponent=d2d_ch_bs_pathloss_exponent,
             battery_exponent=d2d_ch_bs_battery_exponent,
+            reference_snr=d2d_ch_bs_reference_snr,
+            snr_threshold=d2d_ch_bs_snr_threshold,
             device_distance_to_bs=device_distance_to_bs,
             device_battery=current_batteries[5],
         )
         direct_link_success_probability_2 = (
             device_bs_success_probability_2
-            if device_bs_success_mode == "channel_quality"
+            if device_bs_success_mode != "none"
             else None
         )
         direct_link_success_probability_3 = (
             device_bs_success_probability_3
-            if device_bs_success_mode == "channel_quality"
+            if device_bs_success_mode != "none"
             else None
         )
         mean_fixed_d2d_ch_success_probability = (
@@ -1590,20 +1877,62 @@ def error_calculator_trace_jax(
             & (active_link_draws < d2d_link_probability)
         )
 
-        def active_member_mask_for_heads(heads):
+        direct_can_attempt_1 = direct_device_has_required_energy(current_batteries[0])
+        direct_can_attempt_2 = direct_device_has_required_energy(current_batteries[1])
+        direct_can_attempt_3 = direct_device_has_required_energy(current_batteries[2])
+
+        member_energy_1 = member_energy_for_heads(polling_d2d_heads)
+        member_energy_2 = member_energy_for_heads(fixed_d2d_heads)
+        member_energy_3 = member_energy_for_heads(optimized_d2d_heads)
+
+        def active_member_mask_for_heads(heads, scenario_battery, member_energy):
             is_scenario_ch = safe_members == heads[:, None]
+            if battery_feasibility_enabled:
+                member_has_energy = scenario_battery[safe_members] >= member_energy
+            else:
+                member_has_energy = jnp.ones(cluster_members.shape, dtype=jnp.bool_)
             return (
                 member_mask
                 & cluster_mask[:, None]
-                & (is_scenario_ch | member_compute_link_success)
+                & (
+                    is_scenario_ch
+                    | (member_compute_link_success & member_has_energy)
+                )
             )
 
-        active_member_mask_1 = active_member_mask_for_heads(polling_d2d_heads)
-        active_member_mask_2 = active_member_mask_for_heads(fixed_d2d_heads)
-        active_member_mask_3 = active_member_mask_for_heads(optimized_d2d_heads)
+        active_member_mask_1 = active_member_mask_for_heads(
+            polling_d2d_heads,
+            current_batteries[3],
+            member_energy_1,
+        )
+        active_member_mask_2 = active_member_mask_for_heads(
+            fixed_d2d_heads,
+            current_batteries[4],
+            member_energy_2,
+        )
+        active_member_mask_3 = active_member_mask_for_heads(
+            optimized_d2d_heads,
+            current_batteries[5],
+            member_energy_3,
+        )
         active_member_counts_1 = jnp.sum(active_member_mask_1, axis=1).astype(jnp.int32)
         active_member_counts_2 = jnp.sum(active_member_mask_2, axis=1).astype(jnp.int32)
         active_member_counts_3 = jnp.sum(active_member_mask_3, axis=1).astype(jnp.int32)
+        ch_can_attempt_1 = ch_has_required_energy(
+            polling_d2d_heads,
+            current_batteries[3],
+            active_member_mask_1,
+        )
+        ch_can_attempt_2 = ch_has_required_energy(
+            fixed_d2d_heads,
+            current_batteries[4],
+            active_member_mask_2,
+        )
+        ch_can_attempt_3 = ch_has_required_energy(
+            optimized_d2d_heads,
+            current_batteries[5],
+            active_member_mask_3,
+        )
 
         local_updates = local_updates_for_weights(current_weights)
         aggregate_updates_model_1 = aggregate_cluster_updates(
@@ -1624,8 +1953,10 @@ def error_calculator_trace_jax(
         scheduled_users = (
             iteration_index * n_channels + jnp.arange(n_channels, dtype=jnp.int32)
         ) % k_devices
-        polling_compute_success = channel_draws < pcomp
-        if device_bs_success_mode == "channel_quality":
+        polling_compute_success = (
+            (channel_draws < pcomp) & direct_can_attempt_1[scheduled_users]
+        )
+        if device_bs_success_mode != "none":
             direct_polling_link_draws = jax.random.uniform(
                 direct_polling_link_key,
                 (n_channels,),
@@ -1652,7 +1983,10 @@ def error_calculator_trace_jax(
             (n_channels,),
             dtype=dtype,
         )
-        polling_success_d2d = polling_compute_success & (
+        polling_d2d_attempt = polling_compute_success & ch_can_attempt_1[
+            scheduled_clusters
+        ]
+        polling_success_d2d = polling_d2d_attempt & (
             polling_d2d_link_draws < ch_bs_success_probability_1[scheduled_clusters]
         )
         gradient_1_d2d = jnp.sum(
@@ -1677,12 +2011,12 @@ def error_calculator_trace_jax(
             access_probability,
             pcomp,
         )
-        candidates_2_mask = device_draws < threshold
+        candidates_2_mask = (device_draws < threshold) & direct_can_attempt_2
         success_2, _ = _successful_from_draws(
             channel_key_2,
             device_draws,
             threshold,
-            jnp.ones(k_devices, dtype=jnp.bool_),
+            direct_can_attempt_2,
             n_channels,
             link_key=direct_fixed_link_key,
             link_success_probability=direct_link_success_probability_2,
@@ -1696,11 +2030,12 @@ def error_calculator_trace_jax(
             pcomp,
         )
         candidates_2_d2d_mask = (fixed_cluster_draws < threshold_d2d) & cluster_mask
+        candidates_2_d2d_mask = candidates_2_d2d_mask & ch_can_attempt_2
         success_2_d2d, _ = _successful_from_draws(
             channel_key_2_d2d,
             fixed_cluster_draws,
             threshold_d2d,
-            cluster_mask,
+            cluster_mask & ch_can_attempt_2,
             n_channels,
             link_key=fixed_d2d_link_key,
             link_success_probability=ch_bs_success_probability_2,
@@ -1731,12 +2066,12 @@ def error_calculator_trace_jax(
             fixed_access_probability=access_probability,
             pcomp=pcomp,
         )
-        candidates_3_mask = device_draws < optimized_probability
+        candidates_3_mask = (device_draws < optimized_probability) & direct_can_attempt_3
         success_3, candidates_3 = _successful_from_draws(
             channel_key_3,
             device_draws,
             optimized_probability,
-            jnp.ones(k_devices, dtype=jnp.bool_),
+            direct_can_attempt_3,
             n_channels,
             link_key=direct_optimized_link_key,
             link_success_probability=direct_link_success_probability_3,
@@ -1863,11 +2198,12 @@ def error_calculator_trace_jax(
         candidates_3_d2d_mask = (
             optimized_cluster_draws < optimized_probability_d2d
         ) & cluster_mask
+        candidates_3_d2d_mask = candidates_3_d2d_mask & ch_can_attempt_3
         success_3_d2d, candidates_3_d2d = _successful_from_draws(
             channel_key_3_d2d,
             optimized_cluster_draws,
             optimized_probability_d2d,
-            cluster_mask,
+            cluster_mask & ch_can_attempt_3,
             n_channels,
             link_key=optimized_d2d_link_key,
             link_success_probability=ch_bs_success_probability_3,
@@ -1927,16 +2263,21 @@ def error_calculator_trace_jax(
             # cost for attempted transmissions.  The cost is charged on
             # attempts, not only successes, because RF energy is consumed before
             # collision/decoding outcome is known.
-            return attempt_mask.astype(users_input__x.dtype) * energy_direct_bs_cost
+            return attempt_mask.astype(users_input__x.dtype) * direct_bs_energy_by_device
 
         def polling_direct_attempt_drain():
             drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
             return drain.at[scheduled_users].add(
                 polling_compute_success.astype(users_input__x.dtype)
-                * energy_direct_bs_cost
+                * direct_bs_energy_by_device[scheduled_users]
             )
 
-        def d2d_attempt_drain(cluster_attempt_counts, active_member_mask, heads):
+        def d2d_attempt_drain(
+            cluster_attempt_counts,
+            active_member_mask,
+            heads,
+            member_energy,
+        ):
             # CHs pay for every BS-uplink attempt.  Members pay when they have
             # an active update and their cluster actually tries to use the
             # aggregate in this iteration.  This preserves the HFL hierarchy:
@@ -1947,27 +2288,50 @@ def error_calculator_trace_jax(
                 cluster_attempt_counts.astype(users_input__x.dtype),
                 0.0,
             )
+            active_counts = jnp.sum(active_member_mask, axis=1).astype(
+                users_input__x.dtype
+            )
+            is_scenario_ch = safe_members == heads[:, None]
+            active_non_ch_counts = jnp.sum(
+                active_member_mask & (~is_scenario_ch),
+                axis=1,
+            ).astype(users_input__x.dtype)
+            ch_attempt_energy = ch_bs_energy_by_device[heads]
+            if energy_model == "first_order_radio":
+                ch_attempt_energy = (
+                    ch_attempt_energy
+                    + active_non_ch_counts * member_rx_energy
+                    + active_counts * aggregate_update_energy
+                )
             ch_drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
             ch_drain = ch_drain.at[heads].add(
-                attempt_counts * energy_ch_bs_cost
+                attempt_counts * ch_attempt_energy
             )
 
-            is_scenario_ch = safe_members == heads[:, None]
             member_attempt_mask = active_member_mask & (~is_scenario_ch) & (
                 attempt_counts[:, None] > 0.0
             )
             member_drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
             member_drain = member_drain.at[safe_members.reshape(-1)].add(
                 member_attempt_mask.reshape(-1).astype(users_input__x.dtype)
-                * energy_d2d_member_cost
+                * member_energy.reshape(-1)
             )
             return ch_drain + member_drain, ch_drain
+
+        def rotation_control_drain(heads):
+            per_cluster_cost = jnp.where(
+                should_rotate_d2d_heads & cluster_mask,
+                energy_rotation_control_cost,
+                0.0,
+            )
+            drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
+            return drain.at[heads].add(per_cluster_cost)
 
         polling_d2d_attempt_counts = jnp.zeros(
             polling_d2d_heads.shape,
             dtype=users_input__x.dtype,
         ).at[scheduled_clusters].add(
-            polling_compute_success.astype(users_input__x.dtype)
+            polling_d2d_attempt.astype(users_input__x.dtype)
         )
         fixed_d2d_attempt_counts = candidates_2_d2d_mask.astype(users_input__x.dtype)
         optimized_d2d_attempt_counts = candidates_3_d2d_mask.astype(
@@ -1977,17 +2341,29 @@ def error_calculator_trace_jax(
             polling_d2d_attempt_counts,
             active_member_mask_1,
             polling_d2d_heads,
+            member_energy_1,
         )
         fixed_d2d_drain, fixed_d2d_ch_drain = d2d_attempt_drain(
             fixed_d2d_attempt_counts,
             active_member_mask_2,
             fixed_d2d_heads,
+            member_energy_2,
         )
         optimized_d2d_drain, optimized_d2d_ch_drain = d2d_attempt_drain(
             optimized_d2d_attempt_counts,
             active_member_mask_3,
             optimized_d2d_heads,
+            member_energy_3,
         )
+        polling_rotation_drain = rotation_control_drain(polling_d2d_heads)
+        fixed_rotation_drain = rotation_control_drain(fixed_d2d_heads)
+        optimized_rotation_drain = rotation_control_drain(optimized_d2d_heads)
+        polling_d2d_drain = polling_d2d_drain + polling_rotation_drain
+        fixed_d2d_drain = fixed_d2d_drain + fixed_rotation_drain
+        optimized_d2d_drain = optimized_d2d_drain + optimized_rotation_drain
+        polling_d2d_ch_drain = polling_d2d_ch_drain + polling_rotation_drain
+        fixed_d2d_ch_drain = fixed_d2d_ch_drain + fixed_rotation_drain
+        optimized_d2d_ch_drain = optimized_d2d_ch_drain + optimized_rotation_drain
 
         battery_drain = jnp.stack(
             [
@@ -2051,6 +2427,45 @@ def error_calculator_trace_jax(
             dtype=jnp.int32,
         )
 
+        polling_device_success = jnp.zeros(k_devices, dtype=jnp.bool_).at[
+            scheduled_users
+        ].set(polling_success)
+        polling_cluster_success = (
+            jnp.zeros(cluster_mask.shape, dtype=jnp.int32)
+            .at[scheduled_clusters]
+            .add(polling_success_d2d.astype(jnp.int32))
+            > 0
+        )
+        next_non_d2d_aoi = jnp.stack(
+            [
+                jnp.where(polling_device_success, 1.0, non_d2d_aoi[0] + 1.0),
+                jnp.where(success_2, 1.0, non_d2d_aoi[1] + 1.0),
+                jnp.where(success_3, 1.0, non_d2d_aoi[2] + 1.0),
+            ],
+            axis=0,
+        )
+        next_d2d_aoi = jnp.stack(
+            [
+                jnp.where(
+                    cluster_mask,
+                    jnp.where(polling_cluster_success, 1.0, d2d_aoi[0] + 1.0),
+                    0.0,
+                ),
+                jnp.where(
+                    cluster_mask,
+                    jnp.where(success_2_d2d, 1.0, d2d_aoi[1] + 1.0),
+                    0.0,
+                ),
+                jnp.where(
+                    cluster_mask,
+                    jnp.where(success_3_d2d, 1.0, d2d_aoi[2] + 1.0),
+                    0.0,
+                ),
+            ],
+            axis=0,
+        )
+        mean_aoi, peak_aoi = scenario_aoi_summary(next_non_d2d_aoi, next_d2d_aoi)
+
         error_norms = jnp.linalg.norm(next_weights - weights_vector__w[None, :], axis=1)
         next_state = (
             key,
@@ -2065,6 +2480,8 @@ def error_calculator_trace_jax(
             next_optimized_d2d_freshness,
             next_optimized_d2d_reference_direction,
             next_optimized_d2d_success_ewma,
+            next_non_d2d_aoi,
+            next_d2d_aoi,
         )
         mean_battery = jnp.mean(next_batteries, axis=1)
         # Gather the currently elected CH battery for each D2D scenario.
@@ -2123,6 +2540,8 @@ def error_calculator_trace_jax(
             mean_energy_used,
             energy_efficiency,
             mean_clusterhead_energy_used,
+            mean_aoi,
+            peak_aoi,
         )
         return next_state, trace_row
 
@@ -2151,6 +2570,12 @@ def error_calculator_trace_jax(
         # Start from the fixed-D2D reference throughput to avoid an artificial
         # cold-start burst of redistribution before any ACK history exists.
         initial_expected_fixed_d2d_ch_successes,
+        jnp.ones((3, k_devices), dtype=users_input__x.dtype),
+        jnp.where(
+            cluster_mask[None, :],
+            jnp.ones((3, cluster_mask.shape[0]), dtype=users_input__x.dtype),
+            0.0,
+        ),
     )
 
     (
@@ -2164,6 +2589,8 @@ def error_calculator_trace_jax(
             mean_energy_used,
             energy_efficiency,
             mean_clusterhead_energy_used,
+            mean_aoi,
+            peak_aoi,
         ),
     ) = jax.lax.scan(
         scan_iteration,
@@ -2187,6 +2614,8 @@ def error_calculator_trace_jax(
         mean_energy_used=mean_energy_used[checkpoint_indices],
         energy_efficiency=energy_efficiency[checkpoint_indices],
         mean_clusterhead_energy_used=mean_clusterhead_energy_used[checkpoint_indices],
+        mean_aoi=mean_aoi[checkpoint_indices],
+        peak_aoi=peak_aoi[checkpoint_indices],
         checkpoints=checkpoint_indices + 1,
     )
 
@@ -2208,14 +2637,29 @@ def error_calculator(
     d2d_ch_bs_min_success_probability: float = 0.20,
     d2d_ch_bs_pathloss_exponent: float = 2.0,
     d2d_ch_bs_battery_exponent: float = 0.0,
+    d2d_ch_bs_reference_snr: float = 100000.0,
+    d2d_ch_bs_snr_threshold: float = 1.0,
     device_bs_success_mode: str = "none",
     device_bs_min_success_probability: float = 0.20,
     device_bs_pathloss_exponent: float = 2.0,
     device_bs_battery_exponent: float = 0.0,
+    device_bs_reference_snr: float = 100000.0,
+    device_bs_snr_threshold: float = 1.0,
     energy_drain_mode: str = "none",
+    energy_model: str = "constant",
+    battery_feasibility_mode: str = "off",
     energy_direct_bs_cost: float = 0.0,
     energy_d2d_member_cost: float = 0.0,
     energy_ch_bs_cost: float = 0.0,
+    energy_electronics_cost: float = 0.0002,
+    energy_bs_amplifier_cost: float = 2e-8,
+    energy_d2d_amplifier_cost: float = 1e-6,
+    energy_bs_pathloss_exponent: float = 2.0,
+    energy_d2d_pathloss_exponent: float = 2.0,
+    energy_aggregation_cost: float = 0.00002,
+    energy_update_size: float = 1.0,
+    energy_aggregate_size: float = 1.0,
+    energy_rotation_control_cost: float = 0.0,
     d2d_ch_rotation_mode: str = "static",
     d2d_ch_rotation_interval: int = 10,
     d2d_energy_efficiency_level: str = "balanced",
@@ -2265,14 +2709,29 @@ def error_calculator(
         d2d_ch_bs_min_success_probability=d2d_ch_bs_min_success_probability,
         d2d_ch_bs_pathloss_exponent=d2d_ch_bs_pathloss_exponent,
         d2d_ch_bs_battery_exponent=d2d_ch_bs_battery_exponent,
+        d2d_ch_bs_reference_snr=d2d_ch_bs_reference_snr,
+        d2d_ch_bs_snr_threshold=d2d_ch_bs_snr_threshold,
         device_bs_success_mode=device_bs_success_mode,
         device_bs_min_success_probability=device_bs_min_success_probability,
         device_bs_pathloss_exponent=device_bs_pathloss_exponent,
         device_bs_battery_exponent=device_bs_battery_exponent,
+        device_bs_reference_snr=device_bs_reference_snr,
+        device_bs_snr_threshold=device_bs_snr_threshold,
         energy_drain_mode=energy_drain_mode,
+        energy_model=energy_model,
+        battery_feasibility_mode=battery_feasibility_mode,
         energy_direct_bs_cost=energy_direct_bs_cost,
         energy_d2d_member_cost=energy_d2d_member_cost,
         energy_ch_bs_cost=energy_ch_bs_cost,
+        energy_electronics_cost=energy_electronics_cost,
+        energy_bs_amplifier_cost=energy_bs_amplifier_cost,
+        energy_d2d_amplifier_cost=energy_d2d_amplifier_cost,
+        energy_bs_pathloss_exponent=energy_bs_pathloss_exponent,
+        energy_d2d_pathloss_exponent=energy_d2d_pathloss_exponent,
+        energy_aggregation_cost=energy_aggregation_cost,
+        energy_update_size=energy_update_size,
+        energy_aggregate_size=energy_aggregate_size,
+        energy_rotation_control_cost=energy_rotation_control_cost,
         d2d_ch_rotation_mode=d2d_ch_rotation_mode,
         d2d_ch_rotation_interval=d2d_ch_rotation_interval,
         d2d_energy_efficiency_level=d2d_energy_efficiency_level,

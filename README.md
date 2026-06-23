@@ -182,12 +182,32 @@ packets draw a device-to-BS decoding success probability. Keep both modes at
 Dynamic energy drain can be enabled as a separate enhanced ablation. The
 simulator keeps one battery vector per curve, so polling/fixed/optimized and
 their D2D variants do not drain each other's batteries inside the same run.
-Direct device-to-BS attempts pay `--energy-direct-bs-cost`; active non-CH D2D
-members pay `--energy-d2d-member-cost` when their cluster attempts an
-aggregate; CHs pay `--energy-ch-bs-cost` for every CH-to-BS aggregate attempt,
-including collided or undecoded attempts. The runner writes mean battery and
-mean D2D-CH battery columns, plus energy-used and energy-efficiency columns,
-and plots them when present.
+The default `--energy-model constant` preserves the previous normalized-cost
+semantics: direct device-to-BS attempts pay `--energy-direct-bs-cost`; active
+non-CH D2D members pay `--energy-d2d-member-cost` when their cluster attempts
+an aggregate; CHs pay `--energy-ch-bs-cost` for every CH-to-BS aggregate
+attempt, including collided or undecoded attempts.
+
+The enhanced `--energy-model first_order_radio` replaces those constants with
+a first-order radio abstraction in normalized energy units. Direct devices pay
+`E_tx_bs(update_size, d_device_bs)`. D2D members pay
+`E_tx_d2d(update_size, d_member_ch)`. CHs pay receive energy for active
+non-CH updates, aggregation energy for active updates, and
+`E_tx_bs(aggregate_size, d_ch_bs)` for the aggregate BS uplink. With
+`--battery-feasibility-mode required_energy`, a device or CH only attempts a
+role if its current battery can pay the required energy; otherwise it skips the
+attempt and does not drain. The older `*_battery_exponent` flags remain for
+backward compatibility, but the physically cleaner enhanced path is to set
+them to `0.0` and use battery feasibility instead.
+
+The second physical-link option is `rayleigh_outage`, available for both
+`--d2d-ch-bs-success-mode` and `--device-bs-success-mode`. It still keeps ALOHA
+collisions as the interference abstraction, but maps collision-free decoding to
+`exp(-snr_threshold / average_snr)`. Use
+`--cluster-head-channel-score-mode rayleigh_outage` when quality CH election
+should use the same outage metric instead of normalized inverse pathloss. The
+runner writes mean battery, mean D2D-CH battery, energy-used,
+energy-efficiency, mean AoI, and peak AoI columns, and plots them when present.
 
 Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
@@ -302,6 +322,32 @@ python main.py --run-name k1000_energy_rotation_smoke \
   --optimized-d2d-density-trigger-threshold 0.95 \
   --optimized-d2d-dense-trigger-ratio 0.0 \
   --optimized-d2d-throughput-ewma-decay 0.90 \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1
+```
+
+Recommended short physical-energy/Rayleigh/AoI smoke:
+
+```bash
+python main.py --run-name k1000_physical_energy_smoke \
+  --devices 1000 \
+  --rounds 20 \
+  --precision float64 \
+  --energy-drain-mode dynamic \
+  --energy-model first_order_radio \
+  --battery-feasibility-mode required_energy \
+  --d2d-ch-bs-success-mode rayleigh_outage \
+  --device-bs-success-mode rayleigh_outage \
+  --cluster-head-selection-mode quality \
+  --cluster-head-channel-score-mode rayleigh_outage \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --optimized-d2d-access-mode utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
   --optimized-d2d-access-floor-fraction 0.02 \
   --optimized-d2d-norm-exponent 3.5 \
   --optimized-d2d-cluster-size-exponent 1.5 \
@@ -513,7 +559,9 @@ simulation finishes successfully:
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_uploads.png` and `.pdf`;
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_clusterhead_uploads.png` and `.pdf`;
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_rate.png` and `.pdf`;
-- `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_quality.png` and `.pdf`.
+- `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_quality.png` and `.pdf`;
+- optional battery, energy, cluster-head energy, AoI, and peak-AoI plots when
+  the corresponding CSV columns are present.
 
 Use a stable folder name when you want a recognizable run:
 
@@ -556,9 +604,15 @@ skip cleanly when JAX is not installed in the local interpreter.
   protocol. It does not model every message exchange explicitly.
 - D2D member-to-CH collisions, packet loss, delay, and energy cost are optional
   abstractions, not a full link-layer simulator.
-- Dynamic battery drain is optional and coarse-grained. It models normalized
-  per-attempt energy costs, not a calibrated radio power model, recharge model,
-  thermal effect, or time-varying battery voltage.
+- Dynamic battery drain is optional. The enhanced first-order radio model
+  separates transmit, receive, and aggregation roles, but it is still
+  normalized rather than calibrated in joules unless you choose and document
+  external radio parameters.
+- Rayleigh outage is available for collision-free BS decoding, but the simulator
+  still uses same-channel ALOHA collisions as the interference abstraction; it
+  is not a full SINR/FER/BER link-layer simulator.
+- AoI is tracked as an output metric. It does not alter scheduling unless an
+  enhanced policy uses freshness/novelty terms.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation
   candidate, not the default implementation.

@@ -35,6 +35,19 @@ This document records the simulation defaults after the code cleanup.
   decode the packet with probability derived from the elected CH's normalized
   inverse pathloss and optional battery factor. The default `none` preserves
   thesis-compatible collision-only D2D uploads.
+- Enhanced runs can instead use `--d2d-ch-bs-success-mode rayleigh_outage`.
+  This keeps the same ALOHA contention and collision model, but maps the
+  collision-free physical decoding probability to:
+
+  ```text
+  avg_snr_i = reference_snr / max(distance_i, 1)^pathloss_exponent
+  q_i       = exp(-snr_threshold / avg_snr_i)
+  ```
+
+  The Rayleigh option gives the CH-channel term a standard outage-probability
+  interpretation. `--cluster-head-channel-score-mode rayleigh_outage` makes
+  quality CH election use the same D2D CH-to-BS reference SNR and threshold
+  instead of normalized inverse pathloss.
 - Enhanced runs can enable the same channel-aware decoding for direct non-D2D
   device-to-BS uploads with `--device-bs-success-mode channel_quality`. This
   affects polling, fixed ALOHA, and optimized ALOHA without D2D. A direct
@@ -42,11 +55,49 @@ This document records the simulation defaults after the code cleanup.
   the packet decoded according to the device's normalized inverse pathloss and
   optional battery factor. Use both device-BS and D2D CH-BS channel modes when
   the goal is a physically fair D2D vs non-D2D comparison.
+- Direct non-D2D links can also use
+  `--device-bs-success-mode rayleigh_outage`, with independent reference SNR
+  and threshold parameters. For fair physical comparisons, pair Rayleigh D2D
+  CH-to-BS decoding with Rayleigh direct device-to-BS decoding.
 - Enhanced runs can enable dynamic battery drain with
   `--energy-drain-mode dynamic`. The model keeps one normalized battery vector
   per curve, charges energy on attempted direct BS, D2D member, and CH-to-BS
   transmissions, and lets later battery-aware decoding probabilities see the
   updated battery. The default `none` preserves static battery behavior.
+- `--energy-model constant` is the legacy dynamic-energy model. It uses three
+  fixed normalized costs:
+
+  ```text
+  energy_direct_bs_cost
+  energy_d2d_member_cost
+  energy_ch_bs_cost
+  ```
+
+  It is useful for reproducing previous enhanced runs, but it is not a
+  calibrated radio-energy model.
+- `--energy-model first_order_radio` is the preferred enhanced energy path.
+  Energy remains normalized to the initial battery range `[0, 1]`, but the
+  accounting separates the radio roles:
+
+  ```text
+  E_tx_bs(size, d)  = size * E_elec + size * E_amp_bs  * d^alpha_bs
+  E_tx_d2d(size, d) = size * E_elec + size * E_amp_d2d * d^alpha_d2d
+  E_rx(size)        = size * E_elec
+  E_agg(size)       = size * E_agg
+  ```
+
+  Direct devices pay `E_tx_bs(update_size, d_device_bs)`. D2D members pay
+  `E_tx_d2d(update_size, d_member_ch)`. A CH pays receive cost for active
+  non-CH members, aggregation cost for active updates, and
+  `E_tx_bs(aggregate_size, d_ch_bs)` for the BS aggregate. The CH-to-BS payload
+  size stays fixed by `energy_aggregate_size`, while aggregation processing
+  scales with the number of active updates.
+- `--battery-feasibility-mode required_energy` treats battery as an attempt
+  feasibility constraint. A direct device, D2D member, or CH attempts only when
+  its current normalized battery can pay the required role energy. If not, it
+  skips the attempt and does not drain. This is the cleaner physical
+  interpretation; the older `*_battery_exponent` terms should be treated as
+  legacy/heuristic unless a specific experiment is studying them.
 - Enhanced runs can enable intra-run D2D CH rotation with
   `--d2d-ch-rotation-mode energy_aware`. This requires
   `--energy-drain-mode dynamic`, keeps cluster membership fixed, and periodically
@@ -90,6 +141,13 @@ This document records the simulation defaults after the code cleanup.
   early rounds emphasize large useful aggregates, while later rounds emphasize
   novelty and freshness. The phase uses `t / max_t`, not measured model error,
   so the policy remains plausible when the true optimum is unknown.
+- AoI is tracked as an output metric for all six scenarios. Non-D2D scenarios
+  track per-device AoI and reset a device to `1` after its successful upload.
+  D2D scenarios track per-cluster AoI and reset a cluster to `1` after its CH
+  aggregate reaches the BS. Otherwise AoI increments by one. The CSV includes
+  `<scenario>_aoi_*` and `<scenario>_peak_aoi_*` columns, and the plotter emits
+  `results_aoi.*` and `results_peak_aoi.*` when those columns exist. AoI does
+  not affect scheduling yet; it is a metric for evaluating freshness policies.
 
 These defaults are intended to preserve the thesis figure behavior while fixing
 code bugs such as angle units, unsafe cluster merging, and fragile cluster-array

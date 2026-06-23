@@ -808,45 +808,60 @@ Important comparison warning:
 - If D2D uses `--d2d-ch-bs-success-mode channel_quality`, use
   `--device-bs-success-mode channel_quality` when the goal is to compare D2D
   and non-D2D curves under the same physical-link abstraction.
+- The same rule applies to the enhanced Rayleigh path: if D2D uses
+  `--d2d-ch-bs-success-mode rayleigh_outage`, use
+  `--device-bs-success-mode rayleigh_outage` for fair D2D versus non-D2D
+  comparisons. Use `--cluster-head-channel-score-mode rayleigh_outage` when
+  the CH-election channel weight should map to the same outage probability.
+- Results using `--energy-model first_order_radio` and
+  `--battery-feasibility-mode required_energy` are not directly comparable to
+  older constant-cost dynamic-energy runs unless the metadata is reported and
+  the energy objective is explicitly part of the comparison.
 
 ## Current Limitations
 
 The current architecture is useful for research iteration, but these limits
 should be stated clearly:
 
-- Battery is static by default. Dynamic energy drain and energy-aware intra-run
-  CH rotation are implemented as optional coarse ablations, but there is no
-  calibrated radio power model, recharge model, sleep-state model, or control
-  overhead cost yet.
-- CH-to-BS and direct device-to-BS channel quality use distance/pathloss only.
+- Battery is static by default for thesis-compatible reproduction. Dynamic
+  energy drain, first-order radio energy, battery feasibility, optional
+  CH-rotation control overhead, and energy-aware intra-run CH rotation are
+  implemented as explicit enhanced ablations.
+- The first-order radio model is normalized, not calibrated in joules for a
+  specific radio chipset. There is no recharge, sleep-state, idle listening, or
+  MAC-control timing model.
+- CH-to-BS and direct device-to-BS links can use either inverse-pathloss
+  `channel_quality` or Rayleigh outage probability. There is still no shadowing,
+  explicit SINR with co-channel interference powers, modulation, coding, FER,
+  or BER model.
 - Member-to-CH D2D link success is a global probability, not a per-link channel
   model.
-- No fading, shadowing, interference beyond ALOHA collisions, modulation, or
-  coding model is included.
+- ALOHA same-channel collisions remain the interference abstraction. Rayleigh
+  outage models collision-free physical decoding only.
 - No mobility is included.
 - No non-IID data or data-similarity-aware clustering is included.
-- The BS does not model control-plane overhead explicitly.
-- Freshness is based on successful CH uploads, not semantic information age of
-  labels or data distribution.
+- The BS does not model full control-plane overhead explicitly. The only
+  control overhead currently exposed is the optional CH-rotation control cost.
+- AoI is now tracked explicitly as a metric, but it does not yet drive
+  scheduling unless a policy uses freshness/novelty. It is information-age over
+  successful uploads, not semantic freshness of labels or data distribution.
 
 ## Best Next Architecture Improvements
 
 The most productive next implementation steps are summarized in
 `docs/current_status_and_future_work.md`.  In priority order, they are:
 
-1. Replace normalized energy costs with a physical radio-energy model that
-   separates member D2D transmission, CH reception/listening, CH aggregation,
-   CH-to-BS transmission, direct device-to-BS transmission, and optional
-   control overhead.
-2. Treat battery primarily as an energy-feasibility constraint for attempted
-   transmissions rather than as a loose multiplicative decoding-probability
-   factor.
-3. Replace the current inverse-pathloss channel proxy with an outage/SINR or
-   packet-success abstraction that can justify the CH-election channel weight.
-4. Add explicit AoI/freshness metrics so the freshness exponent can be evaluated
-   against mean/peak information age, not only final error norm.
+1. Calibrate the normalized first-order radio coefficients against a real IoT
+   radio or a literature parameter table, then report the calibration source.
+2. Add per-link D2D channel/outage for member-to-CH transmissions, so D2D
+   member success is not only a global probability.
+3. Extend Rayleigh outage toward an SINR/PER abstraction if co-channel
+   interference power, modulation, and coding need to be represented.
+4. Use AoI as a policy objective in a controlled ablation, then compare
+   mean/peak AoI against error norm and energy efficiency.
 5. Run structured sensitivity sweeps for utility exponents, allocator
-   thresholds, CH-rotation weights, and CH-rotation interval.
+   thresholds, CH-rotation weights, energy coefficients, and Rayleigh SNR
+   thresholds.
 
 For confirming the current channel-heavy CH election choice, use the focused
 runner instead of manually comparing long one-off commands:

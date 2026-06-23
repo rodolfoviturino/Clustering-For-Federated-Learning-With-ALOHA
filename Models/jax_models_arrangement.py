@@ -27,6 +27,13 @@ The simulation follows the same thesis-level structure as the original model:
 * optional device-to-BS link realism can apply the same physical decoding model
   to the non-D2D polling/fixed/optimized curves, making comparisons against
   D2D physically symmetric when requested.
+* optional dynamic energy drain tracks a separate battery vector for each of
+  the six curves; direct devices, D2D members, and CHs pay configurable costs
+  for attempted transmissions, and battery-aware channel models see the updated
+  energy in the next iteration.
+* optional energy-aware D2D CH rotation can re-elect each cluster's CH during
+  the FL trajectory using BS channel quality, current battery, and a stability
+  term while preserving one-hop coverage and fixed cluster membership.
 * ``dtype=jnp.float64`` is recommended when reproducing very small thesis error
   norms; ``float32`` is faster but floors optimized curves near single-precision
   machine accuracy.
@@ -57,13 +64,30 @@ else:  # pragma: no cover - trivial assignment.
 
 
 class JaxTraceResult(NamedTuple):
-    """Metric arrays produced by ``error_calculator_trace_jax``."""
+    """Metric arrays produced by ``error_calculator_trace_jax``.
+
+    Arrays are checkpoint-indexed.  The six scenario columns follow the fixed
+    order used by the CSV writer: polling, fixed ALOHA, optimized ALOHA,
+    polling+D2D, fixed+D2D, optimized+D2D.
+    """
 
     clusterized_devices_rate: Any
     error_norms: Any
     successful_uploads: Any
     successful_clusterhead_uploads: Any
+    mean_battery: Any
+    mean_clusterhead_battery: Any
+    mean_energy_used: Any
+    energy_efficiency: Any
+    mean_clusterhead_energy_used: Any
     checkpoints: Any
+
+
+D2D_ENERGY_EFFICIENCY_PROFILES = {
+    "performance": (0.85, 0.10, 0.05),
+    "balanced": (0.65, 0.25, 0.10),
+    "eco": (0.45, 0.45, 0.10),
+}
 
 
 def _require_jax():
@@ -204,6 +228,61 @@ def _apply_access_floor(probability, floor_fraction, fixed_access_probability, p
     return jnp.minimum(jnp.maximum(probability, fixed_floor), pcomp)
 
 
+def _normalized_device_battery(device_battery, number_of_devices, dtype):
+    """Return device battery as normalized energy in ``[0, 1]``.
+
+    Device generation stores battery as integer percentages in ``[1, 100]``.
+    Some tests and legacy callers pass already-normalized energy values.  This
+    helper accepts both conventions and gives the dynamic energy model a single
+    scale to work with.
+    """
+    if device_battery is None:
+        return jnp.ones((number_of_devices,), dtype=dtype)
+
+    normalized = jnp.asarray(device_battery, dtype=dtype)
+    battery_max = jnp.max(jnp.where(normalized > 0.0, normalized, 0.0))
+    normalized = jnp.where(battery_max > 1.0, normalized / 100.0, normalized)
+    return jnp.clip(normalized, 0.0, 1.0).astype(dtype)
+
+
+def _d2d_energy_efficiency_profile_weights(level, dtype=None):
+    """Return channel/battery/stability weights for dynamic CH rotation.
+
+    The profiles are intentionally small and named instead of exposing three
+    more free parameters.  That keeps the experiments easier to defend: each
+    profile is a clear deployment posture rather than an overfit coefficient
+    vector.
+    """
+    if level not in D2D_ENERGY_EFFICIENCY_PROFILES:
+        raise ValueError(
+            "d2d_energy_efficiency_level must be 'performance', 'balanced', or 'eco'"
+        )
+
+    weights = D2D_ENERGY_EFFICIENCY_PROFILES[level]
+    if dtype is None or jnp is None:
+        return weights
+    return tuple(jnp.asarray(weight, dtype=dtype) for weight in weights)
+
+
+def _normalized_bs_channel_quality(
+    number_of_devices,
+    dtype,
+    device_distance_to_bs=None,
+    pathloss_exponent=2.0,
+):
+    """Return normalized inverse-pathloss BS channel quality for each device."""
+    if device_distance_to_bs is None:
+        device_distance_to_bs = jnp.ones((number_of_devices,), dtype=dtype)
+    else:
+        device_distance_to_bs = jnp.asarray(device_distance_to_bs, dtype=dtype)
+
+    one = jnp.asarray(1.0, dtype=dtype)
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    pathloss_exponent = jnp.asarray(pathloss_exponent, dtype=dtype)
+    raw_channel = one / jnp.maximum(device_distance_to_bs, one) ** pathloss_exponent
+    return raw_channel / jnp.maximum(jnp.max(raw_channel), eps)
+
+
 def _device_bs_success_probability(
     number_of_devices,
     dtype,
@@ -238,28 +317,22 @@ def _device_bs_success_probability(
     else:
         device_distance_to_bs = jnp.asarray(device_distance_to_bs, dtype=dtype)
 
-    if device_battery is None:
-        device_battery = jnp.ones((number_of_devices,), dtype=dtype)
-    else:
-        device_battery = jnp.asarray(device_battery, dtype=dtype)
-        # Device batches use 1..100 percentages.  Legacy callers may pass an
-        # already-normalized 0..1 energy vector, so only divide when the array
-        # clearly looks like a percentage scale.
-        battery_max = jnp.max(jnp.where(device_battery > 0.0, device_battery, 0.0))
-        device_battery = jnp.where(
-            battery_max > 1.0,
-            device_battery / 100.0,
-            device_battery,
-        )
+    device_battery = _normalized_device_battery(
+        device_battery,
+        number_of_devices,
+        dtype,
+    )
 
-    eps = jnp.asarray(1e-12, dtype=dtype)
     one = jnp.asarray(1.0, dtype=dtype)
     min_success = jnp.asarray(min_success_probability, dtype=dtype)
-    pathloss_exponent = jnp.asarray(pathloss_exponent, dtype=dtype)
     battery_exponent = jnp.asarray(battery_exponent, dtype=dtype)
 
-    raw_channel = one / jnp.maximum(device_distance_to_bs, one) ** pathloss_exponent
-    channel_quality = raw_channel / jnp.maximum(jnp.max(raw_channel), eps)
+    channel_quality = _normalized_bs_channel_quality(
+        number_of_devices,
+        dtype,
+        device_distance_to_bs=device_distance_to_bs,
+        pathloss_exponent=pathloss_exponent,
+    )
     battery_quality = jnp.clip(device_battery, 0.0, 1.0)
     raw_success = channel_quality * battery_quality**battery_exponent
     success_probability = min_success + (one - min_success) * jnp.clip(
@@ -903,6 +976,15 @@ def error_calculator_trace_jax(
     device_bs_min_success_probability: float = 0.20,
     device_bs_pathloss_exponent: float = 2.0,
     device_bs_battery_exponent: float = 0.0,
+    energy_drain_mode: str = "none",
+    energy_direct_bs_cost: float = 0.0,
+    energy_d2d_member_cost: float = 0.0,
+    energy_ch_bs_cost: float = 0.0,
+    d2d_ch_rotation_mode: str = "static",
+    d2d_ch_rotation_interval: int = 10,
+    d2d_energy_efficiency_level: str = "balanced",
+    device_coords=None,
+    device_radius=None,
     device_distance_to_bs=None,
     device_battery=None,
     optimized_access_floor_fraction: float = 0.0,
@@ -975,6 +1057,28 @@ def error_calculator_trace_jax(
         raise ValueError("device_bs_pathloss_exponent must be non-negative")
     if device_bs_battery_exponent < 0.0:
         raise ValueError("device_bs_battery_exponent must be non-negative")
+    if energy_drain_mode not in {"none", "dynamic"}:
+        raise ValueError("energy_drain_mode must be 'none' or 'dynamic'")
+    if energy_direct_bs_cost < 0.0:
+        raise ValueError("energy_direct_bs_cost must be non-negative")
+    if energy_d2d_member_cost < 0.0:
+        raise ValueError("energy_d2d_member_cost must be non-negative")
+    if energy_ch_bs_cost < 0.0:
+        raise ValueError("energy_ch_bs_cost must be non-negative")
+    if d2d_ch_rotation_mode not in {"static", "energy_aware"}:
+        raise ValueError("d2d_ch_rotation_mode must be 'static' or 'energy_aware'")
+    if d2d_ch_rotation_interval < 1:
+        raise ValueError("d2d_ch_rotation_interval must be at least 1")
+    _d2d_energy_efficiency_profile_weights(d2d_energy_efficiency_level)
+    if d2d_ch_rotation_mode == "energy_aware":
+        if energy_drain_mode != "dynamic":
+            raise ValueError(
+                "energy-aware D2D CH rotation requires energy_drain_mode='dynamic'"
+            )
+        if device_coords is None or device_radius is None:
+            raise ValueError(
+                "energy-aware D2D CH rotation requires device_coords and device_radius"
+            )
     if not 0.0 <= optimized_access_floor_fraction <= 1.0:
         raise ValueError("optimized_access_floor_fraction must be in [0, 1]")
     if not 0.0 <= optimized_d2d_access_floor_fraction <= 1.0:
@@ -1072,6 +1176,17 @@ def error_calculator_trace_jax(
     device_bs_battery_exponent = jnp.asarray(
         device_bs_battery_exponent,
         dtype=dtype,
+    )
+    energy_enabled = jnp.asarray(
+        1.0 if energy_drain_mode == "dynamic" else 0.0,
+        dtype=dtype,
+    )
+    energy_direct_bs_cost = jnp.asarray(energy_direct_bs_cost, dtype=dtype)
+    energy_d2d_member_cost = jnp.asarray(energy_d2d_member_cost, dtype=dtype)
+    energy_ch_bs_cost = jnp.asarray(energy_ch_bs_cost, dtype=dtype)
+    d2d_ch_rotation_enabled = d2d_ch_rotation_mode == "energy_aware"
+    d2d_rotation_channel_weight, d2d_rotation_battery_weight, d2d_rotation_stability_weight = (
+        _d2d_energy_efficiency_profile_weights(d2d_energy_efficiency_level, dtype)
     )
     access_floor_fraction = jnp.asarray(optimized_access_floor_fraction, dtype=dtype)
     d2d_access_floor_fraction = jnp.asarray(
@@ -1195,17 +1310,41 @@ def error_calculator_trace_jax(
     member_positions = jnp.arange(max_cluster_size, dtype=jnp.int32)[None, :]
     member_mask = member_positions < cluster_sizes[:, None]
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], 0)
-    device_bs_success_probability = _device_bs_success_probability(
-        number_of_devices=k_devices,
-        dtype=dtype,
-        success_mode=device_bs_success_mode,
-        min_success_probability=device_bs_min_success_probability,
-        pathloss_exponent=device_bs_pathloss_exponent,
-        battery_exponent=device_bs_battery_exponent,
+    if device_coords is None:
+        candidate_can_cover_members = member_mask
+    else:
+        coords = jnp.asarray(device_coords, dtype=dtype)
+        candidate_coords = coords[safe_members]
+        coverage_deltas = (
+            candidate_coords[:, :, None, :] - candidate_coords[:, None, :, :]
+        )
+        distance_squared = jnp.sum(coverage_deltas * coverage_deltas, axis=-1)
+        radius_squared = jnp.asarray(device_radius, dtype=dtype) ** 2
+        candidate_can_cover_members = jnp.all(
+            jnp.where(
+                member_mask[:, None, :],
+                distance_squared <= radius_squared,
+                True,
+            ),
+            axis=2,
+        )
+    valid_ch_candidate = member_mask & cluster_mask[:, None] & candidate_can_cover_members
+    bs_channel_quality = _normalized_bs_channel_quality(
+        k_devices,
+        dtype,
         device_distance_to_bs=device_distance_to_bs,
-        device_battery=device_battery,
+        pathloss_exponent=d2d_ch_bs_pathloss_exponent,
     )
-    ch_bs_success_probability = _d2d_ch_bs_success_probability(
+    initial_device_battery = _normalized_device_battery(
+        device_battery,
+        k_devices,
+        dtype,
+    )
+    # Battery state is tracked independently for every curve.  This avoids a
+    # modeling artifact where, for example, direct optimized ALOHA could drain
+    # the batteries used by optimized D2D in the same Monte Carlo trajectory.
+    # Shape: float[6, K], normalized energy in [0, 1].
+    initial_ch_bs_success_probability = _d2d_ch_bs_success_probability(
         cluster_heads=cluster_heads,
         cluster_mask=cluster_mask,
         number_of_devices=k_devices,
@@ -1215,14 +1354,17 @@ def error_calculator_trace_jax(
         pathloss_exponent=d2d_ch_bs_pathloss_exponent,
         battery_exponent=d2d_ch_bs_battery_exponent,
         device_distance_to_bs=device_distance_to_bs,
-        device_battery=device_battery,
+        device_battery=initial_device_battery,
     )
-    mean_ch_bs_success_probability = jnp.sum(ch_bs_success_probability) / jnp.maximum(
-        active_clusterhead_count,
-        jnp.asarray(1.0, dtype=users_input__x.dtype),
+    mean_initial_ch_bs_success_probability = (
+        jnp.sum(initial_ch_bs_success_probability)
+        / jnp.maximum(
+            active_clusterhead_count,
+            jnp.asarray(1.0, dtype=users_input__x.dtype),
+        )
     )
-    expected_fixed_d2d_ch_successes = (
-        expected_fixed_d2d_ch_successes * mean_ch_bs_success_probability
+    initial_expected_fixed_d2d_ch_successes = (
+        expected_fixed_d2d_ch_successes * mean_initial_ch_bs_success_probability
     )
 
     def local_updates_for_weights(current_weights):
@@ -1242,10 +1384,49 @@ def error_calculator_trace_jax(
     def apply_gradient(current_weight, gradient):
         return current_weight - learning_rate * gradient / normalization_factor
 
+    def select_energy_aware_cluster_heads(current_heads, scenario_battery):
+        """Select one valid CH per cluster from current battery/channel state.
+
+        current_heads: int[max_clusters], the CHs used by this D2D scenario in
+        the previous iteration.
+        scenario_battery: float[K], normalized battery for this D2D scenario.
+
+        The member set is fixed.  A candidate is eligible only if it can cover
+        every valid member in the cluster, so re-election cannot violate the
+        one-hop D2D invariant.
+        """
+        stability_score = (
+            safe_members == current_heads[:, None]
+        ).astype(users_input__x.dtype)
+        candidate_scores = (
+            d2d_rotation_channel_weight * bs_channel_quality[safe_members]
+            + d2d_rotation_battery_weight * scenario_battery[safe_members]
+            + d2d_rotation_stability_weight * stability_score
+        )
+        candidate_scores = jnp.where(
+            valid_ch_candidate,
+            candidate_scores,
+            -jnp.inf,
+        )
+        best_position = jnp.argmax(candidate_scores, axis=1).astype(jnp.int32)
+        proposed_heads = jnp.take_along_axis(
+            cluster_members,
+            best_position[:, None],
+            axis=1,
+        )[:, 0]
+        has_candidate = jnp.any(valid_ch_candidate, axis=1)
+        return jnp.where(cluster_mask & has_candidate, proposed_heads, current_heads)
+
     def scan_iteration(state, iteration_index):
         (
             key,
             current_weights,
+            # current_batteries: float[6, K], normalized battery remaining for
+            # each scenario.  It is static when energy_drain_mode="none" and
+            # evolves when energy_drain_mode="dynamic".
+            current_batteries,
+            current_d2d_heads,
+            clusterhead_energy_totals,
             psi,
             psi_d2d,
             upload_totals,
@@ -1274,14 +1455,126 @@ def error_calculator_trace_jax(
         direct_polling_link_key = jax.random.fold_in(polling_key, 101)
         direct_fixed_link_key = jax.random.fold_in(channel_key_2, 101)
         direct_optimized_link_key = jax.random.fold_in(channel_key_3, 101)
-        direct_link_success_probability = (
-            device_bs_success_probability
+        should_rotate_d2d_heads = (
+            d2d_ch_rotation_enabled
+            & ((iteration_index % d2d_ch_rotation_interval) == 0)
+        )
+        proposed_d2d_heads = jnp.stack(
+            [
+                select_energy_aware_cluster_heads(
+                    current_d2d_heads[0],
+                    current_batteries[3],
+                ),
+                select_energy_aware_cluster_heads(
+                    current_d2d_heads[1],
+                    current_batteries[4],
+                ),
+                select_energy_aware_cluster_heads(
+                    current_d2d_heads[2],
+                    current_batteries[5],
+                ),
+            ],
+            axis=0,
+        )
+        d2d_heads = jnp.where(
+            should_rotate_d2d_heads,
+            proposed_d2d_heads,
+            current_d2d_heads,
+        )
+        polling_d2d_heads = d2d_heads[0]
+        fixed_d2d_heads = d2d_heads[1]
+        optimized_d2d_heads = d2d_heads[2]
+        device_bs_success_probability_1 = _device_bs_success_probability(
+            number_of_devices=k_devices,
+            dtype=dtype,
+            success_mode=device_bs_success_mode,
+            min_success_probability=device_bs_min_success_probability,
+            pathloss_exponent=device_bs_pathloss_exponent,
+            battery_exponent=device_bs_battery_exponent,
+            device_distance_to_bs=device_distance_to_bs,
+            device_battery=current_batteries[0],
+        )
+        device_bs_success_probability_2 = _device_bs_success_probability(
+            number_of_devices=k_devices,
+            dtype=dtype,
+            success_mode=device_bs_success_mode,
+            min_success_probability=device_bs_min_success_probability,
+            pathloss_exponent=device_bs_pathloss_exponent,
+            battery_exponent=device_bs_battery_exponent,
+            device_distance_to_bs=device_distance_to_bs,
+            device_battery=current_batteries[1],
+        )
+        device_bs_success_probability_3 = _device_bs_success_probability(
+            number_of_devices=k_devices,
+            dtype=dtype,
+            success_mode=device_bs_success_mode,
+            min_success_probability=device_bs_min_success_probability,
+            pathloss_exponent=device_bs_pathloss_exponent,
+            battery_exponent=device_bs_battery_exponent,
+            device_distance_to_bs=device_distance_to_bs,
+            device_battery=current_batteries[2],
+        )
+        ch_bs_success_probability_1 = _d2d_ch_bs_success_probability(
+            cluster_heads=polling_d2d_heads,
+            cluster_mask=cluster_mask,
+            number_of_devices=k_devices,
+            dtype=dtype,
+            success_mode=d2d_ch_bs_success_mode,
+            min_success_probability=d2d_ch_bs_min_success_probability,
+            pathloss_exponent=d2d_ch_bs_pathloss_exponent,
+            battery_exponent=d2d_ch_bs_battery_exponent,
+            device_distance_to_bs=device_distance_to_bs,
+            device_battery=current_batteries[3],
+        )
+        ch_bs_success_probability_2 = _d2d_ch_bs_success_probability(
+            cluster_heads=fixed_d2d_heads,
+            cluster_mask=cluster_mask,
+            number_of_devices=k_devices,
+            dtype=dtype,
+            success_mode=d2d_ch_bs_success_mode,
+            min_success_probability=d2d_ch_bs_min_success_probability,
+            pathloss_exponent=d2d_ch_bs_pathloss_exponent,
+            battery_exponent=d2d_ch_bs_battery_exponent,
+            device_distance_to_bs=device_distance_to_bs,
+            device_battery=current_batteries[4],
+        )
+        ch_bs_success_probability_3 = _d2d_ch_bs_success_probability(
+            cluster_heads=optimized_d2d_heads,
+            cluster_mask=cluster_mask,
+            number_of_devices=k_devices,
+            dtype=dtype,
+            success_mode=d2d_ch_bs_success_mode,
+            min_success_probability=d2d_ch_bs_min_success_probability,
+            pathloss_exponent=d2d_ch_bs_pathloss_exponent,
+            battery_exponent=d2d_ch_bs_battery_exponent,
+            device_distance_to_bs=device_distance_to_bs,
+            device_battery=current_batteries[5],
+        )
+        direct_link_success_probability_2 = (
+            device_bs_success_probability_2
             if device_bs_success_mode == "channel_quality"
             else None
         )
+        direct_link_success_probability_3 = (
+            device_bs_success_probability_3
+            if device_bs_success_mode == "channel_quality"
+            else None
+        )
+        mean_fixed_d2d_ch_success_probability = (
+            jnp.sum(ch_bs_success_probability_2)
+            / jnp.maximum(
+                active_clusterhead_count,
+                jnp.asarray(1.0, dtype=users_input__x.dtype),
+            )
+        )
+        current_expected_fixed_d2d_ch_successes = (
+            expected_fixed_d2d_ch_successes * mean_fixed_d2d_ch_success_probability
+        )
 
-        # Optional member-to-CH realism.  Position 0 is the CH, so it is active
-        # whenever its CH-to-BS model selects the cluster.
+        # Optional member-to-CH realism.  With static CHs, the CH is in column
+        # 0.  With energy-aware rotation, the CH can move to another member
+        # position independently for each D2D scenario.  The elected CH is
+        # always locally active; non-CH members still draw compute/link success.
         active_compute_draws = jax.random.uniform(
             active_compute_key,
             cluster_members.shape,
@@ -1292,32 +1585,38 @@ def error_calculator_trace_jax(
             cluster_members.shape,
             dtype=dtype,
         )
-        is_cluster_head_position = member_positions == 0
-        active_member_mask = (
-            member_mask
-            & cluster_mask[:, None]
-            & (
-                is_cluster_head_position
-                | (
-                    (active_compute_draws < d2d_compute_probability)
-                    & (active_link_draws < d2d_link_probability)
-                )
-            )
+        member_compute_link_success = (
+            (active_compute_draws < d2d_compute_probability)
+            & (active_link_draws < d2d_link_probability)
         )
-        active_member_counts = jnp.sum(active_member_mask, axis=1).astype(jnp.int32)
+
+        def active_member_mask_for_heads(heads):
+            is_scenario_ch = safe_members == heads[:, None]
+            return (
+                member_mask
+                & cluster_mask[:, None]
+                & (is_scenario_ch | member_compute_link_success)
+            )
+
+        active_member_mask_1 = active_member_mask_for_heads(polling_d2d_heads)
+        active_member_mask_2 = active_member_mask_for_heads(fixed_d2d_heads)
+        active_member_mask_3 = active_member_mask_for_heads(optimized_d2d_heads)
+        active_member_counts_1 = jnp.sum(active_member_mask_1, axis=1).astype(jnp.int32)
+        active_member_counts_2 = jnp.sum(active_member_mask_2, axis=1).astype(jnp.int32)
+        active_member_counts_3 = jnp.sum(active_member_mask_3, axis=1).astype(jnp.int32)
 
         local_updates = local_updates_for_weights(current_weights)
         aggregate_updates_model_1 = aggregate_cluster_updates(
             local_updates[:, 3, :],
-            active_member_mask,
+            active_member_mask_1,
         )
         aggregate_updates_model_2 = aggregate_cluster_updates(
             local_updates[:, 4, :],
-            active_member_mask,
+            active_member_mask_2,
         )
         aggregate_updates_model_3 = aggregate_cluster_updates(
             local_updates[:, 5, :],
-            active_member_mask,
+            active_member_mask_3,
         )
         aggregate_norms_model_3 = jnp.linalg.norm(aggregate_updates_model_3, axis=1)
 
@@ -1334,7 +1633,7 @@ def error_calculator_trace_jax(
             )
             polling_success = polling_compute_success & (
                 direct_polling_link_draws
-                < device_bs_success_probability[scheduled_users]
+                < device_bs_success_probability_1[scheduled_users]
             )
         else:
             polling_success = polling_compute_success
@@ -1354,7 +1653,7 @@ def error_calculator_trace_jax(
             dtype=dtype,
         )
         polling_success_d2d = polling_compute_success & (
-            polling_d2d_link_draws < ch_bs_success_probability[scheduled_clusters]
+            polling_d2d_link_draws < ch_bs_success_probability_1[scheduled_clusters]
         )
         gradient_1_d2d = jnp.sum(
             jnp.where(
@@ -1365,7 +1664,11 @@ def error_calculator_trace_jax(
             axis=0,
         )
         upload_1_d2d = jnp.sum(
-            jnp.where(polling_success_d2d, active_member_counts[scheduled_clusters], 0)
+            jnp.where(
+                polling_success_d2d,
+                active_member_counts_1[scheduled_clusters],
+                0,
+            )
         ).astype(jnp.int32)
         ch_upload_1_d2d = jnp.sum(polling_success_d2d).astype(jnp.int32)
 
@@ -1374,6 +1677,7 @@ def error_calculator_trace_jax(
             access_probability,
             pcomp,
         )
+        candidates_2_mask = device_draws < threshold
         success_2, _ = _successful_from_draws(
             channel_key_2,
             device_draws,
@@ -1381,31 +1685,32 @@ def error_calculator_trace_jax(
             jnp.ones(k_devices, dtype=jnp.bool_),
             n_channels,
             link_key=direct_fixed_link_key,
-            link_success_probability=direct_link_success_probability,
+            link_success_probability=direct_link_success_probability_2,
         )
         gradient_2 = jnp.sum(jnp.where(success_2[:, None], local_updates[:, 1, :], 0.0), axis=0)
         upload_2 = jnp.sum(success_2).astype(jnp.int32)
 
-        cluster_draws = device_draws[cluster_heads]
+        fixed_cluster_draws = device_draws[fixed_d2d_heads]
         threshold_d2d = jnp.minimum(
             access_probability_d2d,
             pcomp,
         )
+        candidates_2_d2d_mask = (fixed_cluster_draws < threshold_d2d) & cluster_mask
         success_2_d2d, _ = _successful_from_draws(
             channel_key_2_d2d,
-            cluster_draws,
+            fixed_cluster_draws,
             threshold_d2d,
             cluster_mask,
             n_channels,
             link_key=fixed_d2d_link_key,
-            link_success_probability=ch_bs_success_probability,
+            link_success_probability=ch_bs_success_probability_2,
         )
         gradient_2_d2d = jnp.sum(
             jnp.where(success_2_d2d[:, None], aggregate_updates_model_2, 0.0),
             axis=0,
         )
         upload_2_d2d = jnp.sum(
-            jnp.where(success_2_d2d, active_member_counts, 0)
+            jnp.where(success_2_d2d, active_member_counts_2, 0)
         ).astype(jnp.int32)
         ch_upload_2_d2d = jnp.sum(success_2_d2d).astype(jnp.int32)
 
@@ -1426,6 +1731,7 @@ def error_calculator_trace_jax(
             fixed_access_probability=access_probability,
             pcomp=pcomp,
         )
+        candidates_3_mask = device_draws < optimized_probability
         success_3, candidates_3 = _successful_from_draws(
             channel_key_3,
             device_draws,
@@ -1433,7 +1739,7 @@ def error_calculator_trace_jax(
             jnp.ones(k_devices, dtype=jnp.bool_),
             n_channels,
             link_key=direct_optimized_link_key,
-            link_success_probability=direct_link_success_probability,
+            link_success_probability=direct_link_success_probability_3,
         )
         gradient_3 = jnp.sum(jnp.where(success_3[:, None], local_updates[:, 2, :], 0.0), axis=0)
         upload_3 = jnp.sum(success_3).astype(jnp.int32)
@@ -1444,7 +1750,7 @@ def error_calculator_trace_jax(
         if optimized_d2d_access_mode == "utility":
             optimized_probability_d2d = _utility_load_controlled_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
-                cluster_sizes=active_member_counts,
+                cluster_sizes=active_member_counts_3,
                 freshness=optimized_d2d_freshness,
                 cluster_mask=cluster_mask,
                 n_channels=n_channels,
@@ -1462,12 +1768,12 @@ def error_calculator_trace_jax(
                 dense_trigger_ratio=d2d_dense_trigger_ratio,
                 clusterized_devices_fraction=clusterized_devices_fraction,
                 optimized_success_ewma=optimized_d2d_success_ewma,
-                fixed_success_target=expected_fixed_d2d_ch_successes,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
         elif optimized_d2d_access_mode == "max_weight":
             optimized_probability_d2d = _max_weight_threshold_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
-                cluster_sizes=active_member_counts,
+                cluster_sizes=active_member_counts_3,
                 freshness=optimized_d2d_freshness,
                 cluster_mask=cluster_mask,
                 threshold=psi_d2d,
@@ -1482,7 +1788,7 @@ def error_calculator_trace_jax(
         elif optimized_d2d_access_mode == "hybrid":
             optimized_probability_d2d = _hybrid_utility_access_probability(
                 aggregate_updates=aggregate_updates_model_3,
-                cluster_sizes=active_member_counts,
+                cluster_sizes=active_member_counts_3,
                 freshness=optimized_d2d_freshness,
                 reference_direction=optimized_d2d_reference_direction,
                 cluster_mask=cluster_mask,
@@ -1503,12 +1809,12 @@ def error_calculator_trace_jax(
                 dense_trigger_ratio=d2d_dense_trigger_ratio,
                 clusterized_devices_fraction=clusterized_devices_fraction,
                 optimized_success_ewma=optimized_d2d_success_ewma,
-                fixed_success_target=expected_fixed_d2d_ch_successes,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
         elif optimized_d2d_access_mode == "adaptive_diversity":
             optimized_probability_d2d = _adaptive_diversity_access_probability(
                 aggregate_updates=aggregate_updates_model_3,
-                cluster_sizes=active_member_counts,
+                cluster_sizes=active_member_counts_3,
                 freshness=optimized_d2d_freshness,
                 reference_direction=optimized_d2d_reference_direction,
                 cluster_mask=cluster_mask,
@@ -1531,7 +1837,7 @@ def error_calculator_trace_jax(
                 dense_trigger_ratio=d2d_dense_trigger_ratio,
                 clusterized_devices_fraction=clusterized_devices_fraction,
                 optimized_success_ewma=optimized_d2d_success_ewma,
-                fixed_success_target=expected_fixed_d2d_ch_successes,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
                 switch_fraction=d2d_adaptive_switch_fraction,
                 switch_gain=d2d_adaptive_switch_gain,
                 iteration_index=iteration_index,
@@ -1553,21 +1859,25 @@ def error_calculator_trace_jax(
                 fixed_access_probability=access_probability_d2d,
                 pcomp=pcomp,
             )
+        optimized_cluster_draws = device_draws[optimized_d2d_heads]
+        candidates_3_d2d_mask = (
+            optimized_cluster_draws < optimized_probability_d2d
+        ) & cluster_mask
         success_3_d2d, candidates_3_d2d = _successful_from_draws(
             channel_key_3_d2d,
-            cluster_draws,
+            optimized_cluster_draws,
             optimized_probability_d2d,
             cluster_mask,
             n_channels,
             link_key=optimized_d2d_link_key,
-            link_success_probability=ch_bs_success_probability,
+            link_success_probability=ch_bs_success_probability_3,
         )
         gradient_3_d2d = jnp.sum(
             jnp.where(success_3_d2d[:, None], aggregate_updates_model_3, 0.0),
             axis=0,
         )
         upload_3_d2d = jnp.sum(
-            jnp.where(success_3_d2d, active_member_counts, 0)
+            jnp.where(success_3_d2d, active_member_counts_3, 0)
         ).astype(jnp.int32)
         ch_upload_3_d2d = jnp.sum(success_3_d2d).astype(jnp.int32)
         d2d_load_error = candidates_3_d2d.astype(users_input__x.dtype) - n_channels
@@ -1612,6 +1922,105 @@ def error_calculator_trace_jax(
             * ch_upload_3_d2d.astype(users_input__x.dtype)
         )
 
+        def direct_attempt_drain(attempt_mask):
+            # Direct polling/fixed/optimized curves pay a direct device-to-BS
+            # cost for attempted transmissions.  The cost is charged on
+            # attempts, not only successes, because RF energy is consumed before
+            # collision/decoding outcome is known.
+            return attempt_mask.astype(users_input__x.dtype) * energy_direct_bs_cost
+
+        def polling_direct_attempt_drain():
+            drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
+            return drain.at[scheduled_users].add(
+                polling_compute_success.astype(users_input__x.dtype)
+                * energy_direct_bs_cost
+            )
+
+        def d2d_attempt_drain(cluster_attempt_counts, active_member_mask, heads):
+            # CHs pay for every BS-uplink attempt.  Members pay when they have
+            # an active update and their cluster actually tries to use the
+            # aggregate in this iteration.  This preserves the HFL hierarchy:
+            # members pay D2D local cost, while the CH pays the long-range
+            # aggregate uplink cost.
+            attempt_counts = jnp.where(
+                cluster_mask,
+                cluster_attempt_counts.astype(users_input__x.dtype),
+                0.0,
+            )
+            ch_drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
+            ch_drain = ch_drain.at[heads].add(
+                attempt_counts * energy_ch_bs_cost
+            )
+
+            is_scenario_ch = safe_members == heads[:, None]
+            member_attempt_mask = active_member_mask & (~is_scenario_ch) & (
+                attempt_counts[:, None] > 0.0
+            )
+            member_drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
+            member_drain = member_drain.at[safe_members.reshape(-1)].add(
+                member_attempt_mask.reshape(-1).astype(users_input__x.dtype)
+                * energy_d2d_member_cost
+            )
+            return ch_drain + member_drain, ch_drain
+
+        polling_d2d_attempt_counts = jnp.zeros(
+            polling_d2d_heads.shape,
+            dtype=users_input__x.dtype,
+        ).at[scheduled_clusters].add(
+            polling_compute_success.astype(users_input__x.dtype)
+        )
+        fixed_d2d_attempt_counts = candidates_2_d2d_mask.astype(users_input__x.dtype)
+        optimized_d2d_attempt_counts = candidates_3_d2d_mask.astype(
+            users_input__x.dtype
+        )
+        polling_d2d_drain, polling_d2d_ch_drain = d2d_attempt_drain(
+            polling_d2d_attempt_counts,
+            active_member_mask_1,
+            polling_d2d_heads,
+        )
+        fixed_d2d_drain, fixed_d2d_ch_drain = d2d_attempt_drain(
+            fixed_d2d_attempt_counts,
+            active_member_mask_2,
+            fixed_d2d_heads,
+        )
+        optimized_d2d_drain, optimized_d2d_ch_drain = d2d_attempt_drain(
+            optimized_d2d_attempt_counts,
+            active_member_mask_3,
+            optimized_d2d_heads,
+        )
+
+        battery_drain = jnp.stack(
+            [
+                polling_direct_attempt_drain(),
+                direct_attempt_drain(candidates_2_mask),
+                direct_attempt_drain(candidates_3_mask),
+                polling_d2d_drain,
+                fixed_d2d_drain,
+                optimized_d2d_drain,
+            ],
+            axis=0,
+        )
+        next_batteries = jnp.clip(
+            current_batteries - energy_enabled * battery_drain,
+            0.0,
+            1.0,
+        )
+        d2d_ch_drain = jnp.stack(
+            [
+                polling_d2d_ch_drain,
+                fixed_d2d_ch_drain,
+                optimized_d2d_ch_drain,
+            ],
+            axis=0,
+        )
+        actual_d2d_ch_drain = jnp.minimum(
+            energy_enabled * d2d_ch_drain,
+            current_batteries[3:],
+        )
+        next_clusterhead_energy_totals = (
+            clusterhead_energy_totals + actual_d2d_ch_drain
+        )
+
         gradients = jnp.stack(
             [
                 gradient_1,
@@ -1646,6 +2055,9 @@ def error_calculator_trace_jax(
         next_state = (
             key,
             next_weights,
+            next_batteries,
+            d2d_heads,
+            next_clusterhead_energy_totals,
             next_psi,
             next_psi_d2d,
             next_upload_totals,
@@ -1654,7 +2066,64 @@ def error_calculator_trace_jax(
             next_optimized_d2d_reference_direction,
             next_optimized_d2d_success_ewma,
         )
-        trace_row = (error_norms, next_upload_totals, next_clusterhead_upload_totals)
+        mean_battery = jnp.mean(next_batteries, axis=1)
+        # Gather the currently elected CH battery for each D2D scenario.
+        #
+        # next_batteries[3:]: float[3, K]
+        #   Scenario-specific battery state for polling+D2D, fixed+D2D, and
+        #   optimized+D2D.
+        # d2d_heads: int[3, max_clusters]
+        #   Current elected CH device id per D2D scenario and cluster row.
+        #
+        # ``take_along_axis`` is used instead of ``next_batteries[3:, d2d_heads]``
+        # because mixed slicing and advanced indexing would not mean "take each
+        # scenario row at its own CH columns" under JAX/NumPy indexing rules.
+        d2d_current_head_battery = jnp.take_along_axis(
+            next_batteries[3:],
+            d2d_heads,
+            axis=1,
+        )
+        d2d_clusterhead_battery = jnp.sum(
+            jnp.where(
+                cluster_mask[None, :],
+                d2d_current_head_battery,
+                0.0,
+            ),
+            axis=1,
+        ) / jnp.maximum(
+            active_clusterhead_count,
+            jnp.asarray(1.0, dtype=users_input__x.dtype),
+        )
+        total_energy_used = jnp.sum(
+            initial_device_battery[None, :] - next_batteries,
+            axis=1,
+        )
+        mean_energy_used = total_energy_used / jnp.asarray(
+            k_devices,
+            dtype=users_input__x.dtype,
+        )
+        energy_efficiency = jnp.where(
+            total_energy_used > jnp.asarray(1e-12, dtype=users_input__x.dtype),
+            next_upload_totals.astype(users_input__x.dtype) / total_energy_used,
+            0.0,
+        )
+        mean_clusterhead_energy_used = (
+            jnp.sum(next_clusterhead_energy_totals, axis=1)
+            / jnp.maximum(
+                active_clusterhead_count,
+                jnp.asarray(1.0, dtype=users_input__x.dtype),
+            )
+        )
+        trace_row = (
+            error_norms,
+            next_upload_totals,
+            next_clusterhead_upload_totals,
+            mean_battery,
+            d2d_clusterhead_battery,
+            mean_energy_used,
+            energy_efficiency,
+            mean_clusterhead_energy_used,
+        )
         return next_state, trace_row
 
     initial_psi_d2d = (
@@ -1666,6 +2135,9 @@ def error_calculator_trace_jax(
     initial_state = (
         scan_key,
         weights,
+        jnp.stack([initial_device_battery] * 6, axis=0),
+        jnp.stack([cluster_heads] * 3, axis=0),
+        jnp.zeros((3, k_devices), dtype=users_input__x.dtype),
         jnp.asarray(0.0, dtype=users_input__x.dtype),
         initial_psi_d2d,
         jnp.zeros(6, dtype=jnp.int32),
@@ -1678,10 +2150,22 @@ def error_calculator_trace_jax(
         jnp.zeros(data_dimension, dtype=users_input__x.dtype),
         # Start from the fixed-D2D reference throughput to avoid an artificial
         # cold-start burst of redistribution before any ACK history exists.
-        expected_fixed_d2d_ch_successes,
+        initial_expected_fixed_d2d_ch_successes,
     )
 
-    _, (error_norms, upload_totals, clusterhead_upload_totals) = jax.lax.scan(
+    (
+        _,
+        (
+            error_norms,
+            upload_totals,
+            clusterhead_upload_totals,
+            mean_battery,
+            mean_clusterhead_battery,
+            mean_energy_used,
+            energy_efficiency,
+            mean_clusterhead_energy_used,
+        ),
+    ) = jax.lax.scan(
         scan_iteration,
         initial_state,
         jnp.arange(max_iterations_t, dtype=jnp.int32),
@@ -1698,6 +2182,11 @@ def error_calculator_trace_jax(
         error_norms=error_norms[checkpoint_indices],
         successful_uploads=upload_totals[checkpoint_indices],
         successful_clusterhead_uploads=clusterhead_upload_totals[checkpoint_indices],
+        mean_battery=mean_battery[checkpoint_indices],
+        mean_clusterhead_battery=mean_clusterhead_battery[checkpoint_indices],
+        mean_energy_used=mean_energy_used[checkpoint_indices],
+        energy_efficiency=energy_efficiency[checkpoint_indices],
+        mean_clusterhead_energy_used=mean_clusterhead_energy_used[checkpoint_indices],
         checkpoints=checkpoint_indices + 1,
     )
 
@@ -1723,6 +2212,15 @@ def error_calculator(
     device_bs_min_success_probability: float = 0.20,
     device_bs_pathloss_exponent: float = 2.0,
     device_bs_battery_exponent: float = 0.0,
+    energy_drain_mode: str = "none",
+    energy_direct_bs_cost: float = 0.0,
+    energy_d2d_member_cost: float = 0.0,
+    energy_ch_bs_cost: float = 0.0,
+    d2d_ch_rotation_mode: str = "static",
+    d2d_ch_rotation_interval: int = 10,
+    d2d_energy_efficiency_level: str = "balanced",
+    device_coords=None,
+    device_radius=None,
     device_distance_to_bs=None,
     device_battery=None,
     optimized_access_floor_fraction: float = 0.0,
@@ -1771,6 +2269,15 @@ def error_calculator(
         device_bs_min_success_probability=device_bs_min_success_probability,
         device_bs_pathloss_exponent=device_bs_pathloss_exponent,
         device_bs_battery_exponent=device_bs_battery_exponent,
+        energy_drain_mode=energy_drain_mode,
+        energy_direct_bs_cost=energy_direct_bs_cost,
+        energy_d2d_member_cost=energy_d2d_member_cost,
+        energy_ch_bs_cost=energy_ch_bs_cost,
+        d2d_ch_rotation_mode=d2d_ch_rotation_mode,
+        d2d_ch_rotation_interval=d2d_ch_rotation_interval,
+        d2d_energy_efficiency_level=d2d_energy_efficiency_level,
+        device_coords=device_coords,
+        device_radius=device_radius,
         device_distance_to_bs=device_distance_to_bs,
         device_battery=device_battery,
         optimized_access_floor_fraction=optimized_access_floor_fraction,

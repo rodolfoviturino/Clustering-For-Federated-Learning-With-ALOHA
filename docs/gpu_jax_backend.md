@@ -543,13 +543,20 @@ Six scenario columns are returned:
 The returned `JaxTraceResult` contains:
 
 - `clusterized_devices_rate`: scalar clustering percentage.
-- cluster quality scalars: CH row count, singleton count, non-singleton D2D
-  cluster count, clustered-device count, mean cluster size, and mean
-  non-singleton cluster size.
 - `error_norms`: `float[checkpoints, 6]`.
 - `successful_uploads`: `float[checkpoints, 6]`.
 - `successful_clusterhead_uploads`: `float[checkpoints, 3]`.
+- `mean_battery`: `float[checkpoints, 6]`.
+- `mean_clusterhead_battery`: `float[checkpoints, 3]`.
+- `mean_energy_used`: `float[checkpoints, 6]`.
+- `energy_efficiency`: `float[checkpoints, 6]`.
+- `mean_clusterhead_energy_used`: `float[checkpoints, 3]`.
 - `checkpoints`: `int32[checkpoints]`.
+
+Cluster quality scalars such as CH row count, singleton count,
+non-singleton D2D cluster count, clustered-device count, mean cluster size, and
+mean non-singleton cluster size are added by `experiments.run_gpu_sweep` to the
+CSV/metadata layer.
 
 ## Seed Policy
 
@@ -619,6 +626,15 @@ That command writes:
 - `Runs/gpu_smoke/results_clusterhead_uploads.png` and `.pdf`;
 - `Runs/gpu_smoke/results_cluster_rate.png` and `.pdf`;
 - `Runs/gpu_smoke/results_cluster_quality.png` and `.pdf`.
+- `Runs/gpu_smoke/results_battery.png` and `.pdf` when battery columns exist;
+- `Runs/gpu_smoke/results_clusterhead_battery.png` and `.pdf` when D2D CH
+  battery columns exist.
+- `Runs/gpu_smoke/results_energy_used.png` and `.pdf` when energy-use columns
+  exist;
+- `Runs/gpu_smoke/results_energy_efficiency.png` and `.pdf` when
+  energy-efficiency columns exist;
+- `Runs/gpu_smoke/results_clusterhead_energy_used.png` and `.pdf` when D2D CH
+  energy-use columns exist.
 
 The thesis-style figure plots every checkpoint saved in the CSV. Omit
 `--checkpoints` to save and plot the full curve for every iteration
@@ -631,6 +647,46 @@ local timestamp: `Runs/YYYY-MM-DD-HH-MM-SS/`.
 
 Use `--no-plots` when measuring raw simulation speed and plotting time should
 not be included in the end-to-end command.
+
+## Energy-Aware D2D CH Rotation
+
+The thesis-compatible default keeps the post-clustering CH fixed:
+
+```bash
+--d2d-ch-rotation-mode static
+```
+
+Enhanced energy experiments can enable periodic CH re-election:
+
+```bash
+--energy-drain-mode dynamic \
+--d2d-ch-rotation-mode energy_aware \
+--d2d-ch-rotation-interval 10 \
+--d2d-energy-efficiency-level balanced
+```
+
+The re-election is performed separately for polling+D2D, fixed+D2D, and
+optimized+D2D because each curve has its own battery trajectory.  A candidate
+CH must be an existing cluster member and must still reach every member within
+`R_D2D`, so one-hop coverage and `Cmax` remain unchanged.  The score is:
+
+```text
+score =
+  channel_weight * normalized_bs_channel_quality
+  + battery_weight * current_battery
+  + stability_weight * is_current_ch
+```
+
+Profiles:
+
+- `performance`: channel `0.85`, battery `0.10`, stability `0.05`;
+- `balanced`: channel `0.65`, battery `0.25`, stability `0.10`;
+- `eco`: channel `0.45`, battery `0.45`, stability `0.10`.
+
+This is not centralized CH scheduling.  The BS can broadcast profile weights
+and interval, while each cluster performs a local control exchange to verify
+which candidates still cover all members.  The elected CH then uses the same
+ALOHA access logic as before.
 
 Scale gradually:
 
@@ -650,7 +706,11 @@ results by comparing distributions and curves:
 - total successful upload counts;
 - successful cluster-head upload counts;
 - clustering-rate distribution;
-- energy/freshness metrics if those modes are added back to the JAX model.
+- mean battery and mean D2D cluster-head battery when
+  `--energy-drain-mode dynamic` is enabled;
+- mean normalized energy used, uploads per normalized battery unit, and D2D
+  cluster-head energy used when energy metrics are present;
+- freshness metrics for enhanced optimized-D2D policies.
 
 Small cases should also run structural checks:
 
@@ -674,6 +734,8 @@ Every thesis-scale result should preserve:
 - local CH-rotation repair pass count;
 - local CH-to-CH merge repair pass count;
 - initial dense cluster size;
+- channel-aware direct/CH decoding mode and battery exponents;
+- energy drain mode and normalized per-attempt energy costs;
 - number of rounds and checkpoints;
 - batch size or effective `vmap` size;
 - elapsed time including compile time;

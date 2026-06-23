@@ -6,6 +6,7 @@ implementation in ``Models.jax_models_arrangement``.
 """
 
 from Models.jax_models_arrangement import (
+    D2D_ENERGY_EFFICIENCY_PROFILES,
     JaxTraceResult,
     error_calculator,
     error_calculator_trace_jax,
@@ -14,6 +15,7 @@ from Models.jax_models_arrangement import (
 )
 
 __all__ = [
+    "D2D_ENERGY_EFFICIENCY_PROFILES",
     "JaxTraceResult",
     "error_calculator",
     "error_calculator_trace_jax",

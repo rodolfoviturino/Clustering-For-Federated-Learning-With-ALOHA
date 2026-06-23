@@ -197,6 +197,47 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(error_norms)))
         self.assertTrue(np.all(uploads >= 0))
 
+    def test_dynamic_energy_drain_records_battery_metrics(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=2,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=23,
+            device_battery=jax_models.jnp.asarray([100.0, 100.0, 100.0, 100.0]),
+            energy_drain_mode="dynamic",
+            energy_direct_bs_cost=0.01,
+            energy_d2d_member_cost=0.005,
+            energy_ch_bs_cost=0.02,
+            checkpoints=[1, 2],
+        )
+
+        mean_battery = np.asarray(result.mean_battery)
+        mean_clusterhead_battery = np.asarray(result.mean_clusterhead_battery)
+        mean_energy_used = np.asarray(result.mean_energy_used)
+        energy_efficiency = np.asarray(result.energy_efficiency)
+        mean_clusterhead_energy_used = np.asarray(result.mean_clusterhead_energy_used)
+
+        self.assertEqual(mean_battery.shape, (2, 6))
+        self.assertEqual(mean_clusterhead_battery.shape, (2, 3))
+        self.assertEqual(mean_energy_used.shape, (2, 6))
+        self.assertEqual(energy_efficiency.shape, (2, 6))
+        self.assertEqual(mean_clusterhead_energy_used.shape, (2, 3))
+        self.assertLess(mean_battery[0, 0], 1.0)
+        self.assertTrue(np.all(mean_battery >= 0.0))
+        self.assertTrue(np.all(mean_battery <= 1.0))
+        self.assertTrue(np.all(mean_clusterhead_battery >= 0.0))
+        self.assertTrue(np.all(mean_clusterhead_battery <= 1.0))
+        self.assertGreater(mean_clusterhead_battery[0, 0], 0.90)
+        self.assertTrue(np.all(mean_energy_used >= 0.0))
+        self.assertTrue(np.all(np.isfinite(energy_efficiency)))
+        self.assertTrue(np.all(mean_clusterhead_energy_used >= 0.0))
+
     def test_ch_bs_success_parameters_are_validated(self):
         invalid_kwargs = (
             {"d2d_ch_bs_success_mode": "invalid"},
@@ -246,6 +287,166 @@ class JaxModelTests(unittest.TestCase):
                         seed=17,
                         **kwargs,
                     )
+
+    def test_energy_drain_parameters_are_validated(self):
+        invalid_kwargs = (
+            {"energy_drain_mode": "invalid"},
+            {"energy_direct_bs_cost": -0.1},
+            {"energy_d2d_member_cost": -0.1},
+            {"energy_ch_bs_cost": -0.1},
+        )
+
+        for kwargs in invalid_kwargs:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    error_calculator(
+                        number_of_mobile_devices__k=4,
+                        data_dimension__L=2,
+                        number_of_parallel_channels__M=2,
+                        probability_that_user_can_compute_its_local_update__pcomp=1.0,
+                        number_of_iterations__t=1,
+                        learning_rate__u1=0.01,
+                        step_size__u=0.1,
+                        clusters_list=[[0, 1], [2, 3]],
+                        seed=17,
+                        **kwargs,
+                    )
+
+    def test_d2d_energy_efficiency_profiles_are_named_weights(self):
+        self.assertEqual(
+            jax_models._d2d_energy_efficiency_profile_weights("performance"),
+            (0.85, 0.10, 0.05),
+        )
+        self.assertEqual(
+            jax_models._d2d_energy_efficiency_profile_weights("balanced"),
+            (0.65, 0.25, 0.10),
+        )
+        self.assertEqual(
+            jax_models._d2d_energy_efficiency_profile_weights("eco"),
+            (0.45, 0.45, 0.10),
+        )
+        with self.assertRaises(ValueError):
+            jax_models._d2d_energy_efficiency_profile_weights("invalid")
+
+    def test_d2d_ch_rotation_parameters_are_validated(self):
+        base_kwargs = dict(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            number_of_iterations__t=1,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters_list=[[0, 1], [2, 3]],
+            seed=17,
+        )
+        invalid_kwargs = (
+            {"d2d_ch_rotation_mode": "invalid"},
+            {"d2d_ch_rotation_interval": 0},
+            {
+                "d2d_ch_rotation_mode": "energy_aware",
+                "energy_drain_mode": "none",
+                "device_coords": [[0.0, 0.0], [1.0, 0.0], [10.0, 0.0], [11.0, 0.0]],
+                "device_radius": 2.0,
+            },
+            {
+                "d2d_ch_rotation_mode": "energy_aware",
+                "energy_drain_mode": "dynamic",
+            },
+            {"d2d_energy_efficiency_level": "invalid"},
+        )
+
+        for kwargs in invalid_kwargs:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    error_calculator(**base_kwargs, **kwargs)
+
+    def test_energy_aware_d2d_ch_rotation_records_energy_metrics(self):
+        clusters = prepare_clusters_for_jax([[0, 1, 2], [3]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=2,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=29,
+            device_coords=jax_models.jnp.asarray(
+                [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [10.0, 10.0]]
+            ),
+            device_radius=2.0,
+            device_distance_to_bs=jax_models.jnp.asarray([80.0, 5.0, 60.0, 10.0]),
+            device_battery=jax_models.jnp.asarray([100.0, 100.0, 100.0, 100.0]),
+            energy_drain_mode="dynamic",
+            energy_direct_bs_cost=0.01,
+            energy_d2d_member_cost=0.005,
+            energy_ch_bs_cost=0.02,
+            d2d_ch_rotation_mode="energy_aware",
+            d2d_ch_rotation_interval=1,
+            d2d_energy_efficiency_level="balanced",
+            d2d_ch_bs_success_mode="channel_quality",
+            d2d_ch_bs_min_success_probability=0.35,
+            d2d_ch_bs_pathloss_exponent=2.0,
+            d2d_ch_bs_battery_exponent=0.25,
+            checkpoints=[1, 2],
+        )
+
+        mean_energy_used = np.asarray(result.mean_energy_used)
+        energy_efficiency = np.asarray(result.energy_efficiency)
+        mean_clusterhead_energy_used = np.asarray(result.mean_clusterhead_energy_used)
+
+        self.assertEqual(mean_energy_used.shape, (2, 6))
+        self.assertEqual(energy_efficiency.shape, (2, 6))
+        self.assertEqual(mean_clusterhead_energy_used.shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(mean_energy_used)))
+        self.assertTrue(np.all(np.isfinite(energy_efficiency)))
+        self.assertTrue(np.all(np.isfinite(mean_clusterhead_energy_used)))
+        self.assertTrue(np.all(mean_energy_used >= 0.0))
+        self.assertTrue(np.all(mean_clusterhead_energy_used >= 0.0))
+
+    def test_static_d2d_ch_rotation_preserves_default_behavior(self):
+        clusters = prepare_clusters_for_jax([[0, 1, 2], [3]])
+        base_kwargs = dict(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=31,
+            device_battery=jax_models.jnp.asarray([100.0, 100.0, 100.0, 100.0]),
+            energy_drain_mode="dynamic",
+            energy_direct_bs_cost=0.01,
+            energy_d2d_member_cost=0.005,
+            energy_ch_bs_cost=0.02,
+            checkpoints=[1, 2, 3],
+        )
+        default_result = error_calculator_trace_jax(**base_kwargs)
+        static_with_coords = error_calculator_trace_jax(
+            **base_kwargs,
+            d2d_ch_rotation_mode="static",
+            device_coords=jax_models.jnp.asarray(
+                [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [10.0, 10.0]]
+            ),
+            device_radius=2.0,
+        )
+
+        np.testing.assert_allclose(
+            np.asarray(default_result.error_norms),
+            np.asarray(static_with_coords.error_norms),
+        )
+        np.testing.assert_array_equal(
+            np.asarray(default_result.successful_uploads),
+            np.asarray(static_with_coords.successful_uploads),
+        )
+        np.testing.assert_allclose(
+            np.asarray(default_result.mean_battery),
+            np.asarray(static_with_coords.mean_battery),
+        )
 
     def test_normalization_parameter_changes_learning_scale(self):
         kwargs = dict(

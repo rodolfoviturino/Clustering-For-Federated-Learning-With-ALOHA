@@ -31,7 +31,9 @@ system that uses multichannel ALOHA for cluster-head-to-BS communication.
 
 The default `geometric` clustering mode uses geometry only. The `utility` mode
 adds degree, battery, and BS channel-quality scoring. Neither mode currently
-uses data distribution, learning similarity, or live network measurements.
+uses data distribution or learning similarity. Live energy evolution is
+available only when `--energy-drain-mode dynamic` is explicitly enabled; the
+default keeps battery fixed for thesis-compatible comparisons.
 
 ## Repository Layout
 
@@ -176,6 +178,26 @@ direct devices still contend through ALOHA first, and only collision-free
 packets draw a device-to-BS decoding success probability. Keep both modes at
 `none` when reproducing the original collision-only thesis behavior.
 
+Dynamic energy drain can be enabled as a separate enhanced ablation. The
+simulator keeps one battery vector per curve, so polling/fixed/optimized and
+their D2D variants do not drain each other's batteries inside the same run.
+Direct device-to-BS attempts pay `--energy-direct-bs-cost`; active non-CH D2D
+members pay `--energy-d2d-member-cost` when their cluster attempts an
+aggregate; CHs pay `--energy-ch-bs-cost` for every CH-to-BS aggregate attempt,
+including collided or undecoded attempts. The runner writes mean battery and
+mean D2D-CH battery columns, plus energy-used and energy-efficiency columns,
+and plots them when present.
+
+Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
+default with `--d2d-ch-rotation-mode static`. Enable it with
+`--d2d-ch-rotation-mode energy_aware` together with
+`--energy-drain-mode dynamic`. The simulator then periodically re-elects a CH
+inside each existing D2D cluster for each D2D curve. The candidate must still
+cover all members in one hop, so the cluster membership and `Cmax` constraint
+do not change. The selectable profiles are `performance`, `balanced`, and
+`eco`, trading BS-channel quality against current battery and a small stability
+bonus for keeping the current CH.
+
 Recommended fair channel-aware comparison:
 
 ```bash
@@ -208,6 +230,100 @@ python main.py --run-name k3000_channel_fair \
   --optimized-d2d-freshness-exponent 0.25 \
   --optimized-d2d-load-target-factor 1.1
 ```
+
+Recommended short dynamic-energy smoke:
+
+```bash
+python main.py --run-name k1000_energy_smoke \
+  --devices 1000 \
+  --rounds 20 \
+  --precision float64 \
+  --cluster-head-selection-mode quality \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --d2d-ch-bs-success-mode channel_quality \
+  --d2d-ch-bs-min-success-probability 0.35 \
+  --d2d-ch-bs-pathloss-exponent 2.0 \
+  --d2d-ch-bs-battery-exponent 0.25 \
+  --device-bs-success-mode channel_quality \
+  --device-bs-min-success-probability 0.35 \
+  --device-bs-pathloss-exponent 2.0 \
+  --device-bs-battery-exponent 0.25 \
+  --energy-drain-mode dynamic \
+  --energy-direct-bs-cost 0.001 \
+  --energy-d2d-member-cost 0.0002 \
+  --energy-ch-bs-cost 0.002 \
+  --optimized-d2d-access-mode utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-redistribution-fraction 0.25 \
+  --optimized-d2d-redistribution-trigger-ratio 0.95 \
+  --optimized-d2d-density-trigger-threshold 0.95 \
+  --optimized-d2d-dense-trigger-ratio 0.0 \
+  --optimized-d2d-throughput-ewma-decay 0.90 \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1
+```
+
+Recommended short energy-aware CH-rotation smoke:
+
+```bash
+python main.py --run-name k1000_energy_rotation_smoke \
+  --devices 1000 \
+  --rounds 20 \
+  --precision float64 \
+  --energy-drain-mode dynamic \
+  --energy-direct-bs-cost 0.002 \
+  --energy-d2d-member-cost 0.0005 \
+  --energy-ch-bs-cost 0.005 \
+  --d2d-ch-rotation-mode energy_aware \
+  --d2d-ch-rotation-interval 10 \
+  --d2d-energy-efficiency-level balanced \
+  --cluster-head-selection-mode quality \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --d2d-ch-bs-success-mode channel_quality \
+  --d2d-ch-bs-min-success-probability 0.35 \
+  --d2d-ch-bs-pathloss-exponent 2.0 \
+  --d2d-ch-bs-battery-exponent 0.25 \
+  --device-bs-success-mode channel_quality \
+  --device-bs-min-success-probability 0.35 \
+  --device-bs-pathloss-exponent 2.0 \
+  --device-bs-battery-exponent 0.25 \
+  --optimized-d2d-access-mode utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-redistribution-fraction 0.25 \
+  --optimized-d2d-redistribution-trigger-ratio 0.95 \
+  --optimized-d2d-density-trigger-threshold 0.95 \
+  --optimized-d2d-dense-trigger-ratio 0.0 \
+  --optimized-d2d-throughput-ewma-decay 0.90 \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1
+```
+
+To compare all CH-rotation energy profiles with the same controlled setup, use
+the dedicated sweep runner:
+
+```bash
+python -m experiments.run_energy_rotation_sweep \
+  --run-name k1000_energy_rotation_profiles_r100 \
+  --devices 1000 \
+  --rounds 100
+```
+
+That runner evaluates `static`, `performance`, `balanced`, and `eco`, writes one
+subfolder per profile, and creates `energy_rotation_summary.csv`,
+`energy_rotation_summary.md`, `energy_rotation_optimized_d2d_error_norm.*`, and
+`energy_rotation_tradeoff.*`.  Its ranking prioritizes profiles that keep final
+optimized-D2D error and energy close to the static baseline while preserving
+more CH battery.
 
 When optimized ALOHA with D2D underuses the channel after fast convergence,
 enable the guarded optimized-D2D access floor:
@@ -439,6 +555,9 @@ skip cleanly when JAX is not installed in the local interpreter.
   protocol. It does not model every message exchange explicitly.
 - D2D member-to-CH collisions, packet loss, delay, and energy cost are optional
   abstractions, not a full link-layer simulator.
+- Dynamic battery drain is optional and coarse-grained. It models normalized
+  per-attempt energy costs, not a calibrated radio power model, recharge model,
+  thermal effect, or time-varying battery voltage.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation
   candidate, not the default implementation.

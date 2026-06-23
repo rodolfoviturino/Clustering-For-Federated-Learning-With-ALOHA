@@ -18,6 +18,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from experiments.run_gpu_sweep import (
+    D2D_ENERGY_EFFICIENCY_PROFILES,
     _unique_run_dir,
     _write_outputs,
     build_parser as build_sweep_parser,
@@ -567,6 +568,30 @@ def run_utility_pareto_sweep(args):
         ),
         "device_bs_pathloss_exponent": float(args.device_bs_pathloss_exponent),
         "device_bs_battery_exponent": float(args.device_bs_battery_exponent),
+        "energy_drain_mode": args.energy_drain_mode,
+        "energy_direct_bs_cost": float(args.energy_direct_bs_cost),
+        "energy_d2d_member_cost": float(args.energy_d2d_member_cost),
+        "energy_ch_bs_cost": float(args.energy_ch_bs_cost),
+        "d2d_ch_rotation_mode": args.d2d_ch_rotation_mode,
+        "d2d_ch_rotation_interval": int(args.d2d_ch_rotation_interval),
+        "d2d_energy_efficiency_level": args.d2d_energy_efficiency_level,
+        "d2d_energy_efficiency_profile_weights": {
+            "channel": float(
+                D2D_ENERGY_EFFICIENCY_PROFILES[
+                    args.d2d_energy_efficiency_level
+                ][0]
+            ),
+            "battery": float(
+                D2D_ENERGY_EFFICIENCY_PROFILES[
+                    args.d2d_energy_efficiency_level
+                ][1]
+            ),
+            "stability": float(
+                D2D_ENERGY_EFFICIENCY_PROFILES[
+                    args.d2d_energy_efficiency_level
+                ][2]
+            ),
+        },
         "optimized_d2d_load_allocation_mode": args.optimized_d2d_load_allocation_mode,
         "optimized_d2d_redistribution_fraction": float(
             args.optimized_d2d_redistribution_fraction

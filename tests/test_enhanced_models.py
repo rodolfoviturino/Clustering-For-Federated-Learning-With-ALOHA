@@ -93,6 +93,13 @@ class GpuSweepTests(unittest.TestCase):
                 device_bs_min_success_probability=0.4,
                 device_bs_pathloss_exponent=2.2,
                 device_bs_battery_exponent=0.10,
+                energy_drain_mode="dynamic",
+                energy_direct_bs_cost=0.01,
+                energy_d2d_member_cost=0.005,
+                energy_ch_bs_cost=0.02,
+                d2d_ch_rotation_mode="energy_aware",
+                d2d_ch_rotation_interval=2,
+                d2d_energy_efficiency_level="eco",
                 optimized_d2d_load_allocation_mode="proportional_clip",
                 optimized_d2d_redistribution_fraction=0.0,
                 optimized_d2d_redistribution_trigger_ratio=0.90,
@@ -117,6 +124,17 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["device_bs_min_success_probability"], 0.4)
         self.assertEqual(metadata["device_bs_pathloss_exponent"], 2.2)
         self.assertEqual(metadata["device_bs_battery_exponent"], 0.10)
+        self.assertEqual(metadata["energy_drain_mode"], "dynamic")
+        self.assertEqual(metadata["energy_direct_bs_cost"], 0.01)
+        self.assertEqual(metadata["energy_d2d_member_cost"], 0.005)
+        self.assertEqual(metadata["energy_ch_bs_cost"], 0.02)
+        self.assertEqual(metadata["d2d_ch_rotation_mode"], "energy_aware")
+        self.assertEqual(metadata["d2d_ch_rotation_interval"], 2)
+        self.assertEqual(metadata["d2d_energy_efficiency_level"], "eco")
+        self.assertEqual(
+            metadata["d2d_energy_efficiency_profile_weights"],
+            {"channel": 0.45, "battery": 0.45, "stability": 0.10},
+        )
         self.assertEqual(
             metadata["optimized_d2d_load_allocation_mode"],
             "proportional_clip",
@@ -126,6 +144,9 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["optimized_d2d_density_trigger_threshold"], 0.93)
         self.assertEqual(metadata["optimized_d2d_dense_trigger_ratio"], 0.85)
         self.assertEqual(metadata["optimized_d2d_throughput_ewma_decay"], 0.80)
+        self.assertIn("optimized_aloha_d2d_energy_used_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_energy_efficiency_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_clusterhead_energy_used_mean", rows[0])
 
     def test_gpu_sweep_records_adaptive_diversity_parameters(self):
         rows, metadata = run_gpu_sweep(

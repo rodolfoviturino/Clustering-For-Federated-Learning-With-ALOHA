@@ -649,6 +649,8 @@ updates, hybrid novelty, and adaptive-diversity state.
 | Density-aware conditional | utility | clusterized fraction from control plane, ACK EWMA | moderate | bad density estimates can choose wrong mode |
 | Quality CH election | local D2D degree, BS channel estimate, battery, one-hop coverage | optional score weights | low to moderate | limited gain unless CH-BS channel quality affects success/cost |
 | Channel-aware CH-BS success | elected CH channel quality and battery | optional pathloss/min-success parameters | low to moderate | makes enhanced runs less thesis-comparable |
+| Dynamic energy drain | local battery estimate, attempted direct/D2D/CH transmissions | energy-cost coefficients, optional battery classes | moderate | useful for energy/fairness ablations, but not calibrated yet |
+| Energy-aware CH rotation | current battery, BS channel estimate, current CH identity, one-hop coverage | rotation interval and profile weights | moderate | rotation overhead may outweigh error/energy gains |
 | Max-weight | utility | scalar threshold | low to moderate | threshold tuning can be unstable |
 | Hybrid | aggregate direction | recent reference direction | higher | reference vector overhead |
 | Adaptive diversity | norm, size, freshness, direction | reference direction, phase scalar | higher | phase schedule may not fit the task |
@@ -692,8 +694,8 @@ the observed clusterization regime.
   `K=10000`.
 - Test quality CH election with `--d2d-ch-bs-success-mode channel_quality` to
   measure whether better elected CHs improve the decoded D2D aggregate stream.
-- Test a separate energy-cost model where repeated weak-channel CH duty drains
-  battery faster.
+- Calibrate the dynamic energy-cost coefficients and compare `performance`,
+  `balanced`, and `eco` periodic CH re-election against its control overhead.
 - Compare control overhead of scalar-only utility policies against
   reference-vector policies such as hybrid/adaptive diversity.
 - Separate "better final numerical floor" from "better convergence before

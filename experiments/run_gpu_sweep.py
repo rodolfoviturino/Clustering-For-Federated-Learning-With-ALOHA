@@ -21,7 +21,10 @@ from types import SimpleNamespace
 import numpy as np
 
 from Clustering.jax_clustering_algorithm import clusterizer_jax, devices_generator_jax
-from Models.jax_models_arrangement import error_calculator_trace_jax
+from Models.jax_models_arrangement import (
+    D2D_ENERGY_EFFICIENCY_PROFILES,
+    error_calculator_trace_jax,
+)
 
 try:  # pragma: no cover - optional backend.
     import jax
@@ -187,6 +190,15 @@ def run_gpu_sweep(args):
             device_bs_min_success_probability=args.device_bs_min_success_probability,
             device_bs_pathloss_exponent=args.device_bs_pathloss_exponent,
             device_bs_battery_exponent=args.device_bs_battery_exponent,
+            energy_drain_mode=args.energy_drain_mode,
+            energy_direct_bs_cost=args.energy_direct_bs_cost,
+            energy_d2d_member_cost=args.energy_d2d_member_cost,
+            energy_ch_bs_cost=args.energy_ch_bs_cost,
+            d2d_ch_rotation_mode=args.d2d_ch_rotation_mode,
+            d2d_ch_rotation_interval=args.d2d_ch_rotation_interval,
+            d2d_energy_efficiency_level=args.d2d_energy_efficiency_level,
+            device_coords=devices.coords,
+            device_radius=args.device_radius,
             device_distance_to_bs=devices.distance_to_bs,
             device_battery=devices.battery,
             optimized_access_floor_fraction=args.optimized_access_floor_fraction,
@@ -227,6 +239,11 @@ def run_gpu_sweep(args):
             trace.error_norms,
             trace.successful_uploads,
             trace.successful_clusterhead_uploads,
+            trace.mean_battery,
+            trace.mean_clusterhead_battery,
+            trace.mean_energy_used,
+            trace.energy_efficiency,
+            trace.mean_clusterhead_energy_used,
             trace.clusterized_devices_rate,
             cluster_quality,
         )
@@ -238,6 +255,11 @@ def run_gpu_sweep(args):
         error_norms,
         uploads,
         clusterhead_uploads,
+        mean_battery,
+        mean_clusterhead_battery,
+        mean_energy_used,
+        energy_efficiency,
+        mean_clusterhead_energy_used,
         cluster_rates,
         cluster_quality,
     ) = batched_runner(seeds)
@@ -247,6 +269,11 @@ def run_gpu_sweep(args):
     error_norms = np.asarray(error_norms)
     uploads = np.asarray(uploads)
     clusterhead_uploads = np.asarray(clusterhead_uploads)
+    mean_battery = np.asarray(mean_battery)
+    mean_clusterhead_battery = np.asarray(mean_clusterhead_battery)
+    mean_energy_used = np.asarray(mean_energy_used)
+    energy_efficiency = np.asarray(energy_efficiency)
+    mean_clusterhead_energy_used = np.asarray(mean_clusterhead_energy_used)
     cluster_rates = np.asarray(cluster_rates)
     cluster_quality = np.asarray(cluster_quality)
 
@@ -281,12 +308,42 @@ def run_gpu_sweep(args):
             row[f"{scenario_name}_uploads_mean"] = mean
             row[f"{scenario_name}_uploads_ci95"] = ci95
 
+            mean, ci95 = _confidence_interval_95(
+                mean_battery[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_battery_mean"] = mean
+            row[f"{scenario_name}_battery_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                mean_energy_used[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_energy_used_mean"] = mean
+            row[f"{scenario_name}_energy_used_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                energy_efficiency[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_energy_efficiency_mean"] = mean
+            row[f"{scenario_name}_energy_efficiency_ci95"] = ci95
+
         for d2d_index, scenario_name in enumerate(SCENARIOS[3:]):
             mean, ci95 = _confidence_interval_95(
                 clusterhead_uploads[:, checkpoint_index, d2d_index]
             )
             row[f"{scenario_name}_clusterhead_uploads_mean"] = mean
             row[f"{scenario_name}_clusterhead_uploads_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                mean_clusterhead_battery[:, checkpoint_index, d2d_index]
+            )
+            row[f"{scenario_name}_clusterhead_battery_mean"] = mean
+            row[f"{scenario_name}_clusterhead_battery_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                mean_clusterhead_energy_used[:, checkpoint_index, d2d_index]
+            )
+            row[f"{scenario_name}_clusterhead_energy_used_mean"] = mean
+            row[f"{scenario_name}_clusterhead_energy_used_ci95"] = ci95
 
         rows.append(row)
 
@@ -331,6 +388,30 @@ def run_gpu_sweep(args):
         ),
         "device_bs_pathloss_exponent": float(args.device_bs_pathloss_exponent),
         "device_bs_battery_exponent": float(args.device_bs_battery_exponent),
+        "energy_drain_mode": args.energy_drain_mode,
+        "energy_direct_bs_cost": float(args.energy_direct_bs_cost),
+        "energy_d2d_member_cost": float(args.energy_d2d_member_cost),
+        "energy_ch_bs_cost": float(args.energy_ch_bs_cost),
+        "d2d_ch_rotation_mode": args.d2d_ch_rotation_mode,
+        "d2d_ch_rotation_interval": int(args.d2d_ch_rotation_interval),
+        "d2d_energy_efficiency_level": args.d2d_energy_efficiency_level,
+        "d2d_energy_efficiency_profile_weights": {
+            "channel": float(
+                D2D_ENERGY_EFFICIENCY_PROFILES[
+                    args.d2d_energy_efficiency_level
+                ][0]
+            ),
+            "battery": float(
+                D2D_ENERGY_EFFICIENCY_PROFILES[
+                    args.d2d_energy_efficiency_level
+                ][1]
+            ),
+            "stability": float(
+                D2D_ENERGY_EFFICIENCY_PROFILES[
+                    args.d2d_energy_efficiency_level
+                ][2]
+            ),
+        },
         "optimized_access_floor_fraction": float(args.optimized_access_floor_fraction),
         "optimized_d2d_access_floor_fraction": float(
             args.optimized_d2d_access_floor_fraction
@@ -632,6 +713,75 @@ def build_parser():
         help=(
             "Optional battery exponent for direct device-to-BS decoding. "
             "The default 0 uses channel quality only."
+        ),
+    )
+    parser.add_argument(
+        "--energy-drain-mode",
+        choices=("none", "dynamic"),
+        default="none",
+        help=(
+            "Battery evolution model. none keeps battery fixed; dynamic drains "
+            "per-scenario battery after transmission attempts and lets "
+            "battery-aware channel-quality modes see the updated energy."
+        ),
+    )
+    parser.add_argument(
+        "--energy-direct-bs-cost",
+        type=float,
+        default=0.0,
+        help=(
+            "Normalized battery cost for one direct device-to-BS transmission "
+            "attempt in polling/fixed/optimized non-D2D modes."
+        ),
+    )
+    parser.add_argument(
+        "--energy-d2d-member-cost",
+        type=float,
+        default=0.0,
+        help=(
+            "Normalized battery cost for one active non-CH member sending its "
+            "local update to the CH when that cluster attempts a D2D aggregate."
+        ),
+    )
+    parser.add_argument(
+        "--energy-ch-bs-cost",
+        type=float,
+        default=0.0,
+        help=(
+            "Normalized battery cost for one CH-to-BS aggregate transmission "
+            "attempt. The cost is paid even when the attempt collides or fails "
+            "physical decoding."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-rotation-mode",
+        choices=("static", "energy_aware"),
+        default="static",
+        help=(
+            "D2D cluster-head policy during the FL simulation. static keeps the "
+            "post-clustering CH fixed; energy_aware periodically re-elects a "
+            "valid one-hop CH inside each cluster using BS channel quality, "
+            "current battery, and a stability bonus. energy_aware requires "
+            "--energy-drain-mode dynamic."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-rotation-interval",
+        type=int,
+        default=10,
+        help=(
+            "Number of FL iterations between energy-aware D2D CH re-elections. "
+            "Ignored when --d2d-ch-rotation-mode static."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-energy-efficiency-level",
+        choices=("performance", "balanced", "eco"),
+        default="balanced",
+        help=(
+            "Energy-aware CH re-election profile. performance prioritizes BS "
+            "channel quality; balanced mixes channel and current battery; eco "
+            "gives battery almost the same weight as channel."
         ),
     )
     parser.add_argument(

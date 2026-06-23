@@ -27,7 +27,7 @@ This document records the simulation defaults after the code cleanup.
   still directly cover the whole cluster. The score uses local D2D degree,
   normalized BS channel quality, and battery. In the collision-only default it
   is mostly a structural CH-selection ablation; its physical effect becomes
-  measurable when channel-aware CH-to-BS decoding or future energy drain is
+  measurable when channel-aware CH-to-BS decoding or dynamic energy drain is
   enabled.
 - Enhanced runs can enable channel-aware CH-to-BS decoding with
   `--d2d-ch-bs-success-mode channel_quality`. A CH still contends through
@@ -42,6 +42,18 @@ This document records the simulation defaults after the code cleanup.
   the packet decoded according to the device's normalized inverse pathloss and
   optional battery factor. Use both device-BS and D2D CH-BS channel modes when
   the goal is a physically fair D2D vs non-D2D comparison.
+- Enhanced runs can enable dynamic battery drain with
+  `--energy-drain-mode dynamic`. The model keeps one normalized battery vector
+  per curve, charges energy on attempted direct BS, D2D member, and CH-to-BS
+  transmissions, and lets later battery-aware decoding probabilities see the
+  updated battery. The default `none` preserves static battery behavior.
+- Enhanced runs can enable intra-run D2D CH rotation with
+  `--d2d-ch-rotation-mode energy_aware`. This requires
+  `--energy-drain-mode dynamic`, keeps cluster membership fixed, and periodically
+  re-elects a CH per D2D curve from valid members that still cover the full
+  cluster in one hop. The score combines normalized BS channel quality, current
+  battery, and a stability bonus for keeping the current CH. The default
+  `static` preserves thesis-compatible fixed CH identity.
 - First-tier HFL aggregation at the CH is a sum of member updates.
 - The thesis figure code applies the BS update as an unscaled SGD step:
   `w <- w - u1 * gradient`.
@@ -182,10 +194,13 @@ member-to-CH availability.
   and physical: dense D2D coverage already creates many eligible CHs, so extra
   probability redistribution can increase collision pressure without adding
   proportional information gain.
-- Energy-aware CH selection is not implemented in this cleanup.
+- Dynamic energy drain is an enhanced ablation, not a calibrated power model.
+  It uses normalized per-attempt costs and does not model recharge, voltage,
+  thermal effects, detailed transmit power control, or intra-run CH re-election.
 - Channel-aware CH-to-BS success is implemented as a decoding-probability
-  ablation, not a full energy-drain model. It changes whether a collision-free
-  D2D aggregate reaches the BS; it does not yet reduce battery over time.
+  ablation. When dynamic energy is also enabled, repeated CH duty can reduce
+  later battery-aware decoding probability; when dynamic energy is disabled,
+  battery remains the generated static suitability/decoding signal.
 - Channel-aware direct device-to-BS success is implemented with the same
   probability model as CH-to-BS decoding, but it is still not a full physical
   layer. The current abstraction uses distance/pathloss and optional battery,

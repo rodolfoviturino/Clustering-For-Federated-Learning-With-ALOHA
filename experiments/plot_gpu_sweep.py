@@ -75,9 +75,13 @@ def _save_figure(fig, output_stem, formats):
 def _plot_metric(frame, metric_name, scenarios, ylabel, title, output_stem, formats):
     """Plot one metric over t with optional 95 percent confidence bands."""
     x_values = frame["t"].to_numpy(dtype=float)
+    available_scenarios = _available_scenarios(frame, metric_name, scenarios)
+    if not available_scenarios:
+        return []
+
     fig, axis = plt.subplots(figsize=(9.0, 5.0))
 
-    for scenario in _available_scenarios(frame, metric_name, scenarios):
+    for scenario in available_scenarios:
         mean_column = f"{scenario}_{metric_name}_mean"
         ci_column = f"{scenario}_{metric_name}_ci95"
         y_values = frame[mean_column].to_numpy(dtype=float)
@@ -291,6 +295,63 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
             ylabel="Successful CH uploads",
             title="Cluster-head uploads over FL iterations",
             output_stem=base_stem.with_name(f"{base_stem.name}_clusterhead_uploads"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="battery",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Mean battery level",
+            title="Mean battery over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_battery"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="clusterhead_battery",
+            scenarios=D2D_SCENARIOS,
+            ylabel="Mean CH battery level",
+            title="Cluster-head battery over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_clusterhead_battery"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="energy_used",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Mean normalized energy used",
+            title="Mean energy used over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_energy_used"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="energy_efficiency",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Uploads per normalized battery unit",
+            title="Energy efficiency over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_energy_efficiency"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="clusterhead_energy_used",
+            scenarios=D2D_SCENARIOS,
+            ylabel="Mean CH normalized energy used",
+            title="Cluster-head energy used over FL iterations",
+            output_stem=base_stem.with_name(
+                f"{base_stem.name}_clusterhead_energy_used"
+            ),
             formats=formats,
         )
     )

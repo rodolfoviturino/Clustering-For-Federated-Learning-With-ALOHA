@@ -20,11 +20,17 @@ outputs.
   and creates figures.
 - Records both outcome metrics and cluster-quality metrics, including CH row
   count, singleton count, and average D2D cluster size.
+- Records optional dynamic-energy metrics, including per-scenario mean battery,
+  D2D cluster-head mean battery, energy used, energy efficiency, and D2D
+  cluster-head energy used.
 - Creates `Runs/<timestamp>/` by default after the simulation succeeds.
 
 `experiments/plot_gpu_sweep.py`
 
 - Regenerates figures from an existing sweep CSV.
+- Generates battery, D2D cluster-head battery, energy-used, energy-efficiency,
+  and D2D cluster-head energy-used plots only when the CSV has those optional
+  dynamic-energy columns.
 - Does not rerun the simulation.
 
 `experiments/run_utility_pareto_sweep.py`
@@ -54,6 +60,17 @@ outputs.
   upload ratio.
 - Use `--summarize-existing-run-dir Runs/<name>` to regenerate those summaries
   and error-norm plots from an already completed sweep without rerunning JAX.
+
+`experiments/run_energy_rotation_sweep.py`
+
+- Runs the fixed static/performance/balanced/eco D2D CH-rotation comparison.
+- Uses the current channel-aware utility optimized-D2D defaults and dynamic
+  energy drain, then writes one subfolder per rotation profile.
+- Writes `energy_rotation_summary.csv`, `energy_rotation_summary.md`, an
+  optimized-D2D error overlay, and an error-vs-CH-battery tradeoff plot.
+- Ranks profiles conservatively: keep final optimized-D2D error and total
+  optimized-D2D energy within tolerance versus static, then maximize final CH
+  battery.
 
 `experiments/merge_utility_pareto_summaries.py`
 
@@ -100,6 +117,13 @@ outputs.
   curves and optional channel-aware CH-to-BS decoding for D2D curves. Devices
   and CHs still contend through ALOHA first; collision-free packets may then
   fail based on transmitter BS channel quality and battery.
+- Supports optional dynamic battery drain with independent battery state for
+  each of the six counterfactual curves. Direct device attempts, D2D member
+  transmissions, and CH aggregate attempts can pay separate normalized energy
+  costs.
+- Supports optional energy-aware intra-run CH rotation for the three D2D curves.
+  The selected CH must be an existing cluster member and preserve one-hop
+  coverage of the fixed cluster membership.
 - Contains thesis-compatible optimized D2D plus enhanced `utility`,
   `max_weight`, `hybrid`, and `adaptive_diversity` CH access policies.
 - Load-controlled enhanced policies share the same allocator family:

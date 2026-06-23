@@ -75,9 +75,18 @@ channel_quality_i = raw_channel_i / max(raw_channel)
 This is intentionally simple.  It captures pathloss but does not model fast
 fading, shadowing, SINR, coding rate, or time-varying channel state.
 
-`battery` is currently static during a run.  It affects CH scoring and can
-affect CH-to-BS decoding probability through a battery exponent, but the
-simulator does not yet drain energy over time.
+`battery` is static by default, which preserves comparability with the original
+thesis-style curves. Enhanced runs can enable:
+
+```text
+--energy-drain-mode dynamic
+```
+
+With dynamic drain enabled, the simulator stores one battery vector for each of
+the six curves. Direct device-to-BS attempts, D2D member transmissions, and
+CH-to-BS aggregate attempts consume configurable normalized energy. Battery can
+then affect later decoding probability through the existing battery exponents.
+This is still a coarse energy abstraction, not a calibrated radio power model.
 
 ## D2D Clustering
 
@@ -176,8 +185,10 @@ Current tested weights:
 - Battery percentage divided by 100.
 - It discourages low-battery devices from becoming CHs when weights give it
   influence.
-- The current simulator does not yet model battery drain, so this is a static
-  CH suitability signal rather than a full energy model.
+- CH election in this section is the initial post-clustering choice.  Dynamic
+  intra-run CH re-election is a separate optional policy documented below.  The
+  separation is intentional: a run can test communication-quality CH selection
+  without also changing the CH over time.
 
 ### Why Quality CH Election Needed Channel-Aware CH-BS Success
 
@@ -302,6 +313,145 @@ Current limitation:
 - The channel-aware success model is still a distance/pathloss proxy.
 - It does not include explicit SINR, fading, shadowing, coding rate, or
   inter-cell interference.
+
+## Dynamic Energy Drain
+
+Dynamic drain is an optional enhanced ablation, not a thesis-compatible default.
+It is enabled only with:
+
+```text
+--energy-drain-mode dynamic
+```
+
+The model tracks normalized battery in `[0, 1]` independently for each curve:
+
+```text
+0 polling
+1 fixed ALOHA
+2 optimized ALOHA
+3 polling with D2D
+4 fixed ALOHA with D2D
+5 optimized ALOHA with D2D
+```
+
+This separation matters. The six curves are counterfactual policies evaluated
+on the same generated deployment; one policy should not drain the battery state
+of another policy.
+
+Energy costs are charged on attempts:
+
+```text
+direct device-to-BS attempt -> energy_direct_bs_cost
+active non-CH member sends local update to CH -> energy_d2d_member_cost
+CH sends aggregate to BS -> energy_ch_bs_cost
+```
+
+An attempt pays energy even when it later collides or fails decoding. That is
+the realistic ordering: the radio consumes energy before the transmitter learns
+whether the packet was useful. The runner records:
+
+```text
+<scenario>_battery_mean
+<scenario>_battery_ci95
+<d2d_scenario>_clusterhead_battery_mean
+<d2d_scenario>_clusterhead_battery_ci95
+<scenario>_energy_used_mean
+<scenario>_energy_used_ci95
+<scenario>_energy_efficiency_mean
+<scenario>_energy_efficiency_ci95
+<d2d_scenario>_clusterhead_energy_used_mean
+<d2d_scenario>_clusterhead_energy_used_ci95
+```
+
+`energy_efficiency` is cumulative successful uploads divided by normalized
+battery consumed by that scenario.  It is not a physical bit-per-joule metric;
+it is a simulation-level measure for comparing policies under the same energy
+cost coefficients.
+
+The plotter writes `results_battery.*`, `results_clusterhead_battery.*`,
+`results_energy_used.*`, `results_energy_efficiency.*`, and
+`results_clusterhead_energy_used.*` when those columns exist.
+
+### Real Deployment Interpretation
+
+A practical implementation would not need centralized per-device scheduling for
+this layer. Each device can maintain its own battery estimate locally. The BS
+can broadcast energy-cost coefficients or policy parameters, and CHs can report
+coarse battery classes during cluster formation or periodic control windows.
+ACKs from successful CH uploads are already needed by the throughput-aware load
+controller; energy drain itself is local bookkeeping.
+
+## Dynamic D2D CH Rotation
+
+Dynamic CH rotation is optional and off by default:
+
+```text
+--d2d-ch-rotation-mode static
+```
+
+The enhanced mode is:
+
+```text
+--d2d-ch-rotation-mode energy_aware
+```
+
+It requires:
+
+```text
+--energy-drain-mode dynamic
+```
+
+The reason is practical: if battery is not evolving, an energy-aware rotation
+policy has no current-energy state to react to.  When enabled, the simulator
+keeps one CH vector per D2D curve:
+
+```text
+polling with D2D CHs
+fixed ALOHA with D2D CHs
+optimized ALOHA with D2D CHs
+```
+
+Every `--d2d-ch-rotation-interval` FL iterations, each D2D curve re-elects a CH
+inside each existing cluster.  Membership does not change.  The candidate must:
+
+```text
+be a member of the cluster
+and cover every cluster member within R_D2D
+and keep the cluster size unchanged
+```
+
+The score is:
+
+```text
+score_i =
+  channel_weight * normalized_bs_channel_quality_i
+  + battery_weight * current_battery_i
+  + stability_weight * is_current_ch_i
+```
+
+Profiles:
+
+```text
+performance -> channel 0.85, battery 0.10, stability 0.05
+balanced    -> channel 0.65, battery 0.25, stability 0.10
+eco         -> channel 0.45, battery 0.45, stability 0.10
+```
+
+The stability term avoids unnecessary CH flips when two candidates are nearly
+equivalent.  The selected CH is always locally active in its cluster.  Other
+members still depend on `--d2d-member-compute-probability` and
+`--d2d-member-link-success-probability`.  CH-to-BS probability, ALOHA draw,
+aggregate upload, and CH energy drain all use the current elected CH, not the
+original column-0 CH.
+
+### Real Deployment Interpretation
+
+This remains a distributed/plausible policy.  The cluster can run a local
+control mini-round every rotation interval.  Members advertise coarse battery
+and BS-channel class, or the current CH polls them.  A candidate only needs
+neighbor measurements or received control packets to prove one-hop coverage of
+the current member set.  The BS can broadcast the profile weights and interval;
+it does not centrally schedule a specific CH for every ALOHA slot.
 
 ## FL Update And Aggregation Model
 
@@ -664,7 +814,10 @@ Important comparison warning:
 The current architecture is useful for research iteration, but these limits
 should be stated clearly:
 
-- Battery is static; there is no energy drain model yet.
+- Battery is static by default. Dynamic energy drain and energy-aware intra-run
+  CH rotation are implemented as optional coarse ablations, but there is no
+  calibrated radio power model, recharge model, sleep-state model, or control
+  overhead cost yet.
 - CH-to-BS and direct device-to-BS channel quality use distance/pathloss only.
 - Member-to-CH D2D link success is a global probability, not a per-link channel
   model.
@@ -680,14 +833,16 @@ should be stated clearly:
 
 The most productive next implementation steps are:
 
-1. Add battery drain for CH duty, D2D member transmission, and direct BS
-   transmission.
-2. Make member-to-CH D2D link success depend on D2D distance or D2D channel
+1. Calibrate the dynamic energy costs and CH-rotation interval against a simple
+   radio-power/control-overhead model or sensitivity sweep.
+2. Compare `performance`, `balanced`, and `eco` CH-rotation profiles on
+   `error_norm`, `energy_efficiency`, and `clusterhead_energy_used`, not only
+   on final error.  Use `experiments.run_energy_rotation_sweep` for this paired
+   comparison instead of manually running four separate commands.
+3. Make member-to-CH D2D link success depend on D2D distance or D2D channel
    quality.
-3. Add noisy or delayed cluster-summary reporting to test whether the
+4. Add noisy or delayed cluster-summary reporting to test whether the
    density-aware allocator remains robust.
-4. Add a stronger CH rotation policy that balances BS channel gain against
-   long-term CH duty/fairness.
 
 For confirming the current channel-heavy CH election choice, use the focused
 runner instead of manually comparing long one-off commands:

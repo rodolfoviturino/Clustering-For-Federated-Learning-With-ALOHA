@@ -122,6 +122,9 @@ class GpuSweepTests(unittest.TestCase):
                 optimized_d2d_density_trigger_threshold=0.93,
                 optimized_d2d_dense_trigger_ratio=0.85,
                 optimized_d2d_throughput_ewma_decay=0.80,
+                optimized_d2d_aoi_weight=0.75,
+                optimized_d2d_aoi_exponent=1.5,
+                optimized_d2d_aoi_threshold_fraction=0.70,
             )
         )
 
@@ -176,11 +179,20 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["optimized_d2d_density_trigger_threshold"], 0.93)
         self.assertEqual(metadata["optimized_d2d_dense_trigger_ratio"], 0.85)
         self.assertEqual(metadata["optimized_d2d_throughput_ewma_decay"], 0.80)
+        self.assertEqual(metadata["optimized_d2d_aoi_weight"], 0.75)
+        self.assertEqual(metadata["optimized_d2d_aoi_exponent"], 1.5)
+        self.assertEqual(metadata["optimized_d2d_aoi_threshold_fraction"], 0.70)
         self.assertIn("optimized_aloha_d2d_energy_used_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_energy_efficiency_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_clusterhead_energy_used_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_aoi_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_peak_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_p75_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_p90_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_p95_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_stale_fraction_50_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_stale_fraction_75_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_stale_fraction_100_mean", rows[0])
 
     def test_gpu_sweep_records_adaptive_diversity_parameters(self):
         rows, metadata = run_gpu_sweep(

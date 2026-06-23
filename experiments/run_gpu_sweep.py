@@ -250,6 +250,11 @@ def run_gpu_sweep(args):
                 args.optimized_d2d_adaptive_switch_fraction
             ),
             optimized_d2d_adaptive_switch_gain=args.optimized_d2d_adaptive_switch_gain,
+            optimized_d2d_aoi_weight=args.optimized_d2d_aoi_weight,
+            optimized_d2d_aoi_exponent=args.optimized_d2d_aoi_exponent,
+            optimized_d2d_aoi_threshold_fraction=(
+                args.optimized_d2d_aoi_threshold_fraction
+            ),
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -264,6 +269,12 @@ def run_gpu_sweep(args):
             trace.mean_clusterhead_energy_used,
             trace.mean_aoi,
             trace.peak_aoi,
+            trace.p75_aoi,
+            trace.p90_aoi,
+            trace.p95_aoi,
+            trace.stale_fraction_50,
+            trace.stale_fraction_75,
+            trace.stale_fraction_100,
             trace.clusterized_devices_rate,
             cluster_quality,
         )
@@ -282,6 +293,12 @@ def run_gpu_sweep(args):
         mean_clusterhead_energy_used,
         mean_aoi,
         peak_aoi,
+        p75_aoi,
+        p90_aoi,
+        p95_aoi,
+        stale_fraction_50,
+        stale_fraction_75,
+        stale_fraction_100,
         cluster_rates,
         cluster_quality,
     ) = batched_runner(seeds)
@@ -298,6 +315,12 @@ def run_gpu_sweep(args):
     mean_clusterhead_energy_used = np.asarray(mean_clusterhead_energy_used)
     mean_aoi = np.asarray(mean_aoi)
     peak_aoi = np.asarray(peak_aoi)
+    p75_aoi = np.asarray(p75_aoi)
+    p90_aoi = np.asarray(p90_aoi)
+    p95_aoi = np.asarray(p95_aoi)
+    stale_fraction_50 = np.asarray(stale_fraction_50)
+    stale_fraction_75 = np.asarray(stale_fraction_75)
+    stale_fraction_100 = np.asarray(stale_fraction_100)
     cluster_rates = np.asarray(cluster_rates)
     cluster_quality = np.asarray(cluster_quality)
 
@@ -361,6 +384,42 @@ def run_gpu_sweep(args):
             )
             row[f"{scenario_name}_peak_aoi_mean"] = mean
             row[f"{scenario_name}_peak_aoi_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                p75_aoi[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_p75_aoi_mean"] = mean
+            row[f"{scenario_name}_p75_aoi_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                p90_aoi[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_p90_aoi_mean"] = mean
+            row[f"{scenario_name}_p90_aoi_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                p95_aoi[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_p95_aoi_mean"] = mean
+            row[f"{scenario_name}_p95_aoi_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                stale_fraction_50[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_stale_fraction_50_mean"] = mean
+            row[f"{scenario_name}_stale_fraction_50_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                stale_fraction_75[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_stale_fraction_75_mean"] = mean
+            row[f"{scenario_name}_stale_fraction_75_ci95"] = ci95
+
+            mean, ci95 = _confidence_interval_95(
+                stale_fraction_100[:, checkpoint_index, scenario_index]
+            )
+            row[f"{scenario_name}_stale_fraction_100_mean"] = mean
+            row[f"{scenario_name}_stale_fraction_100_ci95"] = ci95
 
         for d2d_index, scenario_name in enumerate(SCENARIOS[3:]):
             mean, ci95 = _confidence_interval_95(
@@ -506,6 +565,11 @@ def run_gpu_sweep(args):
         ),
         "optimized_d2d_adaptive_switch_gain": float(
             args.optimized_d2d_adaptive_switch_gain
+        ),
+        "optimized_d2d_aoi_weight": float(args.optimized_d2d_aoi_weight),
+        "optimized_d2d_aoi_exponent": float(args.optimized_d2d_aoi_exponent),
+        "optimized_d2d_aoi_threshold_fraction": float(
+            args.optimized_d2d_aoi_threshold_fraction
         ),
         "clustering_strategy_note": (
             dense_strategy_note
@@ -979,14 +1043,25 @@ def build_parser():
     )
     parser.add_argument(
         "--optimized-d2d-access-mode",
-        choices=("norm", "utility", "max_weight", "hybrid", "adaptive_diversity"),
+        choices=(
+            "norm",
+            "utility",
+            "max_weight",
+            "hybrid",
+            "adaptive_diversity",
+            "aoi_aware_utility",
+            "aoi_floor_utility",
+        ),
         default="norm",
         help=(
             "norm preserves the thesis-style optimized D2D controller; utility "
             "load-controls access by aggregate norm, active cluster size, and freshness; "
             "max_weight uses a dual-threshold gate that concentrates access on high-utility CHs; "
             "hybrid keeps utility load control and adds directional novelty; "
-            "adaptive_diversity shifts from early utility to late novelty/freshness."
+            "adaptive_diversity shifts from early utility to late novelty/freshness; "
+            "aoi_aware_utility adds a bounded stale-cluster AoI bonus to utility; "
+            "aoi_floor_utility preserves base utility and only raises very stale "
+            "clusters to a conservative minimum probability."
         ),
     )
     parser.add_argument(
@@ -1048,9 +1123,9 @@ def build_parser():
         type=float,
         default=1.0,
         help=(
-            "Utility/hybrid/adaptive-diversity multiplier for the target expected "
-            "CH contender load. 1.0 targets M contenders, 0.8 targets 0.8*M, "
-            "and 1.2 targets 1.2*M."
+            "Utility/hybrid/adaptive-diversity/AoI-enhanced multiplier for the "
+            "target expected CH contender load. 1.0 targets M contenders, "
+            "0.8 targets 0.8*M, and 1.2 targets 1.2*M."
         ),
     )
     parser.add_argument(
@@ -1157,6 +1232,34 @@ def build_parser():
         help=(
             "Adaptive-diversity sigmoid gain. Larger values make the transition "
             "from early utility to late diversity sharper."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-aoi-weight",
+        type=float,
+        default=0.5,
+        help=(
+            "AoI-enhanced utility weight. For aoi_aware_utility it is a "
+            "multiplicative stale-tail bonus; for aoi_floor_utility it is the "
+            "maximum stale floor as a fraction of fixed-D2D access probability."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-aoi-exponent",
+        type=float,
+        default=1.0,
+        help=(
+            "AoI-enhanced utility exponent applied to stale-tail pressure. Larger "
+            "values focus the bonus on the oldest clusters."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-aoi-threshold-fraction",
+        type=float,
+        default=0.75,
+        help=(
+            "AoI-enhanced stale-tail threshold as a fraction of current maximum "
+            "cluster AoI. Clusters below the threshold keep base utility."
         ),
     )
     parser.add_argument(

@@ -330,6 +330,7 @@ What is implemented:
 - `max_weight`
 - `hybrid`
 - `adaptive_diversity`
+- `aoi_aware_utility`
 - `proportional_clip`
 - `water_filling`
 - `selective_water_filling`
@@ -382,9 +383,9 @@ What is implemented:
 Current limitation:
 
 - It is a useful scheduling signal, but it is not yet reported as a formal
-  Age-of-Information metric.
+  Age-of-Information metric in older pre-AoI result folders.
 
-Recommended future AoI metric:
+Current AoI metric:
 
 ```text
 AoI_h(t + 1) =
@@ -397,12 +398,25 @@ Report:
 ```text
 mean AoI
 peak AoI
+p75 AoI
+p90 AoI
+p95 AoI
+stale fraction above 50 percent of elapsed t
+stale fraction above 75 percent of elapsed t
+stale fraction above 100 rounds
 AoI distribution over clusters
 AoI versus error norm
 AoI versus energy efficiency
 ```
 
-This makes the freshness weight scientifically easier to analyze.
+The `aoi_aware_utility` policy now uses AoI as an explicit objective by adding
+a bounded stale-tail bonus to the existing utility score.  This makes the
+freshness weight scientifically easier to analyze because the run can be judged
+on error, energy, mean AoI, p75/p90/p95 AoI, stale-tail fractions, and peak AoI
+together.  The initial multiplicative AoI-aware test improved mean AoI but did
+not improve the full error/energy tradeoff, so the code also includes
+`aoi_floor_utility`, a conservative variant that preserves base utility access
+and only gives very stale clusters a bounded minimum probability.
 
 ## Current Main Limitations
 
@@ -424,9 +438,68 @@ following points should be explicitly disclosed:
   coding, or shadowing;
 - member-to-CH link success is not distance/SINR dependent;
 - utility exponents and allocator thresholds are hyperparameters;
-- AoI is now measured explicitly, but it is not yet a first-class scheduling
-  objective beyond freshness-based utility terms;
+- AoI is now measured explicitly and can drive `aoi_aware_utility` or
+  `aoi_floor_utility`, but the weight, exponent, and stale-tail threshold are
+  policy hyperparameters that need sensitivity analysis;
 - data are synthetic linear-regression data, not non-IID task data.
+
+## Current Empirical Findings
+
+The most important current results are:
+
+- Dense geometric clustering is now strong enough that `K=3000` reaches about
+  `99.319%` clustered devices in the representative enhanced runs.
+- Tuned `utility` optimized-D2D remains the best general access policy tested
+  so far. The strongest hyperparameter neighborhood uses:
+
+  ```text
+  floor = 0.02
+  norm_exp = 3.5
+  size_exp = 1.5
+  freshness_exp = 0.25
+  load_target_factor = 1.1
+  ```
+
+- Allocator behavior depends on density. Partial redistribution helps some
+  `K=1000` runs, but dense `K=3000` runs often prefer proportional clipping.
+  The density-aware conditional allocator is currently the most defensible
+  cross-density compromise.
+- Under physical CH-to-BS decoding, channel-heavy CH election is the strongest
+  tested CH election direction. In `k3000_ch_quality_fair_r200`, channel-only
+  CH election produced logsum `-1088.656`, t200 D2D error `3.981e-12`, and a
+  D2D/direct t200 log10 gain of about `6.978`.
+- Energy-aware CH rotation is useful mainly as an energy/battery tradeoff. In
+  `k3000_energy_rotation_profiles_r100`, the `performance` profile preserved
+  about `+0.108` normalized CH battery versus static and kept energy close to
+  static while slightly improving t200 error.
+- AoI-aware access policies improved mean AoI but did not improve the full
+  Pareto tradeoff. In the `K=1000` physical-energy comparison:
+
+  ```text
+  utility:
+    t_to_1e-12 = 176
+    t200 error = 2.251e-14
+    energy_efficiency = 802.729
+    mean AoI = 134.828
+
+  aoi_aware_utility:
+    t_to_1e-12 = 182
+    t200 error = 5.953e-14
+    energy_efficiency = 765.165
+    mean AoI = 130.751
+
+  aoi_floor_utility:
+    t_to_1e-12 = 193
+    t200 error = 2.784e-13
+    energy_efficiency = 741.292
+    mean AoI = 128.172
+    p75/p90/p95 AoI = 201/201/201
+  ```
+
+  This means the current AoI access policies should be kept as ablations, not
+  promoted as the main optimized-D2D strategy. The next better AoI idea is
+  likely CH-side: re-elect a better CH for stale clusters instead of only
+  increasing stale-cluster access probability.
 
 ## Recommended Future Work Order
 
@@ -514,7 +587,7 @@ Expected benefit:
   communication-performance metric;
 - D2D and non-D2D comparisons become easier to defend.
 
-### Step 4: Use AoI As A Policy Objective
+### Step 4: Tune AoI As A Policy Objective
 
 AoI is now tracked for all six scenarios:
 
@@ -523,10 +596,11 @@ non-D2D: per-device AoI
 D2D:     per-cluster AoI
 ```
 
-The next experiment should use AoI explicitly in a policy, then compare:
+The next experiment should tune the implemented AoI-aware policy, then compare:
 
 ```text
 mean AoI
+p95 AoI
 peak AoI
 error norm
 energy efficiency
@@ -536,7 +610,8 @@ CH upload ratio
 Expected benefit:
 
 - freshness becomes measurable, not only a scheduling weight;
-- enables analysis of `freshness_exp` against mean/peak AoI;
+- enables analysis of `freshness_exp` and AoI-tail parameters against
+  mean/p95/peak AoI;
 - provides another scientific objective beyond final error norm.
 
 ### Step 5: Sensitivity Analysis For Policy Hyperparameters
@@ -564,7 +639,7 @@ device upload gain
 energy used
 energy efficiency
 CH battery
-mean/peak AoI
+mean/p95/peak AoI
 ```
 
 Expected benefit:

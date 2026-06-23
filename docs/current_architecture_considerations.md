@@ -634,6 +634,23 @@ undercount devices when collisions are frequent.
 - Uses `t / max_t` rather than true error, so it is deployable.
 - Scientifically motivated, but not the current best in tested runs.
 
+`aoi_aware_utility`
+
+- Keeps the current utility/load-controller architecture.
+- Adds a bounded bonus for clusters in the stale AoI tail.
+- Uses ACK/no-ACK age, not true optimization error, so it remains deployable.
+- Intended to test whether optimized D2D can keep its error/energy advantage
+  while reducing mean and p95 AoI versus the current utility policy.
+
+`aoi_floor_utility`
+
+- Keeps the same base utility probability as `utility`.
+- Raises only stale-tail clusters to a bounded minimum probability.
+- Interprets `aoi_weight` as a fraction of fixed-D2D access probability, not as
+  a multiplicative utility boost.
+- Is intended as the lower-risk AoI strategy after the stronger multiplicative
+  AoI-aware policy reduced mean AoI but hurt error/energy in the first test.
+
 ## Control-Plane Arrangement In A Real System
 
 A plausible real deployment would separate control signaling from FL update
@@ -842,9 +859,10 @@ should be stated clearly:
 - No non-IID data or data-similarity-aware clustering is included.
 - The BS does not model full control-plane overhead explicitly. The only
   control overhead currently exposed is the optional CH-rotation control cost.
-- AoI is now tracked explicitly as a metric, but it does not yet drive
-  scheduling unless a policy uses freshness/novelty. It is information-age over
-  successful uploads, not semantic freshness of labels or data distribution.
+- AoI is now tracked explicitly as mean, peak, and p95 metrics. It drives
+  scheduling only in opt-in policies such as `aoi_aware_utility`; it remains
+  information-age over successful uploads, not semantic freshness of labels or
+  data distribution.
 
 ## Best Next Architecture Improvements
 
@@ -857,8 +875,8 @@ The most productive next implementation steps are summarized in
    member success is not only a global probability.
 3. Extend Rayleigh outage toward an SINR/PER abstraction if co-channel
    interference power, modulation, and coding need to be represented.
-4. Use AoI as a policy objective in a controlled ablation, then compare
-   mean/peak AoI against error norm and energy efficiency.
+4. Tune the AoI-aware utility ablation, then compare mean/p95/peak AoI against
+   error norm and energy efficiency.
 5. Run structured sensitivity sweeps for utility exponents, allocator
    thresholds, CH-rotation weights, energy coefficients, and Rayleigh SNR
    thresholds.

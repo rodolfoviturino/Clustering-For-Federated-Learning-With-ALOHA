@@ -30,6 +30,16 @@ The tables below use the following metrics:
   successful CH upload budget as fixed D2D.
 - `device gain`: final optimized-D2D device uploads divided by final fixed-D2D
   device uploads.
+- `log_error_auc`: trapezoidal area of `log10(error_norm)` over the saved
+  checkpoints. More negative is better. This is preferred when a full curve is
+  available because it is less fragile than a single final point.
+- `energy_efficiency`: successful uploads per normalized battery unit consumed.
+- `mean AoI`: mean Age of Information. Lower is fresher.
+- `p75/p90/p95 AoI`: AoI distribution percentiles. These are tail diagnostics;
+  if they sit at the horizon value, a large stale tail remains even if mean AoI
+  improves.
+- `stale fraction`: fraction of devices or clusters whose AoI is above a
+  threshold such as 50 percent or 75 percent of elapsed `t`.
 
 The representative runs below use `precision=float64`, `iterations=200`, and
 the current dense geometric clustering strategy unless stated otherwise.
@@ -61,6 +71,53 @@ Observed conclusions:
   change. Fixed D2D uses its own fixed access probability and does not read the
   optimized-D2D utility, allocator, trigger, novelty, or density-aware
   parameters.
+
+## Physical Energy, Channel, And AoI Findings
+
+The physical-energy path is opt-in. It uses normalized first-order radio costs,
+battery feasibility, Rayleigh outage for collision-free decoding, and explicit
+AoI metrics. The following `K=1000`, `rounds=100`, `float64` runs compare the
+current physical utility baseline against the two AoI-enhanced policies:
+
+| Run | Mode | log_error_auc | t_to_1e-12 | t200 error | uploads | CH uploads | energy used | energy eff. | mean AoI | p75/p90/p95 AoI | stale75 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| `k1000_physical_energy_r100` | utility | -1348.359 | 176 | 2.251e-14 | 2806.96 | 533.74 | 0.003504 | 802.729 | 134.828 | not recorded | not recorded |
+| `k1000_physical_energy_aoi_aware_r100` | aoi_aware_utility | -1299.338 | 182 | 5.953e-14 | 2732.34 | 531.10 | 0.003578 | 765.165 | 130.751 | p95 = 201 | not recorded |
+| `k1000_physical_energy_aoi_floor_r100` | aoi_floor_utility | -1209.083 | 193 | 2.784e-13 | 2671.16 | 542.22 | 0.003614 | 741.292 | 128.172 | 201 / 201 / 201 | 0.512 |
+
+Observed conclusions:
+
+- `aoi_aware_utility` and `aoi_floor_utility` both reduced mean AoI, but both
+  worsened error AUC, target time, energy used, and energy efficiency.
+- `aoi_floor_utility` reduced mean AoI the most, but it was the worst of the
+  three on convergence and energy efficiency.
+- The new p75/p90/p95 AoI metrics revealed a stronger issue than the mean AoI
+  alone: the stale tail remained severe. In `aoi_floor_utility`, p75, p90, and
+  p95 AoI all reached the horizon value `201`.
+- This suggests that the stale clusters are not only under-scheduled. Many are
+  likely stale because their CH-to-BS channel, energy state, or aggregate value
+  is poor. Giving them extra access probability can consume energy and
+  contention without improving the model enough.
+- Therefore, AoI-aware access should remain an ablation. The next more
+  promising AoI strategy is CH-side: when a cluster becomes stale, re-elect a
+  better CH for BS delivery rather than only increasing that cluster's access
+  probability.
+
+The latest `K=3000` CH-quality and energy-rotation runs also clarified the
+physical enhanced direction:
+
+| Run family | Best candidate | Key result | Interpretation |
+| --- | --- | --- | --- |
+| `k3000_ch_quality_fair_r200` | channel-only CH election `0.00/1.00/0.00` | logsum `-1088.656`, t200 D2D error `3.981e-12`, D2D/direct t200 log10 gain `6.978`, D2D/direct upload ratio `10.106` | When CH-to-BS decoding is physical, choosing the CH by BS channel is more useful than adding a small battery term. |
+| `k3000_energy_rotation_profiles_r100` | `energy_performance` | t200 error `3.850e-12`, error/static `0.9168`, energy/static `1.0080`, CH battery gain `0.1080` | Channel-first dynamic CH rotation preserved much more CH battery and slightly improved error while keeping energy near static. |
+
+These findings make the current enhanced direction:
+
+```text
+physical channel + channel-heavy CH election + performance CH rotation
+```
+
+more promising than further tuning the optimized-D2D allocator alone.
 
 ## Clustering Strategies
 
@@ -543,6 +600,82 @@ Observed status:
 - It remains useful as an ablation showing that novelty/freshness scheduling is
   not automatically beneficial in this specific simulation.
 
+### AoI-Aware Utility
+
+The multiplicative AoI-aware policy computes the same base utility as
+`utility`, then applies a bounded stale-tail bonus:
+
+```text
+base_utility_h =
+  norm_h^norm_exp *
+  active_cluster_size_h^size_exp *
+  freshness_h^freshness_exp
+
+normalized_aoi_h = AoI_h / max_j(AoI_j)
+tail_h = clip(
+  (normalized_aoi_h - threshold_fraction) / (1 - threshold_fraction),
+  0,
+  1
+)
+
+aoi_aware_utility_h =
+  base_utility_h * (1 + aoi_weight * tail_h^aoi_exp)
+```
+
+Real-world plausibility:
+
+- AoI is ACK/no-ACK age for the cluster's last successful optimized-D2D upload.
+- The CH can maintain this age locally, and the BS can broadcast scalar
+  normalizers.
+- The policy still produces local ALOHA probabilities. It is not BS-side
+  centralized scheduling.
+
+Observed status:
+
+- `k1000_physical_energy_aoi_aware_r100` reduced final mean AoI from
+  `134.828` to `130.751`.
+- It worsened `t_to_1e-12` from `176` to `182`, log-error AUC from `-1348.359`
+  to `-1299.338`, and final energy efficiency from `802.729` to `765.165`.
+- This is a valid fairness/freshness ablation, but it is not the current best
+  optimized-D2D policy.
+
+### AoI-Floor Utility
+
+The conservative AoI-floor policy first computes the base utility access
+probability, then only raises very stale clusters to a bounded minimum:
+
+```text
+base_probability_h = load_control(base_utility_h)
+
+stale_floor_h =
+  fixed_d2d_access_probability *
+  aoi_weight *
+  tail_h^aoi_exp
+
+p_h = max(base_probability_h, stale_floor_h)
+p_h = min(p_h, pcomp)
+```
+
+Real-world plausibility:
+
+- Like `aoi_aware_utility`, it needs only ACK age plus scalar normalizers.
+- `aoi_weight` is a fraction of fixed-D2D access probability, not a utility
+  multiplier.
+- It is intentionally conservative: it should not replace the utility ranking
+  except for stale-tail clusters that would otherwise receive almost no access.
+
+Observed status:
+
+- `k1000_physical_energy_aoi_floor_r100` reduced final mean AoI further to
+  `128.172`.
+- It worsened `t_to_1e-12` to `193`, log-error AUC to `-1209.083`, and final
+  energy efficiency to `741.292`.
+- New tail metrics showed that the stale tail remained severe: p75, p90, and
+  p95 AoI all reached `201` at `t=200`, with stale75 fraction about `0.512`.
+- This suggests that AoI pressure on access probability alone does not solve
+  the stale-tail problem. The stale clusters likely need better CH selection,
+  better CH rotation, or a different control mechanism.
+
 ## Plausible Real Deployment Arrangement
 
 A realistic implementation should separate control signaling from FL update
@@ -651,9 +784,14 @@ updates, hybrid novelty, and adaptive-diversity state.
 | Channel-aware CH-BS success | elected CH channel quality and battery | optional pathloss/min-success parameters | low to moderate | makes enhanced runs less thesis-comparable |
 | Dynamic energy drain | local battery estimate, attempted direct/D2D/CH transmissions | energy-cost coefficients, optional battery classes | moderate | useful for energy/fairness ablations, but not calibrated yet |
 | Energy-aware CH rotation | current battery, BS channel estimate, current CH identity, one-hop coverage | rotation interval and profile weights | moderate | rotation overhead may outweigh error/energy gains |
+| First-order radio energy | per-role distance, packet size, residual battery | energy coefficients and pathloss exponents | moderate | coefficients must be calibrated before physical claims |
+| Rayleigh outage decoding | BS distance or channel estimate | reference SNR and SNR threshold | low to moderate | still abstracts interference through ALOHA collisions only |
+| Battery feasibility | residual battery and role energy requirement | energy model parameters | low to moderate | normalized battery scale must be reported |
 | Max-weight | utility | scalar threshold | low to moderate | threshold tuning can be unstable |
 | Hybrid | aggregate direction | recent reference direction | higher | reference vector overhead |
 | Adaptive diversity | norm, size, freshness, direction | reference direction, phase scalar | higher | phase schedule may not fit the task |
+| AoI-aware utility | utility plus ACK age | AoI normalizers and load parameters | low to moderate | can trade too much error/energy for mean AoI |
+| AoI-floor utility | base utility probability plus ACK age | stale-tail threshold and floor scalar | low to moderate | mean AoI can improve while stale tail remains severe |
 
 ## Current Recommendation
 
@@ -686,6 +824,41 @@ was slightly better in the representative run. If optimizing across densities,
 the density-aware conditional allocator is more defensible because it adapts to
 the observed clusterization regime.
 
+For the current physical enhanced path, use the tuned `utility` access policy
+with first-order energy, battery feasibility, Rayleigh outage, and channel-heavy
+CH election. The best CH-quality result so far used channel-only CH selection:
+
+```text
+--energy-drain-mode dynamic
+--energy-model first_order_radio
+--battery-feasibility-mode required_energy
+--d2d-ch-bs-success-mode rayleigh_outage
+--device-bs-success-mode rayleigh_outage
+--cluster-head-selection-mode quality
+--cluster-head-channel-score-mode rayleigh_outage
+--cluster-head-degree-weight 0.0
+--cluster-head-channel-weight 1.0
+--cluster-head-battery-weight 0.0
+--optimized-d2d-access-mode utility
+```
+
+For energy-rotation experiments, the strongest `K=3000` profile so far was
+`performance`:
+
+```text
+--d2d-ch-rotation-mode energy_aware
+--d2d-energy-efficiency-level performance
+```
+
+It preserved about `+0.108` normalized CH battery versus static while keeping
+energy near static and slightly improving final optimized-D2D error in the
+representative run.
+
+Do not promote `aoi_aware_utility` or `aoi_floor_utility` as the main current
+optimized-D2D policy. They are documented ablations: both improved mean AoI,
+but both worsened error/energy, and `aoi_floor_utility` showed that p75/p90/p95
+AoI can remain saturated even when mean AoI falls.
+
 ## Open Validation Work
 
 - Test robustness when `clusterized_devices_fraction` is noisy or delayed.
@@ -700,3 +873,8 @@ the observed clusterization regime.
   reference-vector policies such as hybrid/adaptive diversity.
 - Separate "better final numerical floor" from "better convergence before
   numerical saturation" by emphasizing target times and log-error AUC.
+- Test AoI-aware CH rotation: when a cluster becomes stale, re-elect a CH with
+  stronger BS channel/energy feasibility inside the same one-hop cluster before
+  increasing access probability.
+- Calibrate AoI objectives using p75/p90/stale-fraction metrics, not only mean
+  AoI. Mean AoI can improve while the stale tail remains near the horizon.

@@ -141,13 +141,21 @@ This document records the simulation defaults after the code cleanup.
   early rounds emphasize large useful aggregates, while later rounds emphasize
   novelty and freshness. The phase uses `t / max_t`, not measured model error,
   so the policy remains plausible when the true optimum is unknown.
+- Optimized D2D can also use AoI-enhanced utility policies. The multiplicative
+  `aoi_aware_utility` policy preserves the base utility terms, then gives an
+  extra bounded bonus to clusters whose current AoI sits in the stale tail. The
+  more conservative `aoi_floor_utility` policy preserves the base utility
+  probability and only raises stale clusters to a bounded minimum probability.
+  In both cases, the CH can maintain this age from ACK/no-ACK feedback, and the
+  BS only needs to broadcast scalar normalizers.
 - AoI is tracked as an output metric for all six scenarios. Non-D2D scenarios
   track per-device AoI and reset a device to `1` after its successful upload.
   D2D scenarios track per-cluster AoI and reset a cluster to `1` after its CH
   aggregate reaches the BS. Otherwise AoI increments by one. The CSV includes
-  `<scenario>_aoi_*` and `<scenario>_peak_aoi_*` columns, and the plotter emits
-  `results_aoi.*` and `results_peak_aoi.*` when those columns exist. AoI does
-  not affect scheduling yet; it is a metric for evaluating freshness policies.
+  `<scenario>_aoi_*`, `<scenario>_peak_aoi_*`, `<scenario>_p75_aoi_*`,
+  `<scenario>_p90_aoi_*`, `<scenario>_p95_aoi_*`, and stale-fraction columns.
+  The plotter emits the corresponding figures when those columns exist. AoI
+  affects scheduling only when an explicit AoI-enhanced policy is selected.
 
 These defaults are intended to preserve the thesis figure behavior while fixing
 code bugs such as angle units, unsafe cluster merging, and fragile cluster-array
@@ -234,6 +242,47 @@ member-to-CH availability.
   the recent optimized-D2D reference direction, and the temporal phase. This is
   not a BS-side global assignment and does not use the true error curve to
   switch behavior.
+- `--optimized-d2d-access-mode aoi_aware_utility` is a targeted freshness
+  ablation. It starts from the same base utility as `utility`:
+
+  ```text
+  base_utility_h =
+    norm_h^norm_exp *
+    active_cluster_size_h^size_exp *
+    freshness_h^freshness_exp
+  ```
+
+  It then computes a stale-tail AoI pressure:
+
+  ```text
+  normalized_aoi_h = AoI_h / max_j(AoI_j)
+  tail_h = clip(
+    (normalized_aoi_h - threshold_fraction) / (1 - threshold_fraction),
+    0,
+    1
+  )
+  aoi_bonus_h = 1 + aoi_weight * tail_h^aoi_exp
+  aoi_aware_utility_h = base_utility_h * aoi_bonus_h
+  ```
+
+  This is not meant to maximize AoI priority blindly.  The threshold makes the
+  bonus act mostly on the stale tail, so the policy can test whether optimized
+  D2D can keep its error/energy gains while reducing mean and p95 AoI.
+- `--optimized-d2d-access-mode aoi_floor_utility` is the conservative AoI
+  ablation. It computes the base utility probability first and then applies:
+
+  ```text
+  p_h = max(
+    base_probability_h,
+    fixed_d2d_access_probability *
+      aoi_weight *
+      tail_h^aoi_exp
+  )
+  ```
+
+  Here `aoi_weight` is a fraction of the fixed-D2D access probability, not a
+  multiplicative utility boost. This keeps stale clusters from being completely
+  ignored while preserving most of the original utility ranking.
 - `conditional_selective_water_filling` is the default allocator for enhanced
   load-controlled policies. It is intentionally not a centralized scheduler:
   the BS can broadcast only the target load, trigger ratio, redistribution

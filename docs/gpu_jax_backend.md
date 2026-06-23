@@ -508,6 +508,59 @@ The required signals preserve the CH-level plausibility of the experiment:
   optimized-D2D reference direction, `switch_fraction`, `switch_gain`, and the
   current phase scalar.
 
+The AoI-aware utility mode is selected with
+`--optimized-d2d-access-mode aoi_aware_utility`. It is intentionally narrower
+than `adaptive_diversity`: it keeps the base utility score and load allocator,
+but adds a stale-tail pressure term:
+
+```text
+base_utility_h =
+  norm_h^norm_exp *
+  active_cluster_size_h^size_exp *
+  freshness_h^freshness_exp
+
+normalized_aoi_h = AoI_h / max_j(AoI_j)
+tail_h = clip(
+  (normalized_aoi_h - threshold_fraction) / (1 - threshold_fraction),
+  0,
+  1
+)
+aoi_bonus_h = 1 + aoi_weight * tail_h^aoi_exp
+aoi_aware_utility_h = base_utility_h * aoi_bonus_h
+```
+
+The motivation is the observed physical-energy tradeoff: optimized D2D can
+reduce error and energy strongly while still having worse mean AoI than fixed
+D2D.  This mode tests whether a bounded bonus for stale clusters can improve
+mean and 95th-percentile AoI without throwing away the error/energy gains.
+It does not require the BS to schedule a CH centrally.  The CH can maintain its
+own AoI from ACK/no-ACK feedback, while the BS broadcasts scalar normalizers and
+the load-controller parameters.
+
+The conservative AoI-floor utility mode is selected with
+`--optimized-d2d-access-mode aoi_floor_utility`. It was added after the
+multiplicative AoI bonus showed a real mean-AoI improvement but a worse
+error/energy tradeoff. The policy keeps the base utility allocator as the main
+decision, then raises only stale clusters to a bounded minimum probability:
+
+```text
+base_probability_h = load_control(base_utility_h)
+stale_floor_h =
+  fixed_d2d_access_probability *
+  aoi_weight *
+  tail_h^aoi_exp
+
+p_h = max(base_probability_h, stale_floor_h)
+p_h = min(p_h, pcomp)
+```
+
+In this mode, `aoi_weight` is not a utility multiplier. It is the largest
+stale-floor probability as a fraction of fixed-D2D access probability. For
+example, `aoi_weight=0.25` gives the oldest stale clusters at least one quarter
+of the fixed-D2D access probability, unless `pcomp` is smaller. This keeps the
+policy distributed and deployable: CHs still perform local ALOHA trials, and
+the BS only needs scalar load/AoI normalizers plus ACK feedback.
+
 Policy differences:
 
 - `norm` is the thesis-compatible optimized-D2D controller based on aggregate
@@ -520,6 +573,11 @@ Policy differences:
   directional novelty.
 - `adaptive_diversity` starts from aggressive utility and gradually shifts
   toward the hybrid diversity/freshness objective using time-normalized phase.
+- `aoi_aware_utility` keeps base utility and adds bounded stale-tail AoI
+  pressure to reduce freshness tail risk.
+- `aoi_floor_utility` keeps base utility probabilities and only enforces a
+  bounded minimum probability for stale-tail clusters; it is the lower-risk
+  AoI ablation when the multiplicative bonus harms error or energy.
 
 The utility Pareto tuning runner is:
 
@@ -588,6 +646,15 @@ The returned `JaxTraceResult` contains:
 - `mean_clusterhead_energy_used`: `float[checkpoints, 3]`.
 - `mean_aoi`: `float[checkpoints, 6]`.
 - `peak_aoi`: `float[checkpoints, 6]`.
+- `p75_aoi`: `float[checkpoints, 6]`.
+- `p90_aoi`: `float[checkpoints, 6]`.
+- `p95_aoi`: `float[checkpoints, 6]`.
+- `stale_fraction_50`: `float[checkpoints, 6]`, fraction with AoI greater
+  than 50 percent of the elapsed iteration count.
+- `stale_fraction_75`: `float[checkpoints, 6]`, fraction with AoI greater
+  than 75 percent of the elapsed iteration count.
+- `stale_fraction_100`: `float[checkpoints, 6]`, fraction with AoI greater
+  than 100 rounds.
 - `checkpoints`: `int32[checkpoints]`.
 
 Cluster quality scalars such as CH row count, singleton count,
@@ -674,6 +741,8 @@ That command writes:
   energy-use columns exist.
 - `Runs/gpu_smoke/results_aoi.png` and `.pdf` when AoI columns exist;
 - `Runs/gpu_smoke/results_peak_aoi.png` and `.pdf` when peak-AoI columns exist.
+- `Runs/gpu_smoke/results_p75_aoi.png`, `results_p90_aoi.png`,
+  `results_p95_aoi.png`, and stale-fraction plots when those columns exist.
 
 The thesis-style figure plots every checkpoint saved in the CSV. Omit
 `--checkpoints` to save and plot the full curve for every iteration

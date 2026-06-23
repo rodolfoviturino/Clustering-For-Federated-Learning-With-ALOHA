@@ -47,17 +47,44 @@ class JaxModelTests(unittest.TestCase):
         uploads = np.asarray(result.successful_uploads)
         mean_aoi = np.asarray(result.mean_aoi)
         peak_aoi = np.asarray(result.peak_aoi)
+        p75_aoi = np.asarray(result.p75_aoi)
+        p90_aoi = np.asarray(result.p90_aoi)
+        p95_aoi = np.asarray(result.p95_aoi)
+        stale_fraction_50 = np.asarray(result.stale_fraction_50)
+        stale_fraction_75 = np.asarray(result.stale_fraction_75)
+        stale_fraction_100 = np.asarray(result.stale_fraction_100)
 
         self.assertEqual(error_norms.shape, (2, 6))
         self.assertEqual(uploads.shape, (2, 6))
         self.assertEqual(mean_aoi.shape, (2, 6))
         self.assertEqual(peak_aoi.shape, (2, 6))
+        self.assertEqual(p75_aoi.shape, (2, 6))
+        self.assertEqual(p90_aoi.shape, (2, 6))
+        self.assertEqual(p95_aoi.shape, (2, 6))
+        self.assertEqual(stale_fraction_50.shape, (2, 6))
+        self.assertEqual(stale_fraction_75.shape, (2, 6))
+        self.assertEqual(stale_fraction_100.shape, (2, 6))
         self.assertTrue(np.all(np.isfinite(error_norms)))
         self.assertTrue(np.all(uploads >= 0))
         self.assertTrue(np.all(np.isfinite(mean_aoi)))
         self.assertTrue(np.all(np.isfinite(peak_aoi)))
+        self.assertTrue(np.all(np.isfinite(p75_aoi)))
+        self.assertTrue(np.all(np.isfinite(p90_aoi)))
+        self.assertTrue(np.all(np.isfinite(p95_aoi)))
+        self.assertTrue(np.all(np.isfinite(stale_fraction_50)))
+        self.assertTrue(np.all(np.isfinite(stale_fraction_75)))
+        self.assertTrue(np.all(np.isfinite(stale_fraction_100)))
         self.assertTrue(np.all(mean_aoi >= 1.0))
         self.assertTrue(np.all(peak_aoi >= 1.0))
+        self.assertTrue(np.all(p75_aoi >= 1.0))
+        self.assertTrue(np.all(p90_aoi >= 1.0))
+        self.assertTrue(np.all(p95_aoi >= 1.0))
+        self.assertTrue(np.all(stale_fraction_50 >= 0.0))
+        self.assertTrue(np.all(stale_fraction_75 >= 0.0))
+        self.assertTrue(np.all(stale_fraction_100 >= 0.0))
+        self.assertTrue(np.all(stale_fraction_50 <= 1.0))
+        self.assertTrue(np.all(stale_fraction_75 <= 1.0))
+        self.assertTrue(np.all(stale_fraction_100 <= 1.0))
 
     def test_legacy_error_calculator_tuple_shape(self):
         result = error_calculator(
@@ -1256,6 +1283,92 @@ class JaxModelTests(unittest.TestCase):
                         clusters_list=[[0, 1], [2, 3], [4, 5]],
                         seed=89,
                         optimized_d2d_access_mode="adaptive_diversity",
+                        **kwargs,
+                    )
+
+    def test_aoi_aware_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=91,
+            optimized_d2d_access_mode="aoi_aware_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.75,
+            optimized_d2d_aoi_exponent=1.5,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.p75_aoi).shape, (2, 6))
+        self.assertEqual(np.asarray(result.p90_aoi).shape, (2, 6))
+        self.assertEqual(np.asarray(result.p95_aoi).shape, (2, 6))
+        self.assertEqual(np.asarray(result.stale_fraction_50).shape, (2, 6))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.p75_aoi))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.p90_aoi))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.p95_aoi))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.stale_fraction_50)))
+        )
+
+    def test_aoi_floor_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=93,
+            optimized_d2d_access_mode="aoi_floor_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.25,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.85,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.p90_aoi).shape, (2, 6))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.p90_aoi))))
+
+    def test_aoi_aware_utility_parameters_are_validated(self):
+        invalid_kwargs = (
+            {"optimized_d2d_aoi_weight": -0.1},
+            {"optimized_d2d_aoi_exponent": -0.1},
+            {"optimized_d2d_aoi_threshold_fraction": -0.1},
+            {"optimized_d2d_aoi_threshold_fraction": 1.0},
+        )
+        for kwargs in invalid_kwargs:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    error_calculator(
+                        number_of_mobile_devices__k=6,
+                        data_dimension__L=2,
+                        number_of_parallel_channels__M=2,
+                        probability_that_user_can_compute_its_local_update__pcomp=0.5,
+                        number_of_iterations__t=3,
+                        learning_rate__u1=0.01,
+                        step_size__u=0.1,
+                        clusters_list=[[0, 1], [2, 3], [4, 5]],
+                        seed=91,
+                        optimized_d2d_access_mode="aoi_aware_utility",
                         **kwargs,
                     )
 

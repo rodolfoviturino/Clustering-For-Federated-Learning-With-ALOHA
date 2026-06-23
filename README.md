@@ -56,6 +56,7 @@ experiments/
   run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
   run_ch_quality_weight_sweep.py            Focused quality-CH weight comparison and plots
   merge_utility_pareto_summaries.py         Merge utility Pareto partial runs
+  compare_runs.py                           Offline comparison for completed result folders
   plot_gpu_sweep.py                         CSV-to-figure plotting CLI
   run_ablation.py                           Compatibility wrapper around the GPU sweep runner
 tests/
@@ -207,7 +208,28 @@ collisions as the interference abstraction, but maps collision-free decoding to
 `--cluster-head-channel-score-mode rayleigh_outage` when quality CH election
 should use the same outage metric instead of normalized inverse pathloss. The
 runner writes mean battery, mean D2D-CH battery, energy-used,
-energy-efficiency, mean AoI, and peak AoI columns, and plots them when present.
+energy-efficiency, mean AoI, peak AoI, p75/p90/p95 AoI, and stale-tail AoI
+fractions, and plots them when present.
+
+AoI can also be used as an explicit optimized-D2D scheduling objective with
+`--optimized-d2d-access-mode aoi_aware_utility`. This mode keeps the same
+load-controlled utility allocator, but multiplies the base norm/size/freshness
+score by a bounded bonus for clusters whose AoI is in the stale tail of the
+current D2D population. The bonus is controlled by
+`--optimized-d2d-aoi-weight`, `--optimized-d2d-aoi-exponent`, and
+`--optimized-d2d-aoi-threshold-fraction`. It remains deployable: each CH only
+needs its local aggregate signals and the age since its last ACKed upload; the
+BS can broadcast scalar normalizers and load-controller parameters.
+
+The more conservative AoI scheduling ablation is
+`--optimized-d2d-access-mode aoi_floor_utility`. It first computes the same
+base utility probability and only raises very stale clusters to a bounded
+minimum probability. In this mode, `--optimized-d2d-aoi-weight` is interpreted
+as a fraction of the fixed-D2D access probability. For example, `0.25` means
+the oldest stale clusters receive at least `25%` of fixed-D2D access
+probability, while all probabilities remain capped by `pcomp`. This is the
+preferred next test after the stronger multiplicative AoI-aware policy, because
+it should reduce stale tails with less disruption to error-norm convergence.
 
 Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
@@ -354,6 +376,77 @@ python main.py --run-name k1000_physical_energy_smoke \
   --optimized-d2d-freshness-exponent 0.25 \
   --optimized-d2d-load-target-factor 1.1
 ```
+
+Recommended AoI-aware comparison against the physical-energy utility run:
+
+```bash
+python main.py --run-name k1000_physical_energy_aoi_aware_r100 \
+  --devices 1000 \
+  --rounds 100 \
+  --precision float64 \
+  --energy-drain-mode dynamic \
+  --energy-model first_order_radio \
+  --battery-feasibility-mode required_energy \
+  --d2d-ch-bs-success-mode rayleigh_outage \
+  --device-bs-success-mode rayleigh_outage \
+  --cluster-head-selection-mode quality \
+  --cluster-head-channel-score-mode rayleigh_outage \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --optimized-d2d-access-mode aoi_aware_utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1 \
+  --optimized-d2d-aoi-weight 0.75 \
+  --optimized-d2d-aoi-exponent 1.5 \
+  --optimized-d2d-aoi-threshold-fraction 0.70
+```
+
+Recommended conservative AoI-floor comparison:
+
+```bash
+python main.py --run-name k1000_physical_energy_aoi_floor_r100 \
+  --devices 1000 \
+  --rounds 100 \
+  --precision float64 \
+  --energy-drain-mode dynamic \
+  --energy-model first_order_radio \
+  --battery-feasibility-mode required_energy \
+  --d2d-ch-bs-success-mode rayleigh_outage \
+  --device-bs-success-mode rayleigh_outage \
+  --cluster-head-selection-mode quality \
+  --cluster-head-channel-score-mode rayleigh_outage \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --optimized-d2d-access-mode aoi_floor_utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1 \
+  --optimized-d2d-aoi-weight 0.25 \
+  --optimized-d2d-aoi-exponent 1.0 \
+  --optimized-d2d-aoi-threshold-fraction 0.85
+```
+
+After two or more runs are complete, compare them without rerunning JAX:
+
+```bash
+python -m experiments.compare_runs \
+  Runs/k1000_physical_energy_r100 \
+  Runs/k1000_physical_energy_aoi_floor_r100
+```
+
+The comparator writes `run_comparison_summary.csv` and
+`run_comparison_summary.md` with target times, log-error AUC, final energy,
+energy efficiency, AoI percentiles, and stale-tail fractions for
+`optimized_aloha_d2d` by default.
 
 To compare all CH-rotation energy profiles with the same controlled setup, use
 the dedicated sweep runner:
@@ -560,8 +653,9 @@ simulation finishes successfully:
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_clusterhead_uploads.png` and `.pdf`;
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_rate.png` and `.pdf`;
 - `Runs/YYYY-MM-DD-HH-MM-SS/results_cluster_quality.png` and `.pdf`;
-- optional battery, energy, cluster-head energy, AoI, and peak-AoI plots when
-  the corresponding CSV columns are present.
+- optional battery, energy, cluster-head energy, mean-AoI, peak-AoI,
+  p75/p90/p95-AoI, and stale-tail fraction plots when the corresponding CSV
+  columns are present.
 
 Use a stable folder name when you want a recognizable run:
 
@@ -611,8 +705,8 @@ skip cleanly when JAX is not installed in the local interpreter.
 - Rayleigh outage is available for collision-free BS decoding, but the simulator
   still uses same-channel ALOHA collisions as the interference abstraction; it
   is not a full SINR/FER/BER link-layer simulator.
-- AoI is tracked as an output metric. It does not alter scheduling unless an
-  enhanced policy uses freshness/novelty terms.
+- AoI is tracked as an output metric. It alters scheduling only when an
+  enhanced policy such as `aoi_aware_utility` is explicitly selected.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation
   candidate, not the default implementation.

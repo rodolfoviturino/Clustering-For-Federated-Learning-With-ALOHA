@@ -22,6 +22,13 @@ The simulation follows the same thesis-level structure as the original model:
   CH aggregates that are directionally redundant with recent successful uploads.
 * the adaptive-diversity D2D policy keeps the same distributed load controller,
   but shifts from early high-utility aggregates to late diversity/freshness.
+* the AoI-aware utility D2D policy keeps the same load controller, but gives an
+  extra bounded priority bonus to clusters whose successful-upload age is in
+  the stale tail of the current D2D cluster population.
+* the AoI-floor utility D2D policy is a more conservative freshness variant:
+  it first computes the base utility access probability and only raises stale
+  clusters to a bounded minimum probability when they would otherwise be almost
+  ignored.
 * optional CH-to-BS link realism can make a collision-free CH upload succeed
   with probability derived from the elected CH's BS channel quality and battery.
 * optional device-to-BS link realism can apply the same physical decoding model
@@ -82,6 +89,12 @@ class JaxTraceResult(NamedTuple):
     mean_clusterhead_energy_used: Any
     mean_aoi: Any
     peak_aoi: Any
+    p75_aoi: Any
+    p90_aoi: Any
+    p95_aoi: Any
+    stale_fraction_50: Any
+    stale_fraction_75: Any
+    stale_fraction_100: Any
     checkpoints: Any
 
 
@@ -531,6 +544,212 @@ def _utility_load_controlled_access_probability(
         optimized_success_ewma=optimized_success_ewma,
         fixed_success_target=fixed_success_target,
     )
+
+
+def _aoi_aware_utility_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    cluster_aoi,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    aoi_weight,
+    aoi_exponent,
+    aoi_threshold_fraction,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Allocate optimized D2D access with an explicit AoI-tail pressure term.
+
+    ``utility`` already has a smooth freshness factor.  In the physical-energy
+    experiments, however, optimized D2D reduced error and energy while keeping
+    mean AoI higher than fixed D2D.  This policy tests a targeted correction:
+    keep the same norm/size/freshness utility, then multiply it by a bounded
+    bonus only for CHs whose cluster AoI is in the stale tail.
+
+    Deployment interpretation:
+    - ``cluster_aoi`` is the age since the BS last ACKed this cluster's CH
+      aggregate.  The CH can maintain it locally from ACK/no-ACK feedback, and
+      the BS can broadcast the scalar normalizers used by the score.
+    - No centralized CH scheduling is introduced.  The score still becomes a
+      local ALOHA access probability through the same load controller used by
+      ``utility``, ``hybrid``, and ``adaptive_diversity``.
+
+    Array contracts:
+    - aggregate_norms: float[max_clusters], one aggregate norm per CH.
+    - cluster_sizes: int[max_clusters], active members represented by the CH.
+    - freshness: float[max_clusters], legacy age since optimized-D2D success.
+    - cluster_aoi: float[max_clusters], explicit optimized-D2D cluster AoI.
+    - cluster_mask: bool[max_clusters], true for real padded cluster rows.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    aoi_weight = jnp.asarray(aoi_weight, dtype=dtype)
+    aoi_exponent = jnp.asarray(aoi_exponent, dtype=dtype)
+    aoi_threshold_fraction = jnp.asarray(aoi_threshold_fraction, dtype=dtype)
+
+    base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+
+    # cluster_aoi: float[max_clusters], rounds since each cluster's aggregate
+    # last reached the BS in optimized D2D.  The score is normalized by the
+    # current maximum active-cluster AoI so the parameter remains dimensionless
+    # across horizons such as t=200 or longer sweeps.
+    active_aoi = jnp.where(cluster_mask, cluster_aoi, 0.0)
+    normalized_aoi = (active_aoi + eps) / (jnp.max(active_aoi) + eps)
+
+    # Only the stale tail receives the extra bonus.  With the default threshold
+    # 0.75, clusters below 75% of the current maximum AoI keep the base utility.
+    # This is deliberately less aggressive than replacing the objective with
+    # AoI: the goal is to improve freshness without discarding the error/energy
+    # gains from norm and cluster-size prioritization.
+    remaining_tail_width = jnp.maximum(1.0 - aoi_threshold_fraction, eps)
+    tail_pressure = jnp.clip(
+        (normalized_aoi - aoi_threshold_fraction) / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+    aoi_bonus = 1.0 + aoi_weight * tail_pressure**aoi_exponent
+    aoi_aware_utility = base_utility * aoi_bonus
+
+    return _load_controlled_access_from_utility(
+        utility=aoi_aware_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+
+def _aoi_floor_utility_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    cluster_aoi,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    aoi_weight,
+    aoi_exponent,
+    aoi_threshold_fraction,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Apply a conservative AoI floor on top of base utility access.
+
+    ``aoi_aware_utility`` multiplies utility by an AoI bonus, which can move
+    probability mass away from high-norm/high-channel-value clusters.  This
+    alternative keeps the base utility allocator as the primary decision and
+    only raises very stale clusters to a minimum access probability.
+
+    Deployment interpretation:
+    - CHs still make local ALOHA decisions from a probability broadcast/derived
+      from scalar normalizers; no centralized CH scheduling is introduced.
+    - ``aoi_weight`` is interpreted as a fraction of the fixed-D2D access
+      probability.  For example, ``0.25`` means the oldest stale clusters get
+      at least ``0.25 * fixed_access_probability`` unless ``pcomp`` is smaller.
+    - This can slightly increase total offered load when many clusters are
+      stale, so it should be evaluated as an AoI/fairness tradeoff rather than
+      as a guaranteed error-norm improvement.
+
+    Array contracts:
+    - aggregate_norms: float[max_clusters], one aggregate norm per CH.
+    - cluster_sizes: int[max_clusters], active members represented by the CH.
+    - freshness: float[max_clusters], legacy age since optimized-D2D success.
+    - cluster_aoi: float[max_clusters], explicit optimized-D2D cluster AoI.
+    - cluster_mask: bool[max_clusters], true for real padded cluster rows.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    aoi_weight = jnp.asarray(aoi_weight, dtype=dtype)
+    aoi_exponent = jnp.asarray(aoi_exponent, dtype=dtype)
+    aoi_threshold_fraction = jnp.asarray(aoi_threshold_fraction, dtype=dtype)
+
+    base_probability = _utility_load_controlled_access_probability(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+    # cluster_aoi: float[max_clusters], ACK age for optimized-D2D clusters.
+    # Normalizing by the current maximum active-cluster age keeps the stale-tail
+    # test independent of whether the sweep runs to t=200 or a longer horizon.
+    active_aoi = jnp.where(cluster_mask, cluster_aoi, 0.0)
+    normalized_aoi = (active_aoi + eps) / (jnp.max(active_aoi) + eps)
+
+    # The tail pressure is zero below the configured stale threshold and one
+    # for the currently oldest cluster(s).  The exponent shapes whether the
+    # floor is spread across the whole tail or concentrated on the oldest rows.
+    remaining_tail_width = jnp.maximum(1.0 - aoi_threshold_fraction, eps)
+    tail_pressure = jnp.clip(
+        (normalized_aoi - aoi_threshold_fraction) / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+    stale_floor_probability = (
+        fixed_access_probability * aoi_weight * tail_pressure**aoi_exponent
+    )
+    probability = jnp.maximum(base_probability, stale_floor_probability)
+    return jnp.where(cluster_mask, jnp.clip(probability, 0.0, pcomp), 0.0)
 
 
 def _load_controlled_access_from_utility(
@@ -1113,6 +1332,9 @@ def error_calculator_trace_jax(
     optimized_d2d_late_freshness_exponent: float = 1.0,
     optimized_d2d_adaptive_switch_fraction: float = 0.30,
     optimized_d2d_adaptive_switch_gain: float = 12.0,
+    optimized_d2d_aoi_weight: float = 0.5,
+    optimized_d2d_aoi_exponent: float = 1.0,
+    optimized_d2d_aoi_threshold_fraction: float = 0.75,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -1228,10 +1450,13 @@ def error_calculator_trace_jax(
         "max_weight",
         "hybrid",
         "adaptive_diversity",
+        "aoi_aware_utility",
+        "aoi_floor_utility",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
-            "'max_weight', 'hybrid', or 'adaptive_diversity'"
+            "'max_weight', 'hybrid', 'adaptive_diversity', or "
+            "'aoi_aware_utility'/'aoi_floor_utility'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -1282,6 +1507,12 @@ def error_calculator_trace_jax(
         raise ValueError("optimized_d2d_adaptive_switch_fraction must be in [0, 1]")
     if optimized_d2d_adaptive_switch_gain <= 0.0:
         raise ValueError("optimized_d2d_adaptive_switch_gain must be positive")
+    if optimized_d2d_aoi_weight < 0.0:
+        raise ValueError("optimized_d2d_aoi_weight must be non-negative")
+    if optimized_d2d_aoi_exponent < 0.0:
+        raise ValueError("optimized_d2d_aoi_exponent must be non-negative")
+    if not 0.0 <= optimized_d2d_aoi_threshold_fraction < 1.0:
+        raise ValueError("optimized_d2d_aoi_threshold_fraction must be in [0, 1)")
 
     dtype = jnp.float32 if dtype is None else dtype
     pcomp = jnp.asarray(
@@ -1400,6 +1631,12 @@ def error_calculator_trace_jax(
     )
     d2d_adaptive_switch_gain = jnp.asarray(
         optimized_d2d_adaptive_switch_gain,
+        dtype=dtype,
+    )
+    d2d_aoi_weight = jnp.asarray(optimized_d2d_aoi_weight, dtype=dtype)
+    d2d_aoi_exponent = jnp.asarray(optimized_d2d_aoi_exponent, dtype=dtype)
+    d2d_aoi_threshold_fraction = jnp.asarray(
+        optimized_d2d_aoi_threshold_fraction,
         dtype=dtype,
     )
 
@@ -1675,7 +1912,7 @@ def error_calculator_trace_jax(
         required = ch_required_energy_for_heads(heads, active_member_mask)
         return cluster_mask & (scenario_battery[heads] >= required)
 
-    def scenario_aoi_summary(non_d2d_aoi, d2d_aoi):
+    def scenario_aoi_summary(non_d2d_aoi, d2d_aoi, current_iteration):
         d2d_denominator = jnp.maximum(
             active_clusterhead_count,
             jnp.asarray(1.0, dtype=users_input__x.dtype),
@@ -1685,9 +1922,101 @@ def error_calculator_trace_jax(
         mean_d2d = jnp.sum(d2d_masked, axis=1) / d2d_denominator
         peak_non_d2d = jnp.max(non_d2d_aoi, axis=1)
         peak_d2d = jnp.max(d2d_masked, axis=1)
+        non_d2d_mask = jnp.ones(non_d2d_aoi.shape, dtype=jnp.bool_)
+        d2d_mask = jnp.broadcast_to(cluster_mask[None, :], d2d_aoi.shape)
+
+        def masked_percentile(values, mask, percentile):
+            # values: float[scenario_count, item_count], AoI samples.
+            # mask: bool[scenario_count, item_count], true for real samples.
+            # AoI is integer-valued and bounded by max_iterations_t + 1.  A
+            # histogram avoids sorting thousands of devices/clusters inside
+            # every scan step, which matters for large-K GPU sweeps.
+            histogram_length = max_iterations_t + 2
+
+            def one_row_percentile(row_values, row_mask):
+                ages = jnp.clip(
+                    row_values.astype(jnp.int32),
+                    0,
+                    histogram_length - 1,
+                )
+                weights = row_mask.astype(jnp.int32)
+                histogram = jnp.bincount(
+                    ages,
+                    weights=weights,
+                    length=histogram_length,
+                )
+                sample_count = jnp.sum(weights)
+                target_count = jnp.ceil(
+                    percentile * sample_count.astype(values.dtype)
+                ).astype(jnp.int32)
+                cumulative = jnp.cumsum(histogram)
+                value = jnp.argmax(cumulative >= target_count).astype(values.dtype)
+                return jnp.where(sample_count > 0, value, 0.0)
+
+            return jax.vmap(one_row_percentile)(values, mask)
+
+        def masked_fraction_above(values, mask, threshold):
+            # values: float[scenario_count, item_count], AoI samples.
+            # threshold: scalar AoI age.  The output is a fraction in [0, 1].
+            sample_count = jnp.sum(mask.astype(values.dtype), axis=1)
+            stale_count = jnp.sum(
+                (values > threshold).astype(values.dtype) * mask.astype(values.dtype),
+                axis=1,
+            )
+            return jnp.where(sample_count > 0.0, stale_count / sample_count, 0.0)
+
+        p75_non_d2d = masked_percentile(non_d2d_aoi, non_d2d_mask, 0.75)
+        p75_d2d = masked_percentile(d2d_aoi, d2d_mask, 0.75)
+        p90_non_d2d = masked_percentile(non_d2d_aoi, non_d2d_mask, 0.90)
+        p90_d2d = masked_percentile(d2d_aoi, d2d_mask, 0.90)
+        p95_non_d2d = masked_percentile(non_d2d_aoi, non_d2d_mask, 0.95)
+        p95_d2d = masked_percentile(d2d_aoi, d2d_mask, 0.95)
+
+        # Stale-tail fractions are normalized by elapsed time, not final max_t,
+        # so the curves are meaningful at early checkpoints as well as t=200.
+        current_t = current_iteration.astype(users_input__x.dtype)
+        stale_50_threshold = 0.50 * current_t
+        stale_75_threshold = 0.75 * current_t
+        stale_100_threshold = jnp.asarray(100.0, dtype=users_input__x.dtype)
+        stale_50_non_d2d = masked_fraction_above(
+            non_d2d_aoi,
+            non_d2d_mask,
+            stale_50_threshold,
+        )
+        stale_50_d2d = masked_fraction_above(
+            d2d_aoi,
+            d2d_mask,
+            stale_50_threshold,
+        )
+        stale_75_non_d2d = masked_fraction_above(
+            non_d2d_aoi,
+            non_d2d_mask,
+            stale_75_threshold,
+        )
+        stale_75_d2d = masked_fraction_above(
+            d2d_aoi,
+            d2d_mask,
+            stale_75_threshold,
+        )
+        stale_100_non_d2d = masked_fraction_above(
+            non_d2d_aoi,
+            non_d2d_mask,
+            stale_100_threshold,
+        )
+        stale_100_d2d = masked_fraction_above(
+            d2d_aoi,
+            d2d_mask,
+            stale_100_threshold,
+        )
         return (
             jnp.concatenate([mean_non_d2d, mean_d2d], axis=0),
             jnp.concatenate([peak_non_d2d, peak_d2d], axis=0),
+            jnp.concatenate([p75_non_d2d, p75_d2d], axis=0),
+            jnp.concatenate([p90_non_d2d, p90_d2d], axis=0),
+            jnp.concatenate([p95_non_d2d, p95_d2d], axis=0),
+            jnp.concatenate([stale_50_non_d2d, stale_50_d2d], axis=0),
+            jnp.concatenate([stale_75_non_d2d, stale_75_d2d], axis=0),
+            jnp.concatenate([stale_100_non_d2d, stale_100_d2d], axis=0),
         )
 
     def scan_iteration(state, iteration_index):
@@ -2105,6 +2434,60 @@ def error_calculator_trace_jax(
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
+        elif optimized_d2d_access_mode == "aoi_aware_utility":
+            optimized_probability_d2d = _aoi_aware_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                cluster_aoi=d2d_aoi[2],
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                aoi_weight=d2d_aoi_weight,
+                aoi_exponent=d2d_aoi_exponent,
+                aoi_threshold_fraction=d2d_aoi_threshold_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
+        elif optimized_d2d_access_mode == "aoi_floor_utility":
+            optimized_probability_d2d = _aoi_floor_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                cluster_aoi=d2d_aoi[2],
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                aoi_weight=d2d_aoi_weight,
+                aoi_exponent=d2d_aoi_exponent,
+                aoi_threshold_fraction=d2d_aoi_threshold_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
         elif optimized_d2d_access_mode == "max_weight":
             optimized_probability_d2d = _max_weight_threshold_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -2464,7 +2847,20 @@ def error_calculator_trace_jax(
             ],
             axis=0,
         )
-        mean_aoi, peak_aoi = scenario_aoi_summary(next_non_d2d_aoi, next_d2d_aoi)
+        (
+            mean_aoi,
+            peak_aoi,
+            p75_aoi,
+            p90_aoi,
+            p95_aoi,
+            stale_fraction_50,
+            stale_fraction_75,
+            stale_fraction_100,
+        ) = scenario_aoi_summary(
+            next_non_d2d_aoi,
+            next_d2d_aoi,
+            iteration_index + jnp.asarray(1, dtype=jnp.int32),
+        )
 
         error_norms = jnp.linalg.norm(next_weights - weights_vector__w[None, :], axis=1)
         next_state = (
@@ -2542,6 +2938,12 @@ def error_calculator_trace_jax(
             mean_clusterhead_energy_used,
             mean_aoi,
             peak_aoi,
+            p75_aoi,
+            p90_aoi,
+            p95_aoi,
+            stale_fraction_50,
+            stale_fraction_75,
+            stale_fraction_100,
         )
         return next_state, trace_row
 
@@ -2591,6 +2993,12 @@ def error_calculator_trace_jax(
             mean_clusterhead_energy_used,
             mean_aoi,
             peak_aoi,
+            p75_aoi,
+            p90_aoi,
+            p95_aoi,
+            stale_fraction_50,
+            stale_fraction_75,
+            stale_fraction_100,
         ),
     ) = jax.lax.scan(
         scan_iteration,
@@ -2616,6 +3024,12 @@ def error_calculator_trace_jax(
         mean_clusterhead_energy_used=mean_clusterhead_energy_used[checkpoint_indices],
         mean_aoi=mean_aoi[checkpoint_indices],
         peak_aoi=peak_aoi[checkpoint_indices],
+        p75_aoi=p75_aoi[checkpoint_indices],
+        p90_aoi=p90_aoi[checkpoint_indices],
+        p95_aoi=p95_aoi[checkpoint_indices],
+        stale_fraction_50=stale_fraction_50[checkpoint_indices],
+        stale_fraction_75=stale_fraction_75[checkpoint_indices],
+        stale_fraction_100=stale_fraction_100[checkpoint_indices],
         checkpoints=checkpoint_indices + 1,
     )
 
@@ -2688,6 +3102,9 @@ def error_calculator(
     optimized_d2d_late_freshness_exponent: float = 1.0,
     optimized_d2d_adaptive_switch_fraction: float = 0.30,
     optimized_d2d_adaptive_switch_gain: float = 12.0,
+    optimized_d2d_aoi_weight: float = 0.5,
+    optimized_d2d_aoi_exponent: float = 1.0,
+    optimized_d2d_aoi_threshold_fraction: float = 0.75,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -2764,6 +3181,9 @@ def error_calculator(
         optimized_d2d_late_freshness_exponent=optimized_d2d_late_freshness_exponent,
         optimized_d2d_adaptive_switch_fraction=optimized_d2d_adaptive_switch_fraction,
         optimized_d2d_adaptive_switch_gain=optimized_d2d_adaptive_switch_gain,
+        optimized_d2d_aoi_weight=optimized_d2d_aoi_weight,
+        optimized_d2d_aoi_exponent=optimized_d2d_aoi_exponent,
+        optimized_d2d_aoi_threshold_fraction=optimized_d2d_aoi_threshold_fraction,
         checkpoints=[number_of_iterations__t],
         dtype=dtype,
     )

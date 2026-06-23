@@ -23,16 +23,26 @@ outputs.
 - Records optional dynamic-energy metrics, including per-scenario mean battery,
   D2D cluster-head mean battery, energy used, energy efficiency, and D2D
   cluster-head energy used.
-- Records AoI metrics for all six scenarios: mean AoI and peak AoI.
+- Records AoI metrics for all six scenarios: mean AoI, peak AoI, p75/p90/p95
+  AoI, and stale-tail fractions.
 - Creates `Runs/<timestamp>/` by default after the simulation succeeds.
 
 `experiments/plot_gpu_sweep.py`
 
 - Regenerates figures from an existing sweep CSV.
 - Generates battery, D2D cluster-head battery, energy-used, energy-efficiency,
-  D2D cluster-head energy-used, mean-AoI, and peak-AoI plots only when the CSV
-  has the corresponding optional columns.
+  D2D cluster-head energy-used, mean-AoI, peak-AoI, p75/p90/p95-AoI, and
+  stale-tail fraction plots only when the CSV has the corresponding optional
+  columns.
 - Does not rerun the simulation.
+
+`experiments/compare_runs.py`
+
+- Compares completed `results.csv` files or run folders without importing JAX.
+- Writes `run_comparison_summary.csv` and `run_comparison_summary.md`.
+- Reports target times, log-error AUC, final uploads, CH uploads, energy,
+  energy efficiency, AoI percentiles, and stale-tail fractions for a selected
+  scenario, defaulting to `optimized_aloha_d2d`.
 
 `experiments/run_utility_pareto_sweep.py`
 
@@ -135,12 +145,13 @@ outputs.
   CH-rotation control overhead.
 - Supports optional battery feasibility, where a device or CH only attempts a
   role if its current battery can pay the required energy.
-- Tracks mean and peak Age of Information for every scenario.
+- Tracks mean, peak, and p95 Age of Information for every scenario.
 - Supports optional energy-aware intra-run CH rotation for the three D2D curves.
   The selected CH must be an existing cluster member and preserve one-hop
   coverage of the fixed cluster membership.
 - Contains thesis-compatible optimized D2D plus enhanced `utility`,
-  `max_weight`, `hybrid`, and `adaptive_diversity` CH access policies.
+  `max_weight`, `hybrid`, `adaptive_diversity`, `aoi_aware_utility`, and
+  `aoi_floor_utility` CH access policies.
 - Load-controlled enhanced policies share the same allocator family:
   `proportional_clip`, `water_filling`, `selective_water_filling`, and the
   default `conditional_selective_water_filling`, which only redistributes lost

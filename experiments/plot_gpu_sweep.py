@@ -378,6 +378,78 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
         )
     )
     generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="p95_aoi",
+            scenarios=ALL_SCENARIOS,
+            ylabel="95th percentile AoI",
+            title="95th Percentile Age of Information over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_p95_aoi"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="p75_aoi",
+            scenarios=ALL_SCENARIOS,
+            ylabel="75th percentile AoI",
+            title="75th Percentile Age of Information over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_p75_aoi"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="p90_aoi",
+            scenarios=ALL_SCENARIOS,
+            ylabel="90th percentile AoI",
+            title="90th Percentile Age of Information over FL iterations",
+            output_stem=base_stem.with_name(f"{base_stem.name}_p90_aoi"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="stale_fraction_50",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Fraction with AoI > 50% of elapsed t",
+            title="Stale-tail fraction over FL iterations",
+            output_stem=base_stem.with_name(
+                f"{base_stem.name}_stale_fraction_50"
+            ),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="stale_fraction_75",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Fraction with AoI > 75% of elapsed t",
+            title="Severe stale-tail fraction over FL iterations",
+            output_stem=base_stem.with_name(
+                f"{base_stem.name}_stale_fraction_75"
+            ),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="stale_fraction_100",
+            scenarios=ALL_SCENARIOS,
+            ylabel="Fraction with AoI > 100 rounds",
+            title="Long-stale fraction over FL iterations",
+            output_stem=base_stem.with_name(
+                f"{base_stem.name}_stale_fraction_100"
+            ),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
         _plot_cluster_rate(
             frame,
             output_stem=base_stem.with_name(f"{base_stem.name}_cluster_rate"),

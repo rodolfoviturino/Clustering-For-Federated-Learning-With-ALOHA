@@ -47,6 +47,9 @@ The simulation follows the same thesis-level structure as the original model:
 * optional energy-aware D2D CH rotation can re-elect each cluster's CH during
   the FL trajectory using BS channel quality, current battery, and a stability
   term while preserving one-hop coverage and fixed cluster membership.
+* the semi-scheduled member-refresh D2D policy reserves a small number of
+  collision-free CH opportunities for the most member-starved clusters while
+  leaving the remaining channels to utility-controlled ALOHA.
 * ``dtype=jnp.float64`` is recommended when reproducing very small thesis error
   norms; ``float32`` is faster but floors optimized curves near single-precision
   machine accuracy.
@@ -59,6 +62,7 @@ iterations separately for every ``t`` value in ``1..200``.
 
 from __future__ import annotations
 
+import math
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -1726,6 +1730,88 @@ def _member_collision_aware_quota_access_probability(
     )
 
 
+def _member_refresh_priority_scores(
+    member_aoi_by_cluster,
+    member_participation_by_cluster,
+    active_member_mask,
+    cluster_mask,
+    candidate_mask,
+    threshold_fraction,
+    priority_exponent,
+    member_refresh_deficit=None,
+    deficit_weight=0.0,
+):
+    """Rank clusters by active stale/zero-participation member pressure."""
+    dtype = member_aoi_by_cluster.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    one = jnp.asarray(1.0, dtype=dtype)
+    threshold_fraction = jnp.asarray(threshold_fraction, dtype=dtype)
+    priority_exponent = jnp.asarray(priority_exponent, dtype=dtype)
+    deficit_weight = jnp.asarray(deficit_weight, dtype=dtype)
+
+    active_mask = active_member_mask & cluster_mask[:, None]
+    active_counts = jnp.sum(active_mask, axis=1).astype(dtype)
+    eligible_mask = cluster_mask & candidate_mask & (active_counts > 1.0)
+    safe_counts = jnp.maximum(active_counts, one)
+
+    active_member_aoi = jnp.where(active_mask, member_aoi_by_cluster.astype(dtype), 0.0)
+    peak_member_aoi = jnp.max(active_member_aoi, axis=1)
+    active_peak_member_aoi = jnp.where(eligible_mask, peak_member_aoi, 0.0)
+    normalized_peak_aoi = (
+        (active_peak_member_aoi + eps)
+        / (jnp.max(active_peak_member_aoi) + eps)
+    )
+    remaining_tail_width = jnp.maximum(one - threshold_fraction, eps)
+    peak_tail_pressure = jnp.clip(
+        (normalized_peak_aoi - threshold_fraction) / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+
+    zero_participation = (
+        member_participation_by_cluster.astype(dtype)
+        <= jnp.asarray(0.0, dtype=dtype)
+    )
+    zero_participation_fraction = (
+        jnp.sum((zero_participation & active_mask).astype(dtype), axis=1)
+        / safe_counts
+    )
+    refresh_pressure = jnp.maximum(peak_tail_pressure, zero_participation_fraction)
+    priority = jnp.where(
+        eligible_mask,
+        refresh_pressure**priority_exponent,
+        0.0,
+    )
+
+    if member_refresh_deficit is not None:
+        active_deficit = jnp.where(
+            eligible_mask & (refresh_pressure > eps),
+            member_refresh_deficit.astype(dtype),
+            0.0,
+        )
+        max_active_deficit = jnp.max(active_deficit)
+        normalized_deficit = jnp.where(
+            max_active_deficit > eps,
+            active_deficit / jnp.maximum(max_active_deficit, eps),
+            0.0,
+        )
+        priority = priority * (one + deficit_weight * normalized_deficit)
+
+    return jnp.where(eligible_mask, priority, 0.0)
+
+
+def _top_k_positive_mask(scores, k):
+    """Return a boolean mask for the top-k strictly positive scores."""
+    if k <= 0:
+        return jnp.zeros(scores.shape, dtype=jnp.bool_)
+    k = min(int(k), scores.shape[0])
+    if k <= 0:
+        return jnp.zeros(scores.shape, dtype=jnp.bool_)
+    values, indices = jax.lax.top_k(scores, k)
+    selected = values > jnp.asarray(1e-12, dtype=scores.dtype)
+    return jnp.zeros(scores.shape, dtype=jnp.bool_).at[indices].set(selected)
+
+
 def _load_controlled_access_from_utility(
     utility,
     cluster_mask,
@@ -2331,6 +2417,8 @@ def error_calculator_trace_jax(
     optimized_d2d_member_collision_target_fraction: float = 0.02,
     optimized_d2d_member_collision_gain: float = 4.0,
     optimized_d2d_member_collision_min_quota_scale: float = 0.25,
+    optimized_d2d_member_schedule_fraction: float = 0.10,
+    optimized_d2d_member_schedule_deficit_weight: float = 0.0,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -2493,6 +2581,7 @@ def error_calculator_trace_jax(
         "member_quota_utility",
         "member_deficit_utility",
         "member_collision_aware_quota",
+        "semi_scheduled_member_refresh",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
@@ -2500,7 +2589,8 @@ def error_calculator_trace_jax(
             "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'/"
             "'aoi_quality_tail_utility'/'member_fair_utility'/"
             "'member_refresh_utility'/'member_quota_utility'/"
-            "'member_deficit_utility'/'member_collision_aware_quota'"
+            "'member_deficit_utility'/'member_collision_aware_quota'/"
+            "'semi_scheduled_member_refresh'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -2584,6 +2674,12 @@ def error_calculator_trace_jax(
     if not 0.0 <= optimized_d2d_member_collision_min_quota_scale <= 1.0:
         raise ValueError(
             "optimized_d2d_member_collision_min_quota_scale must be in [0, 1]"
+        )
+    if not 0.0 <= optimized_d2d_member_schedule_fraction <= 1.0:
+        raise ValueError("optimized_d2d_member_schedule_fraction must be in [0, 1]")
+    if not 0.0 <= optimized_d2d_member_schedule_deficit_weight <= 1.0:
+        raise ValueError(
+            "optimized_d2d_member_schedule_deficit_weight must be in [0, 1]"
         )
 
     dtype = jnp.float32 if dtype is None else dtype
@@ -2761,6 +2857,10 @@ def error_calculator_trace_jax(
         optimized_d2d_member_collision_min_quota_scale,
         dtype=dtype,
     )
+    d2d_member_schedule_deficit_weight = jnp.asarray(
+        optimized_d2d_member_schedule_deficit_weight,
+        dtype=dtype,
+    )
 
     key = _key_from_seed(seed)
     data_key, true_weight_key, init_weight_key, scan_key = jax.random.split(key, 4)
@@ -2768,6 +2868,17 @@ def error_calculator_trace_jax(
     k_devices = int(number_of_mobile_devices__k)
     data_dimension = int(data_dimension__L)
     n_channels = int(number_of_parallel_channels__M)
+    if optimized_d2d_access_mode == "semi_scheduled_member_refresh":
+        scheduled_refresh_channels = int(
+            math.ceil(n_channels * optimized_d2d_member_schedule_fraction)
+        )
+        scheduled_refresh_channels = min(
+            max(scheduled_refresh_channels, 0),
+            n_channels,
+        )
+    else:
+        scheduled_refresh_channels = 0
+    aloha_refresh_channels = max(n_channels - scheduled_refresh_channels, 0)
     cluster_members = clusters.cluster_members.astype(jnp.int32)
     cluster_sizes = clusters.cluster_sizes.astype(jnp.int32)
     cluster_mask = clusters.cluster_mask
@@ -2810,6 +2921,11 @@ def error_calculator_trace_jax(
     )
     access_probability_d2d = jnp.minimum(
         jnp.asarray(n_channels, dtype=users_input__x.dtype)
+        / number_of_clusterheads.astype(users_input__x.dtype),
+        1.0,
+    )
+    semi_scheduled_aloha_access_probability_d2d = jnp.minimum(
+        jnp.asarray(aloha_refresh_channels, dtype=users_input__x.dtype)
         / number_of_clusterheads.astype(users_input__x.dtype),
         1.0,
     )
@@ -3803,6 +3919,7 @@ def error_calculator_trace_jax(
             candidates_3.astype(users_input__x.dtype) - n_channels
         )
 
+        semi_scheduled_refresh_mask = jnp.zeros(cluster_mask.shape, dtype=jnp.bool_)
         if optimized_d2d_access_mode == "utility":
             optimized_probability_d2d = _utility_load_controlled_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -3825,6 +3942,61 @@ def error_calculator_trace_jax(
                 clusterized_devices_fraction=clusterized_devices_fraction,
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
+        elif optimized_d2d_access_mode == "semi_scheduled_member_refresh":
+            member_refresh_priority = _member_refresh_priority_scores(
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                cluster_mask=cluster_mask,
+                candidate_mask=ch_can_attempt_3,
+                threshold_fraction=d2d_aoi_threshold_fraction,
+                priority_exponent=d2d_aoi_exponent,
+                member_refresh_deficit=optimized_d2d_member_deficit,
+                deficit_weight=d2d_member_schedule_deficit_weight,
+            )
+            semi_scheduled_refresh_mask = _top_k_positive_mask(
+                member_refresh_priority,
+                scheduled_refresh_channels,
+            )
+            if aloha_refresh_channels > 0:
+                semi_scheduled_aloha_target_scale = jnp.asarray(
+                    aloha_refresh_channels / max(n_channels, 1),
+                    dtype=users_input__x.dtype,
+                )
+                base_probability_d2d = _utility_load_controlled_access_probability(
+                    aggregate_norms=aggregate_norms_model_3,
+                    cluster_sizes=active_member_counts_3,
+                    freshness=optimized_d2d_freshness,
+                    cluster_mask=cluster_mask & (~semi_scheduled_refresh_mask),
+                    n_channels=aloha_refresh_channels,
+                    pcomp=pcomp,
+                    fixed_access_probability=semi_scheduled_aloha_access_probability_d2d,
+                    floor_fraction=d2d_access_floor_fraction,
+                    norm_exponent=d2d_norm_exponent,
+                    cluster_size_exponent=d2d_cluster_size_exponent,
+                    freshness_exponent=d2d_freshness_exponent,
+                    load_target_factor=d2d_load_target_factor,
+                    load_allocation_mode=optimized_d2d_load_allocation_mode,
+                    redistribution_fraction=d2d_redistribution_fraction,
+                    redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                    density_trigger_threshold=d2d_density_trigger_threshold,
+                    dense_trigger_ratio=d2d_dense_trigger_ratio,
+                    clusterized_devices_fraction=clusterized_devices_fraction,
+                    optimized_success_ewma=optimized_d2d_success_ewma,
+                    fixed_success_target=(
+                        current_expected_fixed_d2d_ch_successes
+                        * semi_scheduled_aloha_target_scale
+                    ),
+                )
+            else:
+                base_probability_d2d = jnp.zeros_like(aggregate_norms_model_3)
+            optimized_probability_d2d = jnp.where(
+                semi_scheduled_refresh_mask,
+                0.0,
+                base_probability_d2d,
             )
         elif optimized_d2d_access_mode == "aoi_aware_utility":
             optimized_probability_d2d = _aoi_aware_utility_access_probability(
@@ -4207,26 +4379,89 @@ def error_calculator_trace_jax(
                 pcomp=pcomp,
             )
         optimized_cluster_draws = device_draws[optimized_d2d_heads]
-        candidates_3_d2d_mask = (
-            optimized_cluster_draws < optimized_probability_d2d
-        ) & cluster_mask
-        candidates_3_d2d_mask = candidates_3_d2d_mask & ch_can_attempt_3
-        (
-            success_3_d2d,
-            candidates_3_d2d,
-            candidates_3_d2d_detail,
-            collision_free_3_d2d,
-            ch_bs_link_success_3_d2d,
-        ) = _successful_from_draws(
-            channel_key_3_d2d,
-            optimized_cluster_draws,
-            optimized_probability_d2d,
-            cluster_mask & ch_can_attempt_3,
-            n_channels,
-            link_key=optimized_d2d_link_key,
-            link_success_probability=ch_bs_success_probability_3,
-            return_details=True,
-        )
+        if optimized_d2d_access_mode == "semi_scheduled_member_refresh":
+            if aloha_refresh_channels > 0:
+                (
+                    aloha_success_3_d2d,
+                    _,
+                    aloha_candidates_3_d2d,
+                    aloha_collision_free_3_d2d,
+                    aloha_ch_bs_link_success_3_d2d,
+                ) = _successful_from_draws(
+                    channel_key_3_d2d,
+                    optimized_cluster_draws,
+                    optimized_probability_d2d,
+                    cluster_mask
+                    & ch_can_attempt_3
+                    & (~semi_scheduled_refresh_mask),
+                    aloha_refresh_channels,
+                    link_key=optimized_d2d_link_key,
+                    link_success_probability=ch_bs_success_probability_3,
+                    return_details=True,
+                )
+            else:
+                aloha_success_3_d2d = jnp.zeros(
+                    cluster_mask.shape,
+                    dtype=jnp.bool_,
+                )
+                aloha_candidates_3_d2d = jnp.zeros(
+                    cluster_mask.shape,
+                    dtype=jnp.bool_,
+                )
+                aloha_collision_free_3_d2d = jnp.zeros(
+                    cluster_mask.shape,
+                    dtype=jnp.bool_,
+                )
+                aloha_ch_bs_link_success_3_d2d = jnp.zeros(
+                    cluster_mask.shape,
+                    dtype=jnp.bool_,
+                )
+            scheduled_d2d_attempt = semi_scheduled_refresh_mask & ch_can_attempt_3
+            scheduled_d2d_link_draws = jax.random.uniform(
+                jax.random.fold_in(optimized_d2d_link_key, 313),
+                cluster_mask.shape,
+                dtype=dtype,
+            )
+            scheduled_d2d_link_success = (
+                scheduled_d2d_link_draws < ch_bs_success_probability_3
+            )
+            scheduled_success_3_d2d = (
+                scheduled_d2d_attempt & scheduled_d2d_link_success
+            )
+            success_3_d2d = aloha_success_3_d2d | scheduled_success_3_d2d
+            candidates_3_d2d_detail = (
+                aloha_candidates_3_d2d | scheduled_d2d_attempt
+            )
+            collision_free_3_d2d = (
+                aloha_collision_free_3_d2d | scheduled_d2d_attempt
+            )
+            ch_bs_link_success_3_d2d = (
+                aloha_ch_bs_link_success_3_d2d
+                | (scheduled_d2d_attempt & scheduled_d2d_link_success)
+            )
+            candidates_3_d2d = jnp.sum(candidates_3_d2d_detail).astype(jnp.int32)
+            candidates_3_d2d_mask = candidates_3_d2d_detail
+        else:
+            candidates_3_d2d_mask = (
+                optimized_cluster_draws < optimized_probability_d2d
+            ) & cluster_mask
+            candidates_3_d2d_mask = candidates_3_d2d_mask & ch_can_attempt_3
+            (
+                success_3_d2d,
+                candidates_3_d2d,
+                candidates_3_d2d_detail,
+                collision_free_3_d2d,
+                ch_bs_link_success_3_d2d,
+            ) = _successful_from_draws(
+                channel_key_3_d2d,
+                optimized_cluster_draws,
+                optimized_probability_d2d,
+                cluster_mask & ch_can_attempt_3,
+                n_channels,
+                link_key=optimized_d2d_link_key,
+                link_success_probability=ch_bs_success_probability_3,
+                return_details=True,
+            )
         gradient_3_d2d = jnp.sum(
             jnp.where(success_3_d2d[:, None], aggregate_updates_model_3, 0.0),
             axis=0,
@@ -5147,6 +5382,8 @@ def error_calculator(
     optimized_d2d_member_collision_target_fraction: float = 0.02,
     optimized_d2d_member_collision_gain: float = 4.0,
     optimized_d2d_member_collision_min_quota_scale: float = 0.25,
+    optimized_d2d_member_schedule_fraction: float = 0.10,
+    optimized_d2d_member_schedule_deficit_weight: float = 0.0,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -5251,6 +5488,12 @@ def error_calculator(
         optimized_d2d_member_collision_gain=optimized_d2d_member_collision_gain,
         optimized_d2d_member_collision_min_quota_scale=(
             optimized_d2d_member_collision_min_quota_scale
+        ),
+        optimized_d2d_member_schedule_fraction=(
+            optimized_d2d_member_schedule_fraction
+        ),
+        optimized_d2d_member_schedule_deficit_weight=(
+            optimized_d2d_member_schedule_deficit_weight
         ),
         checkpoints=[number_of_iterations__t],
         dtype=dtype,

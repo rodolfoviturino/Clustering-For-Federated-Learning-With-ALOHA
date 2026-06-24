@@ -1906,6 +1906,36 @@ class JaxModelTests(unittest.TestCase):
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
         )
 
+    def test_semi_scheduled_member_refresh_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=111,
+            optimized_d2d_access_mode="semi_scheduled_member_refresh",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_member_schedule_fraction=0.50,
+            optimized_d2d_member_schedule_deficit_weight=0.10,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
     def test_member_fair_utility_prioritizes_zero_participation_members(self):
         probability = jax_models._member_fair_utility_access_probability(
             aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
@@ -2087,6 +2117,42 @@ class JaxModelTests(unittest.TestCase):
         self.assertGreater(low_collision_probability[1], high_collision_probability[1])
         self.assertTrue(np.all(high_collision_probability <= 0.9))
 
+    def test_semi_scheduled_member_refresh_selects_top_member_pressure(self):
+        scores = jax_models._member_refresh_priority_scores(
+            member_aoi_by_cluster=jax_models.jnp.asarray(
+                [
+                    [2.0, 2.0],
+                    [2.0, 20.0],
+                    [2.0, 5.0],
+                ]
+            ),
+            member_participation_by_cluster=jax_models.jnp.asarray(
+                [
+                    [1, 1],
+                    [0, 0],
+                    [1, 1],
+                ]
+            ),
+            active_member_mask=jax_models.jnp.asarray(
+                [
+                    [True, True],
+                    [True, True],
+                    [True, True],
+                ]
+            ),
+            cluster_mask=jax_models.jnp.asarray([True, True, True]),
+            candidate_mask=jax_models.jnp.asarray([True, True, True]),
+            threshold_fraction=0.5,
+            priority_exponent=1.0,
+            member_refresh_deficit=jax_models.jnp.asarray([0.0, 0.0, 10.0]),
+            deficit_weight=0.0,
+        )
+        scheduled = jax_models._top_k_positive_mask(scores, 1)
+
+        self.assertTrue(bool(np.asarray(scheduled)[1]))
+        self.assertFalse(bool(np.asarray(scheduled)[0]))
+        self.assertFalse(bool(np.asarray(scheduled)[2]))
+
     def test_member_quota_utility_reserves_budget_for_zero_participation_members(self):
         probability = jax_models._member_quota_utility_access_probability(
             aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
@@ -2237,6 +2303,10 @@ class JaxModelTests(unittest.TestCase):
             {"optimized_d2d_member_collision_gain": -0.1},
             {"optimized_d2d_member_collision_min_quota_scale": -0.1},
             {"optimized_d2d_member_collision_min_quota_scale": 1.1},
+            {"optimized_d2d_member_schedule_fraction": -0.1},
+            {"optimized_d2d_member_schedule_fraction": 1.1},
+            {"optimized_d2d_member_schedule_deficit_weight": -0.1},
+            {"optimized_d2d_member_schedule_deficit_weight": 1.1},
         )
         for kwargs in invalid_kwargs:
             with self.subTest(kwargs=kwargs):

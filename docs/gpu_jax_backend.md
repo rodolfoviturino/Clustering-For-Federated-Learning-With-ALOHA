@@ -658,6 +658,17 @@ Policy differences:
   controlled by `--optimized-d2d-member-collision-gain`, with a lower bound set
   by `--optimized-d2d-member-collision-min-quota-scale`. This is the first
   collision-control candidate after the negative deficit result.
+- `semi_scheduled_member_refresh` moves beyond global ALOHA probability
+  shaping. It reserves
+  `ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
+  highest active member-pressure clusters, treats those CH attempts as
+  collision-free scheduled opportunities, and leaves the remaining channels to
+  utility-controlled ALOHA. Scheduled CHs still require enough battery and a
+  successful CH-to-BS link draw. Use
+  `--optimized-d2d-member-schedule-deficit-weight` only as a tie-breaker among
+  repeatedly missed refresh opportunities. This mode assumes a small BS/CH
+  control decision for reserved slots and is therefore a coordinated
+  semi-scheduled ablation, not a pure distributed ALOHA mode.
 - `member_deficit_utility` keeps the quota split but ranks the refresh overlay
   with a persistent missed-refresh deficit. This is intended for cases where
   many member AoIs saturate at the same value, making instantaneous stale-tail
@@ -668,8 +679,12 @@ Policy differences:
 
 The detailed physical/Rayleigh member-level comparison is recorded in
 `docs/member_level_d2d_freshness_experiments.md`. Current guidance is to use
-`member_quota_utility` as the member-freshness candidate and keep
-`member_deficit_utility` only as a negative ablation.
+`member_quota_utility` as the strongest pure ALOHA/probability-shaping
+member-freshness candidate, keep `member_deficit_utility` only as a negative
+collision-dominated ablation, and use `semi_scheduled_member_refresh` as the
+strongest enhanced candidate when coordinated refresh slots are acceptable.
+The best tested semi-scheduled point is schedule fraction `0.20` with deficit
+tie-breaker weight `0.0`.
 
 The utility Pareto tuning runner is:
 

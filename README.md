@@ -339,6 +339,19 @@ floor `--optimized-d2d-member-collision-min-quota-scale`. This is the direct
 response to the deficit experiments: keep stale-member refresh pressure, but
 avoid moving the bottleneck from `CH no attempt` into ALOHA collisions.
 
+The semi-scheduled refresh variant is
+`--optimized-d2d-access-mode semi_scheduled_member_refresh`. It reserves
+`ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
+clusters with the highest active member AoI/zero-participation pressure. Those
+reserved CH attempts are collision-free but still require CH energy and
+CH-to-BS decoding success. All remaining channels stay under the normal
+utility-controlled ALOHA allocator. The optional
+`--optimized-d2d-member-schedule-deficit-weight` lets persistent missed-refresh
+deficit act as a tie-breaker without turning the whole policy into probability
+over-concentration. Unlike the quota modes, this assumes a small BS/CH control
+decision for the reserved refresh slots and should be reported as a coordinated
+semi-scheduled ablation, not pure distributed ALOHA.
+
 The stateful deficit variant is
 `--optimized-d2d-access-mode member_deficit_utility`. It keeps the explicit
 quota split, but ranks the refresh overlay with a persistent per-cluster missed
@@ -353,11 +366,14 @@ is caused by many clusters tying at saturated member AoI.
 
 The current physical/Rayleigh member-level conclusion is documented in
 `docs/member_level_d2d_freshness_experiments.md`. The short version is that
-`member_quota_utility` is the current member-freshness candidate, with
-`w=0.15`, `floor=0` as the strongest tested point. `member_deficit_utility`
-is retained as a negative ablation: it reduces `CH no attempt`, but it moves
-the bottleneck into ALOHA collisions and badly degrades convergence and energy
-efficiency.
+`member_quota_utility` remains the strongest pure ALOHA/probability-shaping
+member-freshness policy, with `w=0.15`, `floor=0` as its strongest tested
+point. `semi_scheduled_member_refresh` is now the strongest enhanced policy
+when a small coordinated refresh-slot control plane is acceptable; the best
+tested point is `--optimized-d2d-member-schedule-fraction 0.20` with no deficit
+tie-breaker. `member_deficit_utility` is retained as a negative ablation: it
+reduces `CH no attempt`, but it moves the bottleneck into ALOHA collisions and
+badly degrades convergence and energy efficiency.
 
 Current `K=1000`, `rounds=100` ideal-link tests show that
 `member_fair_utility` directly reduces member starvation. Against the default
@@ -378,6 +394,9 @@ physical candidate inside the member-fair family (`member_aoi=60.541`,
 and energy efficiency for freshness. The later `member_quota_utility` runs
 supersede this as the stronger member-freshness candidate under the physical
 setup.
+The later `semi_scheduled_member_refresh` runs supersede the purely
+probabilistic member-aware policies when coordinated refresh slots are in
+scope.
 
 Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
@@ -1009,8 +1028,9 @@ skip cleanly when JAX is not installed in the local interpreter.
   and resets only for devices whose update was active inside that delivered
   aggregate. The member-level columns are diagnostics and do not change
   scheduling by default. Optional member-aware access policies such as
-`member_fair_utility`, `member_refresh_utility`, `member_quota_utility`, and
-  `member_collision_aware_quota`/`member_deficit_utility` consume those
+  `member_fair_utility`, `member_refresh_utility`, `member_quota_utility`, and
+  `member_collision_aware_quota`, `member_deficit_utility`, and
+  `semi_scheduled_member_refresh` consume those
   diagnostics only when explicitly selected.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation

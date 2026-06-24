@@ -36,7 +36,8 @@ directly tests whether stale members are access-opportunity limited.
 
 Splits the optimized-D2D CH contender target into a base utility budget and an
 explicit member-refresh overlay. `--optimized-d2d-aoi-weight` is the reserved
-refresh quota. This is the current best member-freshness candidate.
+refresh quota. This is the current best pure ALOHA/probability-shaping
+member-freshness candidate.
 
 `member_collision_aware_quota`
 
@@ -44,6 +45,14 @@ Keeps the quota structure but reduces the reserved member-refresh overlay when
 an EWMA of optimized-D2D CH collisions exceeds a configured target. This is the
 first follow-up after the negative deficit result and should be compared against
 `member_quota_w015_floor000_physical_r100`.
+
+`semi_scheduled_member_refresh`
+
+Reserves a small number of D2D channels for the highest active member-pressure
+clusters and runs utility ALOHA on the remaining channels. The scheduled CH
+attempts are collision-free, but they still require CH battery feasibility and
+CH-to-BS link success. This is the first implemented step beyond global ALOHA
+probability shaping.
 
 `member_deficit_utility`
 
@@ -96,6 +105,9 @@ Final checkpoint values for the optimized ALOHA + D2D curve:
 | `member_collision_quota_w015_t002_g2_min025_physical_r100` | `member_collision_aware_quota` | `2.663e-07` | `60.872` | `0.461` | `0.401` | `839.4` | `0.991` | `0.0064` |
 | `member_collision_quota_w015_t002_g4_min025_physical_r100` | `member_collision_aware_quota` | `2.683e-07` | `60.901` | `0.462` | `0.403` | `839.6` | `0.990` | `0.0072` |
 | `member_collision_quota_w015_t003_g4_min025_physical_r100` | `member_collision_aware_quota` | `2.608e-07` | `61.016` | `0.462` | `0.402` | `837.6` | `0.990` | `0.0072` |
+| `member_semischedule_s010_dw000_physical_r100` | `semi_scheduled_member_refresh` | `1.744e-08` | `54.010` | `0.358` | `0.283` | `1053.4` | `0.992` | `0.0031` |
+| `member_semischedule_s020_dw000_physical_r100` | `semi_scheduled_member_refresh` | `6.209e-09` | `47.842` | `0.253` | `0.138` | `1040.6` | `0.984` | `0.0055` |
+| `member_semischedule_s010_dw025_physical_r100` | `semi_scheduled_member_refresh` | `1.528e-08` | `53.928` | `0.357` | `0.282` | `1053.6` | `0.992` | `0.0032` |
 
 `member_deficit_v3` with deficit weights `0.05`, `0.10`, and `0.25` all stayed
 near the same poor regime: final error around `3.1e-3`, member stale75 around
@@ -125,6 +137,19 @@ member-level freshness regresses: member stale75 rises from `0.413` to about
 `0.401-0.403`. This makes it useful as a conservative convergence/energy
 ablation, but not as the main member-freshness policy.
 
+`semi_scheduled_member_refresh` is the strongest result so far, with an explicit
+scope caveat. It is no longer pure distributed ALOHA probability shaping: it
+assumes a small BS/CH control decision to reserve refresh slots. With that
+coordination, the `s=0.20`, `deficit_weight=0` run dominates the previous
+member-freshness candidates in this physical/Rayleigh setup: final error drops
+from `6.109e-7` for `member_quota_w015` to `6.209e-9`, member AoI drops from
+`58.319` to `47.842`, member stale75 from `0.413` to `0.253`, and
+zero-participation fraction from `0.337` to `0.138`. Energy efficiency also
+improves from `762.7` to `1040.6`, because reserved collision-free attempts
+increase useful CH deliveries instead of spending energy on collided ALOHA
+contention. The main cost is conceptual rather than numerical: it changes the
+protocol class from random access to semi-scheduled access.
+
 This means the current dense physical/Rayleigh regime is not limited only by
 "which stale cluster should get more probability". It is also collision limited.
 Persistent probability shaping is therefore not enough once the access overlay
@@ -138,8 +163,9 @@ Recommended points:
 
 - `w=0.10`, `floor=0`: balanced member-freshness improvement with lower error
   cost than the stronger quota point.
-- `w=0.15`, `floor=0`: strongest current member-freshness candidate and the
-  main point to compare against future access-control ideas.
+- `w=0.15`, `floor=0`: strongest current pure ALOHA/probability-shaping
+  member-freshness candidate and the main point to compare against coordinated
+  access-control ideas.
 
 Do not present `member_deficit_utility` as a main policy. Keep it as an
 implemented negative ablation showing that stale-member opportunity pressure can
@@ -150,19 +176,29 @@ main member-freshness result. Keep `member_collision_aware_quota` as a documente
 ablation showing that feedback can protect convergence/energy, but that simple
 global collision damping gives back too much member freshness.
 
+Use `semi_scheduled_member_refresh` as the current strongest enhanced-policy
+candidate when coordinated refresh slots are allowed. The best tested point is
+`--optimized-d2d-member-schedule-fraction 0.20` with
+`--optimized-d2d-member-schedule-deficit-weight 0.0`. The `0.10` deficit-weight
+variant changed little, so persistent deficit is not needed for the first paper
+claim.
+
 ## Next Research Direction
 
-The next implementation should not be another global smooth probability-only
-tweak. The results point to one of these directions:
+The next experiments should validate whether the semi-scheduled gain is robust
+and where the coordination/freshness tradeoff saturates:
 
-1. Per-cluster or per-refresh-class collision control: keep the member quota
+1. Sweep intermediate schedule fractions such as `0.05`, `0.15`, `0.25`, and
+   `0.30` to find the smallest reserved-slot budget that captures most of the
+   member-freshness gain.
+2. Re-run the best points at larger `K` and/or more rounds to verify that the
+   dominance is not a `K=1000`, `rounds=100` artifact.
+3. Per-cluster or per-refresh-class collision control: keep the member quota
    for the most starved clusters, but cap the base/overlay load locally instead
    of damping the entire refresh overlay from one global EWMA.
-2. Scheduled or semi-scheduled refresh: use a small deterministic refresh budget
-   for the oldest member-starved clusters instead of pure ALOHA.
-3. Re-clustering or cluster splitting: reduce the number of stale members
+4. Re-clustering or cluster splitting: reduce the number of stale members
    competing behind the same sparse CH access opportunities.
-4. Virtual queues with collision feedback: update the queue only when added
+5. Virtual queues with collision feedback: update the queue only when added
    access did not collide, so debt does not push too many CHs into the same
    contention interval.
 

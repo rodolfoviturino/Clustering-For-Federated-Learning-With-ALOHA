@@ -141,6 +141,8 @@ class GpuSweepTests(unittest.TestCase):
                 optimized_d2d_member_collision_target_fraction=0.04,
                 optimized_d2d_member_collision_gain=2.5,
                 optimized_d2d_member_collision_min_quota_scale=0.30,
+                optimized_d2d_member_schedule_fraction=0.20,
+                optimized_d2d_member_schedule_deficit_weight=0.15,
             )
         )
 
@@ -228,6 +230,11 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(
             metadata["optimized_d2d_member_collision_min_quota_scale"],
             0.30,
+        )
+        self.assertEqual(metadata["optimized_d2d_member_schedule_fraction"], 0.20)
+        self.assertEqual(
+            metadata["optimized_d2d_member_schedule_deficit_weight"],
+            0.15,
         )
         self.assertIn("optimized_aloha_d2d_energy_used_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_energy_efficiency_mean", rows[0])

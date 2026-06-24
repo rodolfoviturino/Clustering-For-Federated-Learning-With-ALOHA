@@ -828,6 +828,30 @@ member-freshness objective. Member stale75 rose from `0.413` to about
 member-freshness policy. The next access-control step should be per-cluster or
 semi-scheduled rather than another global damping scalar.
 
+Implemented semi-scheduled member refresh follow-up:
+`--optimized-d2d-access-mode semi_scheduled_member_refresh`. It reserves
+`ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
+highest active member-pressure clusters and runs utility ALOHA on the remaining
+channels. Reserved attempts are collision-free but still require CH energy and
+CH-to-BS decoding success. This was the next candidate tested because it attacks
+the dominant `CH no attempt` stale-member attribution without increasing the
+number of random ALOHA contenders. Compare it directly against
+`member_quota_w015_floor000_physical_r100` and reject it if it improves member
+freshness only by damaging convergence/energy.
+
+The first semi-scheduled physical/Rayleigh sweep is strongly positive. With
+`--optimized-d2d-member-schedule-fraction 0.20` and no deficit tie-breaker,
+final optimized-D2D error improved from `6.11e-7` for `member_quota_w015` to
+`6.21e-9`; member AoI improved from `58.319` to `47.842`; member stale75
+improved from `0.413` to `0.253`; zero-participation fraction improved from
+`0.337` to `0.138`; and energy efficiency improved from `762.7` to `1040.6`.
+The `0.10` schedule also improved all headline metrics, while adding
+`--optimized-d2d-member-schedule-deficit-weight 0.25` at `0.10` gave only a
+minor extra benefit. Treat `semi_scheduled_member_refresh` as the strongest
+current enhanced-policy candidate when a small coordinated refresh-slot control
+plane is acceptable. The next validation step is to sweep schedule fractions
+around `0.05-0.30` and rerun the best point at larger `K`/round counts.
+
 ### Step 2: Calibrate The First-Order Energy Model
 
 The code now implements opt-in first-order radio accounting:

@@ -188,6 +188,8 @@ def summarize_run(csv_path, scenario=DEFAULT_SCENARIO):
             "optimized_d2d_member_collision_target_fraction",
             "optimized_d2d_member_collision_gain",
             "optimized_d2d_member_collision_min_quota_scale",
+            "optimized_d2d_member_schedule_fraction",
+            "optimized_d2d_member_schedule_deficit_weight",
             "d2d_member_link_success_mode",
             "d2d_member_link_success_probability",
             "d2d_member_pathloss_exponent",

@@ -198,6 +198,18 @@ This document records the simulation defaults after the code cleanup.
   smoothly reduced by `--optimized-d2d-member-collision-gain` toward
   `--optimized-d2d-member-collision-min-quota-scale` above the target. This is
   the collision-control response to the `member_deficit_utility` result.
+- `semi_scheduled_member_refresh` is the first member-aware policy that is not
+  pure ALOHA probability shaping. It reserves
+  `ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
+  clusters with the highest active member AoI/zero-participation pressure, then
+  runs utility ALOHA on the remaining channels. A scheduled CH attempt is
+  collision-free, but it still requires CH battery feasibility and CH-to-BS
+  decoding success. The optional
+  `--optimized-d2d-member-schedule-deficit-weight` only breaks ties in the
+  ranking; it does not create extra scheduled slots. This mode assumes a small
+  BS/CH control decision for the reserved refresh slots, so it is a
+  coordinated semi-scheduled ablation rather than fully distributed random
+  ALOHA.
 - `member_deficit_utility` adds one piece of memory to the explicit quota
   policy. The optimized-D2D scenario keeps a per-cluster missed-refresh deficit
   that increases when active stale or zero-participation members are available
@@ -208,9 +220,12 @@ This document records the simulation defaults after the code cleanup.
   for ALOHA collisions. The deficit only ranks the local ALOHA probability
   overlay; it is not centralized scheduling.
   See `docs/member_level_d2d_freshness_experiments.md` for the current
-  physical/Rayleigh conclusion: `member_quota_utility` is the useful
-  member-freshness candidate, while `member_deficit_utility` is a negative
-  collision-dominated ablation.
+  physical/Rayleigh conclusion: `member_quota_utility` is the useful pure
+  ALOHA/probability-shaping member-freshness candidate, while
+  `member_deficit_utility` is a negative collision-dominated ablation.
+  `semi_scheduled_member_refresh` is the strongest current enhanced candidate
+  when a small explicit refresh schedule is allowed; its best tested point uses
+  schedule fraction `0.20` and deficit tie-breaker weight `0.0`.
 - AoI is tracked as an output metric for all six scenarios. Non-D2D scenarios
   track per-device AoI and reset a device to `1` after its successful upload.
   D2D scenarios track per-cluster AoI and reset a cluster to `1` after its CH

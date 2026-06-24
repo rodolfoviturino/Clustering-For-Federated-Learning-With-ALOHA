@@ -293,6 +293,12 @@ def run_gpu_sweep(args):
             optimized_d2d_member_collision_min_quota_scale=(
                 args.optimized_d2d_member_collision_min_quota_scale
             ),
+            optimized_d2d_member_schedule_fraction=(
+                args.optimized_d2d_member_schedule_fraction
+            ),
+            optimized_d2d_member_schedule_deficit_weight=(
+                args.optimized_d2d_member_schedule_deficit_weight
+            ),
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -769,6 +775,12 @@ def run_gpu_sweep(args):
         ),
         "optimized_d2d_member_collision_min_quota_scale": float(
             args.optimized_d2d_member_collision_min_quota_scale
+        ),
+        "optimized_d2d_member_schedule_fraction": float(
+            args.optimized_d2d_member_schedule_fraction
+        ),
+        "optimized_d2d_member_schedule_deficit_weight": float(
+            args.optimized_d2d_member_schedule_deficit_weight
         ),
         "clustering_strategy_note": (
             dense_strategy_note
@@ -1346,6 +1358,7 @@ def build_parser():
             "member_quota_utility",
             "member_deficit_utility",
             "member_collision_aware_quota",
+            "semi_scheduled_member_refresh",
         ),
         default="norm",
         help=(
@@ -1369,7 +1382,9 @@ def build_parser():
             "member_deficit_utility ranks that quota by persistent missed "
             "refresh opportunity deficit; member_collision_aware_quota keeps "
             "the quota but dampens it when optimized-D2D collisions exceed a "
-            "target."
+            "target; semi_scheduled_member_refresh reserves a small number of "
+            "collision-free CH opportunities for the most member-starved "
+            "clusters and leaves the remaining channels to utility ALOHA."
         ),
     )
     parser.add_argument(
@@ -1560,7 +1575,9 @@ def build_parser():
             "utility contender target; for member_deficit_utility it is the "
             "same quota, ranked by current member pressure plus deficit; for "
             "member_collision_aware_quota it is the maximum quota before "
-            "collision feedback damping."
+            "collision feedback damping; semi_scheduled_member_refresh ignores "
+            "this weight and uses --optimized-d2d-member-schedule-fraction "
+            "to size its reserved refresh budget."
         ),
     )
     parser.add_argument(
@@ -1663,6 +1680,27 @@ def build_parser():
             "member_collision_aware_quota minimum scale applied to the member "
             "refresh quota under high collision EWMA. 0 can fully disable the "
             "overlay; 1 disables collision-aware damping."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-schedule-fraction",
+        type=float,
+        default=0.10,
+        help=(
+            "semi_scheduled_member_refresh fraction of D2D channels reserved "
+            "for collision-free scheduled refresh attempts. The selected "
+            "clusters are the highest active member-pressure clusters, and "
+            "the remaining channels are left to utility-controlled ALOHA."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-schedule-deficit-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "semi_scheduled_member_refresh optional weight for persistent "
+            "missed-refresh deficit when ranking scheduled clusters. 0.0 ranks "
+            "only by current active member AoI/zero-participation pressure."
         ),
     )
     parser.add_argument(

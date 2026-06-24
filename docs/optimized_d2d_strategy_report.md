@@ -123,9 +123,11 @@ Observed conclusions:
 - The immediate next validation step is to rerun the physical `utility`
   baseline with the current AoI percentile/stale metrics, because
   `k1000_physical_energy_r100` was generated before all tail columns were
-  available. After that, the more productive implementation direction is
-  structural: per-link D2D outage, AoI/channel-aware CH rotation, or
-  re-clustering, not only another access-probability formula.
+  available. The code now also supports the first structural member-link
+  upgrade: `--d2d-member-link-success-mode rayleigh_outage`, which makes each
+  member-to-CH delivery probability depend on its distance to the current CH.
+  That mode should be compared against the refreshed baseline before adding
+  another access-probability formula.
 
 The latest `K=3000` CH-quality and energy-rotation runs also clarified the
 physical enhanced direction:
@@ -975,15 +977,52 @@ Status after validation:
   useful ablation showing that channel/battery-aware AoI quota is less wasteful,
   but it is not yet a Pareto-dominant optimized-D2D strategy.
 - The next run should refresh the physical `utility` baseline with the current
-  AoI percentile and stale-fraction columns before adding another policy.
+  AoI percentile and stale-fraction columns, then repeat it with per-link
+  member-to-CH Rayleigh outage before adding another policy.
+
+### Per-Link D2D Member Outage
+
+The latest structural model option is:
+
+```text
+--d2d-member-link-success-mode rayleigh_outage
+```
+
+In this mode, each non-CH member has its own collision-free D2D decoding
+probability:
+
+```text
+avg_snr_i,h = reference_snr / max(d_i,h, 1)^pathloss_exponent
+q_i,h       = exp(-snr_threshold / avg_snr_i,h)
+```
+
+where `d_i,h` is the distance from member `i` to the current CH `h`. The CH is
+always active in its own cluster; other members must compute locally, satisfy
+optional battery feasibility, and pass this D2D link draw. With dynamic CH
+rotation, the same fixed cluster can therefore have different aggregate
+completeness depending on which valid CH is elected.
+
+Real-world plausibility:
+
+- A CH can estimate member link reliability from D2D pilot/ACK history or a
+  short-range link budget.
+- The BS does not need to choose which members transmit; it only configures the
+  physical-link parameters and receives the final aggregate.
+- The model still abstracts away D2D interference powers, retransmissions,
+  coding, and MAC timing, so it is a physical-decoding step, not a full
+  link-layer simulator.
 
 ## Open Validation Work
 
 - Rerun the physical `utility` baseline with current AoI percentile/stale-tail
   columns. The older `k1000_physical_energy_r100` run lacks p75/p90/p95 and
   stale-fraction fields, so it is incomplete as an AoI-tail baseline.
+- Run the same baseline with `--d2d-member-link-success-mode rayleigh_outage`
+  to measure whether distance-aware member aggregation changes error, energy,
+  and stale-tail AoI.
 - Test robustness when `clusterized_devices_fraction` is noisy or delayed.
-- Test imperfect D2D member compute/link probabilities below `1.0`.
+- Test imperfect D2D member compute/link probabilities below `1.0`, including
+  scalar `constant` and per-link `rayleigh_outage` member links.
 - Test whether density thresholds generalize to `K=500`, `K=5000`, and
   `K=10000`.
 - Test quality CH election with `--d2d-ch-bs-success-mode channel_quality` to

@@ -243,8 +243,8 @@ counterpart for non-D2D curves.  This keeps D2D and non-D2D comparisons under
 the same channel-quality abstraction: first ALOHA contention, then physical
 decoding for collision-free packets.
 
-The enhanced physical-link option is `rayleigh_outage` for both
-`--d2d-ch-bs-success-mode` and `--device-bs-success-mode`:
+The enhanced physical-link option is `rayleigh_outage` for member-to-CH D2D
+links, CH-to-BS links, and direct device-to-BS links:
 
 ```text
 avg_snr_i = reference_snr / max(distance_i, 1)^pathloss_exponent
@@ -253,7 +253,12 @@ q_i       = exp(-snr_threshold / max(avg_snr_i, eps))
 
 This is still not a full SINR simulator: ALOHA collisions remain the explicit
 interference abstraction, and Rayleigh outage is the collision-free packet
-decoding probability.  Use
+decoding probability.  For member-to-CH D2D links, select
+`--d2d-member-link-success-mode rayleigh_outage`; the distance term is each
+member's distance to the currently elected CH, producing a
+`float[max_clusters, Cmax]` probability matrix.  For CH-to-BS and direct BS
+links, use `--d2d-ch-bs-success-mode rayleigh_outage` and
+`--device-bs-success-mode rayleigh_outage`.  Use
 `--cluster-head-channel-score-mode rayleigh_outage` when quality CH election
 should rank candidate CHs by the same outage metric rather than normalized
 inverse pathloss.  The BS can estimate or configure the reference SNR and

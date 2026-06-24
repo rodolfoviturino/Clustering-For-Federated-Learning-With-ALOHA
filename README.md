@@ -143,6 +143,21 @@ error_calculator_trace_jax(
 )
 ```
 
+For a distance-aware member-to-CH link, use the Rayleigh outage mode:
+
+```python
+error_calculator_trace_jax(
+    ...,
+    d2d_member_link_success_mode="rayleigh_outage",
+    d2d_member_reference_snr=100000.0,
+    d2d_member_snr_threshold=1.0,
+    device_coords=devices.coords,
+)
+```
+
+This keeps the same one-hop clusters but makes each non-CH member's short-range
+D2D packet succeed according to its distance to the currently elected CH.
+
 Run the complete `.py` workflow from local CPU, Colab, or a CUDA-enabled Linux
 environment. The root entry point writes CSV results, metadata JSON, and
 standard figures:
@@ -201,10 +216,15 @@ attempt and does not drain. The older `*_battery_exponent` flags remain for
 backward compatibility, but the physically cleaner enhanced path is to set
 them to `0.0` and use battery feasibility instead.
 
-The second physical-link option is `rayleigh_outage`, available for both
-`--d2d-ch-bs-success-mode` and `--device-bs-success-mode`. It still keeps ALOHA
-collisions as the interference abstraction, but maps collision-free decoding to
-`exp(-snr_threshold / average_snr)`. Use
+The second physical-link option is `rayleigh_outage`, available for
+member-to-CH D2D links, CH-to-BS links, and direct device-to-BS links. Use
+`--d2d-member-link-success-mode rayleigh_outage` to replace the older scalar
+member-link probability with a per-member probability based on the distance
+from each active member to the currently elected CH. Use
+`--d2d-ch-bs-success-mode rayleigh_outage` and
+`--device-bs-success-mode rayleigh_outage` for collision-free BS decoding.
+ALOHA collisions remain the interference abstraction, while Rayleigh maps
+collision-free decoding to `exp(-snr_threshold / average_snr)`. Use
 `--cluster-head-channel-score-mode rayleigh_outage` when quality CH election
 should use the same outage metric instead of normalized inverse pathloss. The
 runner writes mean battery, mean D2D-CH battery, energy-used,
@@ -444,6 +464,35 @@ python main.py --run-name k1000_physical_energy_smoke \
   --optimized-d2d-load-target-factor 1.1
 ```
 
+Recommended per-link member-to-CH Rayleigh comparison:
+
+```bash
+python main.py --run-name k1000_physical_energy_member_rayleigh_r100 \
+  --devices 1000 \
+  --rounds 100 \
+  --precision float64 \
+  --energy-drain-mode dynamic \
+  --energy-model first_order_radio \
+  --battery-feasibility-mode required_energy \
+  --d2d-member-link-success-mode rayleigh_outage \
+  --d2d-member-reference-snr 100000.0 \
+  --d2d-member-snr-threshold 1.0 \
+  --d2d-ch-bs-success-mode rayleigh_outage \
+  --device-bs-success-mode rayleigh_outage \
+  --cluster-head-selection-mode quality \
+  --cluster-head-channel-score-mode rayleigh_outage \
+  --cluster-head-degree-weight 0.0 \
+  --cluster-head-channel-weight 1.0 \
+  --cluster-head-battery-weight 0.0 \
+  --optimized-d2d-access-mode utility \
+  --optimized-d2d-load-allocation-mode conditional_selective_water_filling \
+  --optimized-d2d-access-floor-fraction 0.02 \
+  --optimized-d2d-norm-exponent 3.5 \
+  --optimized-d2d-cluster-size-exponent 1.5 \
+  --optimized-d2d-freshness-exponent 0.25 \
+  --optimized-d2d-load-target-factor 1.1
+```
+
 Recommended AoI-aware comparison against the physical-energy utility run:
 
 ```bash
@@ -567,6 +616,7 @@ After two or more runs are complete, compare them without rerunning JAX:
 ```bash
 python -m experiments.compare_runs \
   Runs/k1000_physical_energy_r100 \
+  Runs/k1000_physical_energy_member_rayleigh_r100 \
   Runs/k1000_physical_energy_aoi_floor_r100 \
   Runs/k1000_physical_energy_aoi_tail_r100 \
   Runs/k1000_physical_energy_aoi_quality_tail_r100
@@ -832,8 +882,10 @@ skip cleanly when JAX is not installed in the local interpreter.
 
 - The clustering heuristic is a centralized simulator of the proposed distributed
   protocol. It does not model every message exchange explicitly.
-- D2D member-to-CH collisions, packet loss, delay, and energy cost are optional
-  abstractions, not a full link-layer simulator.
+- D2D member-to-CH packet loss can use either a constant probability or
+  Rayleigh outage by member-to-current-CH distance. It is still not a full
+  link-layer simulator with retransmission, queuing, modulation, coding, or
+  explicit same-channel D2D interference.
 - Dynamic battery drain is optional. The enhanced first-order radio model
   separates transmit, receive, and aggregation roles, but it is still
   normalized rather than calibrated in joules unless you choose and document

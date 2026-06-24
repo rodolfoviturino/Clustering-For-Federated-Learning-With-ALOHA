@@ -337,6 +337,31 @@ def _rayleigh_outage_success_probability(
     return jnp.clip(probability, 0.0, 1.0).astype(dtype)
 
 
+def _rayleigh_outage_success_from_distance(
+    distance,
+    dtype,
+    pathloss_exponent=2.0,
+    reference_snr=100000.0,
+    snr_threshold=1.0,
+):
+    """Return Rayleigh outage success probability for any distance-shaped array.
+
+    ``_rayleigh_outage_success_probability`` is kept for per-device BS links.
+    D2D member-to-CH links need the same physics on a padded
+    ``float[max_clusters, Cmax]`` distance matrix, so this helper keeps the
+    formula reusable without pretending the input is a device vector.
+    """
+    distance = jnp.asarray(distance, dtype=dtype)
+    one = jnp.asarray(1.0, dtype=dtype)
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    pathloss_exponent = jnp.asarray(pathloss_exponent, dtype=dtype)
+    reference_snr = jnp.asarray(reference_snr, dtype=dtype)
+    snr_threshold = jnp.asarray(snr_threshold, dtype=dtype)
+    average_snr = reference_snr / (jnp.maximum(distance, one) ** pathloss_exponent)
+    probability = jnp.exp(-snr_threshold / jnp.maximum(average_snr, eps))
+    return jnp.clip(probability, 0.0, 1.0).astype(dtype)
+
+
 def _first_order_bs_tx_energy(
     distance_to_bs,
     packet_size,
@@ -1474,6 +1499,10 @@ def error_calculator_trace_jax(
     normalize_by_k: bool = False,
     d2d_member_compute_probability: float = 1.0,
     d2d_member_link_success_probability: float = 1.0,
+    d2d_member_link_success_mode: str = "constant",
+    d2d_member_pathloss_exponent: float = 2.0,
+    d2d_member_reference_snr: float = 100000.0,
+    d2d_member_snr_threshold: float = 1.0,
     d2d_ch_bs_success_mode: str = "none",
     d2d_ch_bs_min_success_probability: float = 0.20,
     d2d_ch_bs_pathloss_exponent: float = 2.0,
@@ -1565,6 +1594,20 @@ def error_calculator_trace_jax(
         raise ValueError("d2d_member_compute_probability must be in [0, 1]")
     if not 0.0 <= d2d_member_link_success_probability <= 1.0:
         raise ValueError("d2d_member_link_success_probability must be in [0, 1]")
+    if d2d_member_link_success_mode not in {"constant", "rayleigh_outage"}:
+        raise ValueError(
+            "d2d_member_link_success_mode must be 'constant' or 'rayleigh_outage'"
+        )
+    if d2d_member_pathloss_exponent < 0.0:
+        raise ValueError("d2d_member_pathloss_exponent must be non-negative")
+    if d2d_member_reference_snr <= 0.0:
+        raise ValueError("d2d_member_reference_snr must be positive")
+    if d2d_member_snr_threshold < 0.0:
+        raise ValueError("d2d_member_snr_threshold must be non-negative")
+    if d2d_member_link_success_mode == "rayleigh_outage" and device_coords is None:
+        raise ValueError(
+            "rayleigh_outage D2D member links require device_coords"
+        )
     if d2d_ch_bs_success_mode not in {"none", "channel_quality", "rayleigh_outage"}:
         raise ValueError(
             "d2d_ch_bs_success_mode must be 'none', 'channel_quality', or "
@@ -1744,6 +1787,12 @@ def error_calculator_trace_jax(
     step_size = jnp.asarray(step_size__u, dtype=dtype)
     d2d_compute_probability = jnp.asarray(d2d_member_compute_probability, dtype=dtype)
     d2d_link_probability = jnp.asarray(d2d_member_link_success_probability, dtype=dtype)
+    d2d_member_pathloss_exponent = jnp.asarray(
+        d2d_member_pathloss_exponent,
+        dtype=dtype,
+    )
+    d2d_member_reference_snr = jnp.asarray(d2d_member_reference_snr, dtype=dtype)
+    d2d_member_snr_threshold = jnp.asarray(d2d_member_snr_threshold, dtype=dtype)
     d2d_ch_bs_min_success_probability = jnp.asarray(
         d2d_ch_bs_min_success_probability,
         dtype=dtype,
@@ -1942,10 +1991,10 @@ def error_calculator_trace_jax(
     member_positions = jnp.arange(max_cluster_size, dtype=jnp.int32)[None, :]
     member_mask = member_positions < cluster_sizes[:, None]
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], 0)
-    if device_coords is None or device_radius is None:
+    coords = None if device_coords is None else jnp.asarray(device_coords, dtype=dtype)
+    if coords is None or device_radius is None:
         candidate_can_cover_members = member_mask
     else:
-        coords = jnp.asarray(device_coords, dtype=dtype)
         candidate_coords = coords[safe_members]
         coverage_deltas = (
             candidate_coords[:, :, None, :] - candidate_coords[:, None, :, :]
@@ -1994,9 +2043,7 @@ def error_calculator_trace_jax(
         ).astype(dtype)
         member_rx_energy = energy_update_size * energy_electronics_cost
         aggregate_update_energy = energy_update_size * energy_aggregation_cost
-        coords_for_energy = (
-            None if device_coords is None else jnp.asarray(device_coords, dtype=dtype)
-        )
+        coords_for_energy = coords
         d2d_member_energy_by_position = None
     else:
         coords_for_energy = None
@@ -2118,6 +2165,37 @@ def error_calculator_trace_jax(
             energy_d2d_amplifier_cost,
             energy_d2d_pathloss_exponent,
         ).astype(dtype)
+
+    def member_link_success_probability_for_heads(heads):
+        """Return per-member D2D decoding probability for the elected CHs.
+
+        heads: int[max_clusters], elected CH for one D2D scenario.
+
+        Return shape: float[max_clusters, Cmax].  The default ``constant`` mode
+        preserves the earlier scalar member-link probability exactly.  The
+        enhanced ``rayleigh_outage`` mode uses the member-to-current-CH
+        distance, so CH rotation can change member-link reliability even when
+        cluster membership is fixed.
+        """
+        if d2d_member_link_success_mode == "constant":
+            probability = jnp.full(
+                cluster_members.shape,
+                d2d_link_probability,
+                dtype=dtype,
+            )
+        else:
+            member_coords = coords[safe_members]
+            head_coords = coords[heads][:, None, :]
+            deltas = member_coords - head_coords
+            distances = jnp.sqrt(jnp.sum(deltas * deltas, axis=-1))
+            probability = _rayleigh_outage_success_from_distance(
+                distances,
+                dtype=dtype,
+                pathloss_exponent=d2d_member_pathloss_exponent,
+                reference_snr=d2d_member_reference_snr,
+                snr_threshold=d2d_member_snr_threshold,
+            )
+        return jnp.where(member_mask & cluster_mask[:, None], probability, 0.0)
 
     def ch_required_energy_for_heads(heads, active_member_mask):
         if energy_model != "first_order_radio":
@@ -2466,10 +2544,7 @@ def error_calculator_trace_jax(
             cluster_members.shape,
             dtype=dtype,
         )
-        member_compute_link_success = (
-            (active_compute_draws < d2d_compute_probability)
-            & (active_link_draws < d2d_link_probability)
-        )
+        member_compute_success = active_compute_draws < d2d_compute_probability
 
         direct_can_attempt_1 = direct_device_has_required_energy(current_batteries[0])
         direct_can_attempt_2 = direct_device_has_required_energy(current_batteries[1])
@@ -2478,8 +2553,25 @@ def error_calculator_trace_jax(
         member_energy_1 = member_energy_for_heads(polling_d2d_heads)
         member_energy_2 = member_energy_for_heads(fixed_d2d_heads)
         member_energy_3 = member_energy_for_heads(optimized_d2d_heads)
+        member_link_success_1 = (
+            active_link_draws
+            < member_link_success_probability_for_heads(polling_d2d_heads)
+        )
+        member_link_success_2 = (
+            active_link_draws
+            < member_link_success_probability_for_heads(fixed_d2d_heads)
+        )
+        member_link_success_3 = (
+            active_link_draws
+            < member_link_success_probability_for_heads(optimized_d2d_heads)
+        )
 
-        def active_member_mask_for_heads(heads, scenario_battery, member_energy):
+        def active_member_mask_for_heads(
+            heads,
+            scenario_battery,
+            member_energy,
+            member_link_success,
+        ):
             is_scenario_ch = safe_members == heads[:, None]
             if battery_feasibility_enabled:
                 member_has_energy = scenario_battery[safe_members] >= member_energy
@@ -2490,7 +2582,11 @@ def error_calculator_trace_jax(
                 & cluster_mask[:, None]
                 & (
                     is_scenario_ch
-                    | (member_compute_link_success & member_has_energy)
+                    | (
+                        member_compute_success
+                        & member_link_success
+                        & member_has_energy
+                    )
                 )
             )
 
@@ -2498,16 +2594,19 @@ def error_calculator_trace_jax(
             polling_d2d_heads,
             current_batteries[3],
             member_energy_1,
+            member_link_success_1,
         )
         active_member_mask_2 = active_member_mask_for_heads(
             fixed_d2d_heads,
             current_batteries[4],
             member_energy_2,
+            member_link_success_2,
         )
         active_member_mask_3 = active_member_mask_for_heads(
             optimized_d2d_heads,
             current_batteries[5],
             member_energy_3,
+            member_link_success_3,
         )
         active_member_counts_1 = jnp.sum(active_member_mask_1, axis=1).astype(jnp.int32)
         active_member_counts_2 = jnp.sum(active_member_mask_2, axis=1).astype(jnp.int32)
@@ -3393,6 +3492,10 @@ def error_calculator(
     normalize_by_k: bool = False,
     d2d_member_compute_probability: float = 1.0,
     d2d_member_link_success_probability: float = 1.0,
+    d2d_member_link_success_mode: str = "constant",
+    d2d_member_pathloss_exponent: float = 2.0,
+    d2d_member_reference_snr: float = 100000.0,
+    d2d_member_snr_threshold: float = 1.0,
     d2d_ch_bs_success_mode: str = "none",
     d2d_ch_bs_min_success_probability: float = 0.20,
     d2d_ch_bs_pathloss_exponent: float = 2.0,
@@ -3472,6 +3575,10 @@ def error_calculator(
         normalize_by_k=normalize_by_k,
         d2d_member_compute_probability=d2d_member_compute_probability,
         d2d_member_link_success_probability=d2d_member_link_success_probability,
+        d2d_member_link_success_mode=d2d_member_link_success_mode,
+        d2d_member_pathloss_exponent=d2d_member_pathloss_exponent,
+        d2d_member_reference_snr=d2d_member_reference_snr,
+        d2d_member_snr_threshold=d2d_member_snr_threshold,
         d2d_ch_bs_success_mode=d2d_ch_bs_success_mode,
         d2d_ch_bs_min_success_probability=d2d_ch_bs_min_success_probability,
         d2d_ch_bs_pathloss_exponent=d2d_ch_bs_pathloss_exponent,

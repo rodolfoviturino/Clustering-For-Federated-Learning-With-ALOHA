@@ -185,6 +185,10 @@ def run_gpu_sweep(args):
             normalize_by_k=args.normalize_by_k,
             d2d_member_compute_probability=args.d2d_member_compute_probability,
             d2d_member_link_success_probability=args.d2d_member_link_success_probability,
+            d2d_member_link_success_mode=args.d2d_member_link_success_mode,
+            d2d_member_pathloss_exponent=args.d2d_member_pathloss_exponent,
+            d2d_member_reference_snr=args.d2d_member_reference_snr,
+            d2d_member_snr_threshold=args.d2d_member_snr_threshold,
             d2d_ch_bs_success_mode=args.d2d_ch_bs_success_mode,
             d2d_ch_bs_min_success_probability=args.d2d_ch_bs_min_success_probability,
             d2d_ch_bs_pathloss_exponent=args.d2d_ch_bs_pathloss_exponent,
@@ -482,6 +486,16 @@ def run_gpu_sweep(args):
         "cluster_head_battery_weight": float(args.cluster_head_battery_weight),
         "cluster_head_channel_score_mode": args.cluster_head_channel_score_mode,
         "cluster_quality_metrics": list(CLUSTER_QUALITY_METRICS),
+        "d2d_member_compute_probability": float(
+            args.d2d_member_compute_probability
+        ),
+        "d2d_member_link_success_probability": float(
+            args.d2d_member_link_success_probability
+        ),
+        "d2d_member_link_success_mode": args.d2d_member_link_success_mode,
+        "d2d_member_pathloss_exponent": float(args.d2d_member_pathloss_exponent),
+        "d2d_member_reference_snr": float(args.d2d_member_reference_snr),
+        "d2d_member_snr_threshold": float(args.d2d_member_snr_threshold),
         "d2d_ch_bs_success_mode": args.d2d_ch_bs_success_mode,
         "d2d_ch_bs_min_success_probability": float(
             args.d2d_ch_bs_min_success_probability
@@ -785,6 +799,44 @@ def build_parser():
     parser.add_argument("--uniform-area", action="store_true")
     parser.add_argument("--d2d-member-compute-probability", type=float, default=1.0)
     parser.add_argument("--d2d-member-link-success-probability", type=float, default=1.0)
+    parser.add_argument(
+        "--d2d-member-link-success-mode",
+        choices=("constant", "rayleigh_outage"),
+        default="constant",
+        help=(
+            "D2D member-to-CH decoding model. constant preserves the legacy "
+            "--d2d-member-link-success-probability scalar; rayleigh_outage "
+            "computes a per-member probability from member-to-current-CH "
+            "distance, reference SNR, pathloss, and SNR threshold."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-member-pathloss-exponent",
+        type=float,
+        default=2.0,
+        help=(
+            "Pathloss exponent used by rayleigh_outage D2D member-to-CH "
+            "decoding. Ignored in constant mode."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-member-reference-snr",
+        type=float,
+        default=100000.0,
+        help=(
+            "Reference average SNR at one meter for rayleigh_outage D2D "
+            "member-to-CH decoding."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-member-snr-threshold",
+        type=float,
+        default=1.0,
+        help=(
+            "SNR threshold for rayleigh_outage D2D member-to-CH decoding. "
+            "The success probability is exp(-threshold / average_snr)."
+        ),
+    )
     parser.add_argument(
         "--d2d-ch-bs-success-mode",
         choices=("none", "channel_quality", "rayleigh_outage"),

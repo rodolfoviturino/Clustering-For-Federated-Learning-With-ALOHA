@@ -208,6 +208,28 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(higher_snr >= probability))
         self.assertTrue(np.all(higher_threshold <= probability))
 
+    def test_d2d_member_rayleigh_probability_is_monotonic(self):
+        jnp = jax_models.jnp
+        distances = jnp.asarray(
+            [[0.0, 1.0, 10.0], [2.0, 5.0, 15.0]],
+            dtype=jnp.float32,
+        )
+        probability = np.asarray(
+            jax_models._rayleigh_outage_success_from_distance(
+                distances,
+                dtype=jnp.float32,
+                pathloss_exponent=2.0,
+                reference_snr=1000.0,
+                snr_threshold=1.0,
+            )
+        )
+
+        self.assertEqual(probability.shape, (2, 3))
+        self.assertGreaterEqual(probability[0, 0], probability[0, 1])
+        self.assertGreater(probability[0, 1], probability[0, 2])
+        self.assertGreater(probability[1, 0], probability[1, 1])
+        self.assertGreater(probability[1, 1], probability[1, 2])
+
     def test_first_order_radio_energy_increases_with_distance_and_size(self):
         jnp = jax_models.jnp
         distances = jnp.asarray([1.0, 10.0, 20.0], dtype=jnp.float32)
@@ -264,6 +286,34 @@ class JaxModelTests(unittest.TestCase):
             device_bs_reference_snr=100000.0,
             device_bs_snr_threshold=1.0,
             device_distance_to_bs=jnp.asarray([5.0, 80.0, 10.0, 70.0]),
+            checkpoints=[1, 3],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.mean_aoi).shape, (2, 6))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.mean_aoi))))
+
+    def test_d2d_member_rayleigh_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
+        jnp = jax_models.jnp
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=23,
+            d2d_member_link_success_mode="rayleigh_outage",
+            d2d_member_reference_snr=1000.0,
+            d2d_member_snr_threshold=1.0,
+            device_coords=jnp.asarray(
+                [[0.0, 0.0], [1.0, 0.0], [10.0, 0.0], [14.0, 0.0]],
+                dtype=jnp.float32,
+            ),
             checkpoints=[1, 3],
         )
 
@@ -458,6 +508,31 @@ class JaxModelTests(unittest.TestCase):
                         seed=17,
                         **kwargs,
                     )
+
+    def test_d2d_member_link_success_parameters_are_validated(self):
+        base_kwargs = dict(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            number_of_iterations__t=1,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters_list=[[0, 1], [2, 3]],
+            seed=17,
+        )
+        invalid_kwargs = (
+            {"d2d_member_link_success_mode": "invalid"},
+            {"d2d_member_pathloss_exponent": -0.1},
+            {"d2d_member_reference_snr": 0.0},
+            {"d2d_member_snr_threshold": -0.1},
+            {"d2d_member_link_success_mode": "rayleigh_outage"},
+        )
+
+        for kwargs in invalid_kwargs:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    error_calculator(**base_kwargs, **kwargs)
 
     def test_energy_drain_parameters_are_validated(self):
         invalid_kwargs = (

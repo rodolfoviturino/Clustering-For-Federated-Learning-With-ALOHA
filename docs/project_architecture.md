@@ -135,11 +135,12 @@ outputs.
 - JAX HFL/ALOHA simulation.
 - Uses `jax.lax.scan` to run one trajectory and record all requested
   checkpoints.
-- Supports optional direct device-to-BS decoding for non-D2D curves and
-  optional CH-to-BS decoding for D2D curves. Devices and CHs still contend
-  through ALOHA first; collision-free packets may then fail under either the
-  legacy inverse-pathloss `channel_quality` model or the enhanced
-  `rayleigh_outage` model.
+- Supports optional member-to-CH D2D decoding, direct device-to-BS decoding for
+  non-D2D curves, and CH-to-BS decoding for D2D curves. Devices and CHs still
+  contend through ALOHA first; collision-free packets may then fail under
+  either legacy scalar/channel-quality abstractions or the enhanced
+  `rayleigh_outage` model. Member-to-CH Rayleigh mode uses each member's
+  distance to the currently elected CH.
 - Supports optional dynamic battery drain with independent battery state for
   each of the six counterfactual curves. Energy can use legacy constant costs
   or the enhanced first-order radio model that separates direct BS transmit,

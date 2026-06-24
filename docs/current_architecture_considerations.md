@@ -209,11 +209,12 @@ aggregate reaches the BS.
 
 ## Member-To-CH Availability
 
-D2D member participation has two optional realism knobs:
+D2D member participation has three optional realism knobs:
 
 ```text
 --d2d-member-compute-probability
 --d2d-member-link-success-probability
+--d2d-member-link-success-mode
 ```
 
 Defaults:
@@ -221,25 +222,40 @@ Defaults:
 ```text
 d2d_member_compute_probability = 1.0
 d2d_member_link_success_probability = 1.0
+d2d_member_link_success_mode = constant
 ```
 
 Meaning:
 
 - compute probability models whether a member produced its local update;
-- link success probability models whether that member delivered its update to
-  the CH over D2D.
+- `constant` link success mode models D2D delivery with one scalar probability
+  shared by all member-to-CH links;
+- `rayleigh_outage` link success mode computes a per-member probability from
+  the distance between that member and the current CH:
+
+  ```text
+  avg_snr_i,h = reference_snr / max(d_i,h, 1)^pathloss_exponent
+  q_i,h       = exp(-snr_threshold / avg_snr_i,h)
+  ```
 
 When either value is below `1.0`, a successful CH-to-BS upload carries:
 
 ```text
 CH own update
 + updates from members that computed successfully
-+ updates from members whose D2D link succeeded
++ updates from non-CH members whose D2D link succeeded
 ```
 
-The current implementation does not yet make member-to-CH link success depend
-on D2D distance, D2D channel quality, or interference.  It is a global
-probability knob.
+The CH itself is always considered active in its own cluster. Other members
+must pass compute availability, optional battery feasibility, and the
+member-to-CH link draw. With dynamic CH rotation, `rayleigh_outage` recomputes
+the member-to-CH distance to the elected CH for each D2D scenario, so rotation
+can improve or degrade aggregate completeness even when cluster membership is
+fixed.
+
+This is still a collision-free physical-decoding abstraction. Intra-cluster
+D2D interference, packet retransmissions, coding, and detailed MAC timing are
+not yet modeled.
 
 ## CH-To-BS Channel-Aware Success
 
@@ -899,8 +915,9 @@ should be stated clearly:
   `channel_quality` or Rayleigh outage probability. There is still no shadowing,
   explicit SINR with co-channel interference powers, modulation, coding, FER,
   or BER model.
-- Member-to-CH D2D link success is a global probability, not a per-link channel
-  model.
+- Member-to-CH D2D link success can use a scalar probability or per-link
+  Rayleigh outage based on distance to the current CH. It still does not model
+  D2D interference powers, retransmissions, modulation, coding, FER, or BER.
 - ALOHA same-channel collisions remain the interference abstraction. Rayleigh
   outage models collision-free physical decoding only.
 - No mobility is included.
@@ -920,17 +937,17 @@ The most productive next implementation steps are summarized in
 
 1. Calibrate the normalized first-order radio coefficients against a real IoT
    radio or a literature parameter table, then report the calibration source.
-2. Add per-link D2D channel/outage for member-to-CH transmissions, so D2D
-   member success is not only a global probability.
+2. Validate and calibrate the new per-link D2D Rayleigh outage mode against
+   realistic D2D ranges/SNR thresholds, then report sensitivity.
 3. Extend Rayleigh outage toward an SINR/PER abstraction if co-channel
    interference power, modulation, and coding need to be represented.
 4. Rerun the physical `utility` baseline with current p75/p90/p95 and
    stale-fraction AoI columns before treating any AoI-enhanced run as a fair
    improvement.
 5. Move stale-tail work beyond access probability if the refreshed baseline
-   confirms the same tail problem: per-link D2D outage, AoI/channel-aware CH
-   rotation, or re-clustering are more likely to address structural stale
-   clusters than more access-score tuning.
+   confirms the same tail problem: per-link D2D outage validation,
+   AoI/channel-aware CH rotation, or re-clustering are more likely to address
+   structural stale clusters than more access-score tuning.
 6. Run structured sensitivity sweeps for utility exponents, allocator
    thresholds, CH-rotation weights, energy coefficients, and Rayleigh SNR
    thresholds.

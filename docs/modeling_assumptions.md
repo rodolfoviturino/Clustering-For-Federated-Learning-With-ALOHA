@@ -112,6 +112,20 @@ This document records the simulation defaults after the code cleanup.
 - D2D member availability is ideal by default:
   - `d2d_member_compute_probability=1.0`;
   - `d2d_member_link_success_probability=1.0`.
+- Enhanced runs can replace the scalar member-to-CH link probability with
+  distance-aware Rayleigh outage:
+
+  ```text
+  --d2d-member-link-success-mode rayleigh_outage
+  q_member,h = exp(-snr_threshold / avg_snr_member,h)
+  avg_snr_member,h =
+    reference_snr / max(distance_member_to_current_CH, 1)^pathloss_exponent
+  ```
+
+  This is still a collision-free packet decoding abstraction, but it removes a
+  major earlier simplification: all D2D members no longer have identical link
+  reliability. With dynamic CH rotation, changing the CH can change both
+  member energy cost and member decoding probability.
 - Optimized ALOHA uses the aggregate norm of the CH update.
 - Optimized ALOHA can optionally use a fixed-access floor. This keeps the
   norm-based controller from starving the channel late in training, especially
@@ -165,7 +179,7 @@ inputs.
 ## Realism Knobs
 
 Set either of the following below `1.0` to model imperfect member-to-CH
-participation:
+participation with the legacy constant-link abstraction:
 
 ```python
 error_calculator_trace_jax(
@@ -182,6 +196,23 @@ When enabled, a successful CH-to-BS transmission carries:
 
 This makes D2D gains less optimistic and separates CH-to-BS success from
 member-to-CH availability.
+
+For per-link D2D outage, use:
+
+```python
+error_calculator_trace_jax(
+    ...,
+    d2d_member_link_success_mode="rayleigh_outage",
+    d2d_member_pathloss_exponent=2.0,
+    d2d_member_reference_snr=100000.0,
+    d2d_member_snr_threshold=1.0,
+    device_coords=device_coords,
+)
+```
+
+The CH is always considered locally active for its own cluster. Other members
+must compute their local update, have enough energy if battery feasibility is
+enabled, and pass the member-to-current-CH decoding draw.
 
 ## Ablations Not Enabled By Default
 

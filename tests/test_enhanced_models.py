@@ -86,6 +86,10 @@ class GpuSweepTests(unittest.TestCase):
                 cluster_head_channel_weight=0.3,
                 cluster_head_battery_weight=0.2,
                 cluster_head_channel_score_mode="rayleigh_outage",
+                d2d_member_link_success_mode="rayleigh_outage",
+                d2d_member_pathloss_exponent=2.3,
+                d2d_member_reference_snr=34567.0,
+                d2d_member_snr_threshold=0.6,
                 d2d_ch_bs_success_mode="rayleigh_outage",
                 d2d_ch_bs_min_success_probability=0.3,
                 d2d_ch_bs_pathloss_exponent=2.5,
@@ -140,6 +144,10 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["cluster_head_channel_weight"], 0.3)
         self.assertEqual(metadata["cluster_head_battery_weight"], 0.2)
         self.assertEqual(metadata["cluster_head_channel_score_mode"], "rayleigh_outage")
+        self.assertEqual(metadata["d2d_member_link_success_mode"], "rayleigh_outage")
+        self.assertEqual(metadata["d2d_member_pathloss_exponent"], 2.3)
+        self.assertEqual(metadata["d2d_member_reference_snr"], 34567.0)
+        self.assertEqual(metadata["d2d_member_snr_threshold"], 0.6)
         self.assertEqual(metadata["d2d_ch_bs_success_mode"], "rayleigh_outage")
         self.assertEqual(metadata["d2d_ch_bs_min_success_probability"], 0.3)
         self.assertEqual(metadata["d2d_ch_bs_pathloss_exponent"], 2.5)

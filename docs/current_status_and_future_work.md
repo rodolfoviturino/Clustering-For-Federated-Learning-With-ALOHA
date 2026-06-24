@@ -459,7 +459,10 @@ following points should be explicitly disclosed:
 - channel quality can use inverse pathloss or Rayleigh outage probability, but
   there is no explicit SINR/FER/PER model with interference powers, modulation,
   coding, or shadowing;
-- member-to-CH link success is not distance/SINR dependent;
+- member-to-CH link success can now be modeled either as the legacy scalar
+  probability or as per-link Rayleigh outage based on distance to the current
+  CH; it still omits D2D interference powers, retransmissions, coding, and
+  MAC timing;
 - utility exponents and allocator thresholds are hyperparameters;
 - AoI is now measured explicitly and can drive `aoi_aware_utility`,
   `aoi_floor_utility`, `aoi_tail_utility`, or `aoi_quality_tail_utility`, but
@@ -557,11 +560,12 @@ The most important current results are:
   `201`, so severe stale-tail AoI remains unresolved by access-probability
   reweighting alone.
 
-- Before implementing another AoI policy, the physical `utility` baseline
-  should be rerun with the current metric set. The older
-  `k1000_physical_energy_r100` baseline was produced before all percentile and
-  stale-fraction AoI columns were available, so it cannot be used as a complete
-  stale-tail comparator.
+- The next structural model upgrade is now available as
+  `--d2d-member-link-success-mode rayleigh_outage`. It makes aggregate
+  completeness depend on the distance from each active member to the current
+  CH, rather than only on one global D2D-success probability. This should be
+  validated against the current physical `utility` baseline before adding
+  another AoI access formula.
 
 ## Recommended Future Work Order
 
@@ -569,7 +573,8 @@ The most important current results are:
 
 The immediate validation step is not a new formula. Rerun the current physical
 `utility` baseline after the AoI percentile/stale-fraction instrumentation is
-in place. This gives a fair comparator for:
+in place, then run the same baseline with per-link D2D member Rayleigh outage
+enabled. This gives a fair comparator for:
 
 ```text
 mean AoI
@@ -586,8 +591,10 @@ Expected benefit:
   columns;
 - shows whether the severe p75/p90/p95 tail is specific to AoI-enhanced modes
   or already present in the tuned utility baseline;
-- provides a clean reference before implementing structural changes such as
-  per-link D2D outage, AoI/channel-aware CH rotation, or re-clustering.
+- shows whether distance-aware member-to-CH delivery changes the stale AoI
+  tail, error curve, and energy use;
+- provides a clean reference before implementing deeper structural changes
+  such as AoI/channel-aware CH rotation or re-clustering.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

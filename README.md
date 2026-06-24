@@ -373,10 +373,10 @@ The current physical/Rayleigh member-level conclusion is documented in
 member-freshness policy, with `w=0.15`, `floor=0` as its strongest tested
 point. `semi_scheduled_member_refresh` is a coordinated upper-bound ablation,
 not part of the main ALOHA claim: it shows how much is left if some refresh
-slots are reserved, but it changes the protocol class. The next research pass
-therefore stays inside pure ALOHA/probability shaping and sweeps stronger
-`member_quota_utility` and less aggressive `member_collision_aware_quota`
-settings at `K=3000`.
+slots are reserved, but it changes the protocol class. The K=3000 pure-ALOHA
+matrix showed that stronger quota weights do not help and that the best less
+aggressive collision-aware setting is mainly a convergence/energy ablation, not
+a new member-freshness winner.
 `member_deficit_utility` is retained as a negative ablation: it
 reduces `CH no attempt`, but it moves the bottleneck into ALOHA collisions and
 badly degrades convergence and energy efficiency.

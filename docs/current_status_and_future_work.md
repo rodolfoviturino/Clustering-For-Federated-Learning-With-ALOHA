@@ -894,10 +894,17 @@ available: `member_quota_k3000_w015_floor000_physical_r100` reached final error
 Thus the three-channel semi-scheduled point improves the member-quota baseline
 by `41` rounds to `1e-12`, `14.0%` member AoI, `29.2%` stale75, `43.6%` zero
 participation, and `26.3%` final energy efficiency. This is an upper-bound
-reference, not the next implementation direction. The next experiment is the
-pure-ALOHA K=3000 matrix: stronger `member_quota_utility` weights (`0.20` and
-`0.25`), small quota floors (`0.02`), and less aggressive
-`member_collision_aware_quota` damping.
+reference, not the next implementation direction. The pure-ALOHA K=3000 matrix
+has also been run. Stronger quota weights (`0.20` and `0.25`) did not improve
+member freshness and hurt convergence/energy. A small quota floor (`0.02`) was
+nearly neutral. The best less aggressive collision-aware point was
+`member_collision_quota_k3000_w015_t002_g2_min050_physical_r100`: it reached
+`1e-12` 12 rounds earlier than `member_quota_k3000_w015_floor000`, improved
+final energy efficiency by `5.34%`, and slightly lowered member stale75, but it
+also slightly worsened zero-participation. Treat it as a convergence/energy
+ablation, not as a replacement for the pure member-freshness baseline. The next
+ALOHA-only implementation should be structural: per-cluster/load-class caps,
+collision-aware virtual queues, or re-clustering/cluster splitting.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

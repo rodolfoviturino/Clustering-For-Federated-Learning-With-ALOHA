@@ -690,9 +690,13 @@ The best tested `K=1000` balanced semi-scheduled point is schedule fraction
 `0.20` with deficit tie-breaker weight `0.0`; the first `K=3000` robustness
 check favored `0.30` over `0.20` and beat the same-`K`
 `member_quota_utility` baseline on convergence, member freshness, and final
-energy efficiency. The current implementation priority remains pure ALOHA:
-larger `member_quota_utility` weights and less aggressive
-`member_collision_aware_quota` damping at `K=3000`.
+energy efficiency. The pure-ALOHA K=3000 matrix with larger
+`member_quota_utility` weights and less aggressive
+`member_collision_aware_quota` damping has now been run: stronger quota weights
+did not help, while `member_collision_quota_k3000_w015_t002_g2_min050` is best
+kept as a convergence/energy ablation rather than a new member-freshness
+winner. The next ALOHA-only work should be structural, such as per-cluster load
+caps or collision-aware virtual queues.
 
 The utility Pareto tuning runner is:
 

@@ -241,7 +241,9 @@ be over-concentrated and collision dominated.
 Do not replace `member_quota_utility` with `member_collision_aware_quota` as the
 main member-freshness result. Keep `member_collision_aware_quota` as a documented
 ablation showing that feedback can protect convergence/energy, but that simple
-global collision damping gives back too much member freshness.
+global collision damping gives back too much member freshness. The `K=3000`
+follow-up with less aggressive damping found a better convergence/energy
+ablation, but still did not produce a material member-freshness win.
 
 Use `semi_scheduled_member_refresh` only as a coordinated upper-bound/future-work
 reference for the current paper path. With `M=10`, the two-channel point
@@ -252,26 +254,58 @@ persistent deficit is not needed for this reference. Do not develop larger
 scheduled budgets, NOMA, IRSA, AirFL, TDMA/OFDMA, SIC, or multi-packet
 reception in the current ALOHA-focused phase.
 
+## K=3000 Pure-ALOHA Matrix
+
+The next pure-ALOHA matrix was run at `K=3000`, `rounds=100`,
+`iterations=100`, and the same physical/Rayleigh setup. It compared stronger
+member quota weights, small quota floors, and less aggressive
+collision-aware damping against `member_quota_k3000_w015_floor000_physical_r100`.
+The coordinated semi-scheduled point is kept only as an upper-bound row.
+
+| Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `member_quota_k3000_w015_floor000_physical_r100` | `member_quota_utility` | `4.216e-13` | `100` | `74.230` | `0.618` | `0.554` | `653.8` |
+| `member_quota_k3000_w020_floor000_physical_r100` | `member_quota_utility` | `1.102e-12` | n/a | `74.380` | `0.618` | `0.553` | `637.0` |
+| `member_quota_k3000_w025_floor000_physical_r100` | `member_quota_utility` | `3.256e-11` | n/a | `74.723` | `0.624` | `0.555` | `604.3` |
+| `member_quota_k3000_w015_floor002_physical_r100` | `member_quota_utility` | `1.153e-13` | `92` | `74.212` | `0.617` | `0.554` | `654.9` |
+| `member_quota_k3000_w020_floor002_physical_r100` | `member_quota_utility` | `1.167e-12` | n/a | `74.391` | `0.618` | `0.553` | `636.5` |
+| `member_collision_quota_k3000_w015_t002_g1_min050_physical_r100` | `member_collision_aware_quota` | `7.649e-14` | `93` | `73.971` | `0.615` | `0.556` | `681.4` |
+| `member_collision_quota_k3000_w015_t002_g1_min075_physical_r100` | `member_collision_aware_quota` | `5.388e-14` | `92` | `74.164` | `0.619` | `0.557` | `668.4` |
+| `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` | `member_collision_aware_quota` | `1.816e-14` | `88` | `73.968` | `0.614` | `0.556` | `688.7` |
+| `member_collision_quota_k3000_w015_t002_g2_min075_physical_r100` | `member_collision_aware_quota` | `6.388e-14` | `92` | `74.234` | `0.620` | `0.557` | `670.5` |
+| `member_semischedule_k3000_s030_cc0010_physical_r100` | `semi_scheduled_member_refresh` | `2.093e-16` | `59` | `63.863` | `0.437` | `0.312` | `825.7` |
+
+The conclusion is conservative. Increasing the pure quota from `w=0.15` to
+`w=0.20` or `w=0.25` does not improve member freshness and hurts convergence
+and energy efficiency. Adding a small `floor=0.02` to `w=0.15` is nearly
+neutral and slightly improves convergence, but the member-freshness change is
+too small to claim. The best pure-ALOHA follow-up is
+`member_collision_quota_k3000_w015_t002_g2_min050_physical_r100`: relative to
+the K=3000 quota baseline, it reaches `1e-12` 12 rounds earlier, improves final
+energy efficiency by `5.34%`, lowers member AoI by `0.35%`, and lowers
+member stale75 by `0.51%`. However, zero-participation is slightly worse
+(`0.556` versus `0.554`), so this is a convergence/energy ablation rather than
+a new member-freshness winner.
+
 ## Next Research Direction
 
-The next experiments should stay inside pure ALOHA/probability shaping so the
-comparison remains defensible against the thesis baseline:
+The current pure-ALOHA path has likely reached a local limit with global quota
+scalars. The next implementation should be more structural while staying in
+ALOHA:
 
-1. Sweep `member_quota_utility` at `K=3000` with stronger refresh quota:
-   `w=0.20`, `w=0.25`, and `floor=0.00`.
-2. Sweep `member_quota_utility` with a small local floor:
-   `w=0.15`, `w=0.20`, and `floor=0.02`.
-3. Revisit `member_collision_aware_quota` with less aggressive damping:
-   `target=0.02`, `gain in {1.0, 2.0}`, and
-   `min_quota_scale in {0.50, 0.75}`.
-4. Compare all pure-ALOHA candidates against
-   `member_quota_k3000_w015_floor000_physical_r100`; keep
-   `member_semischedule_k3000_s030_cc0010_physical_r100` only as a coordinated
-   upper-bound row.
-5. Accept a new pure-ALOHA candidate only if it improves member stale75 or
-   zero-participation without entering the collision-dominated regime observed
-   in `member_deficit_utility`, and without losing the convergence/energy
-   profile of the K=3000 quota baseline.
+1. Add per-cluster or per-refresh-class load caps so stale-member pressure does
+   not concentrate too many CHs into the same random-access round.
+2. Add virtual queues with collision-aware debt updates: increase debt for
+   missed stale members, but avoid increasing the same debt when the added
+   pressure only caused collisions.
+3. Consider re-clustering or cluster splitting as a separate ALOHA-compatible
+   path, because the remaining zero-participation tail suggests some members
+   are hidden behind sparse CH opportunities.
+4. Keep `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` as the
+   best current pure-ALOHA convergence/energy ablation, but keep
+   `member_quota_k3000_w015_floor000_physical_r100` as the cleaner
+   member-freshness baseline unless a later candidate improves both stale75 and
+   zero participation.
 
 The immediate paper-defensible claim is now two-tiered: member-level D2D
 freshness reveals starvation hidden by cluster-level AoI; a quota-based refresh

@@ -849,8 +849,32 @@ The `0.10` schedule also improved all headline metrics, while adding
 `--optimized-d2d-member-schedule-deficit-weight 0.25` at `0.10` gave only a
 minor extra benefit. Treat `semi_scheduled_member_refresh` as the strongest
 current enhanced-policy candidate when a small coordinated refresh-slot control
-plane is acceptable. The next validation step is to sweep schedule fractions
-around `0.05-0.30` and rerun the best point at larger `K`/round counts.
+plane is acceptable. The control-cost parameter charges a normalized
+per-scheduled-CH coordination overhead to optimized+D2D CH energy/battery
+accounting; it defaults to `0.0` so the no-overhead results stay reproducible.
+
+The first control-cost sweep used the best `s=0.20`, deficit-free point and
+tested control costs `0.0001`, `0.0005`, and `0.0010`. The effect was almost
+entirely on energy accounting, not on learning/freshness: final error stayed
+near `6.1e-9`, member stale75 stayed near `0.253`, and zero-participation
+fraction stayed near `0.138`. Energy efficiency declined from `1040.6`
+without overhead to `1028.8`, `983.5`, and `932.2`, but all three still
+outperformed `member_quota_w015` (`762.7`). This makes the semi-scheduled result
+robust to small normalized coordination costs. A larger break-even sweep can be
+run later if the paper needs a maximum tolerable control-overhead estimate.
+
+The follow-up schedule-fraction sweep at `control_cost=0.0010` shows that the
+policy behaves in channel-count steps, not smoothly in the fraction value. With
+the default `M=10`, `0.05`/`0.10` reserve one channel, `0.15`/`0.20` reserve two,
+and `0.25`/`0.30` reserve three. One channel is the conservative point
+(`member_stale75=0.358`, `zero=0.283`, `energy_efficiency=990.7`); two channels
+are the balanced point (`member_stale75=0.253`, `zero=0.138`,
+`energy_efficiency=932.2`); three channels are the strongest freshness/error
+point (`final_error=3.36e-9`, `member_stale75=0.183`, `zero=0.026`,
+`energy_efficiency=870.3`). All three remain above `member_quota_w015` on energy
+efficiency while strongly improving member freshness. The next robustness check
+should therefore rerun the two-channel and three-channel points at larger
+`K`/round counts.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

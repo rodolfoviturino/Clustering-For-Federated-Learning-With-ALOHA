@@ -2419,6 +2419,7 @@ def error_calculator_trace_jax(
     optimized_d2d_member_collision_min_quota_scale: float = 0.25,
     optimized_d2d_member_schedule_fraction: float = 0.10,
     optimized_d2d_member_schedule_deficit_weight: float = 0.0,
+    optimized_d2d_member_schedule_control_cost: float = 0.0,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -2681,6 +2682,10 @@ def error_calculator_trace_jax(
         raise ValueError(
             "optimized_d2d_member_schedule_deficit_weight must be in [0, 1]"
         )
+    if optimized_d2d_member_schedule_control_cost < 0.0:
+        raise ValueError(
+            "optimized_d2d_member_schedule_control_cost must be non-negative"
+        )
 
     dtype = jnp.float32 if dtype is None else dtype
     pcomp = jnp.asarray(
@@ -2859,6 +2864,10 @@ def error_calculator_trace_jax(
     )
     d2d_member_schedule_deficit_weight = jnp.asarray(
         optimized_d2d_member_schedule_deficit_weight,
+        dtype=dtype,
+    )
+    d2d_member_schedule_control_cost = jnp.asarray(
+        optimized_d2d_member_schedule_control_cost,
         dtype=dtype,
     )
 
@@ -3920,6 +3929,7 @@ def error_calculator_trace_jax(
         )
 
         semi_scheduled_refresh_mask = jnp.zeros(cluster_mask.shape, dtype=jnp.bool_)
+        scheduled_d2d_attempt = jnp.zeros(cluster_mask.shape, dtype=jnp.bool_)
         if optimized_d2d_access_mode == "utility":
             optimized_probability_d2d = _utility_load_controlled_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -4675,6 +4685,15 @@ def error_calculator_trace_jax(
             drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
             return drain.at[heads].add(per_cluster_cost)
 
+        def schedule_control_drain(heads, schedule_attempt_mask):
+            per_cluster_cost = jnp.where(
+                schedule_attempt_mask & cluster_mask,
+                d2d_member_schedule_control_cost,
+                0.0,
+            )
+            drain = jnp.zeros(k_devices, dtype=users_input__x.dtype)
+            return drain.at[heads].add(per_cluster_cost)
+
         polling_d2d_attempt_counts = jnp.zeros(
             polling_d2d_heads.shape,
             dtype=users_input__x.dtype,
@@ -4715,12 +4734,24 @@ def error_calculator_trace_jax(
             optimized_d2d_heads,
             rotation_mask[2],
         )
+        optimized_schedule_control_drain = schedule_control_drain(
+            optimized_d2d_heads,
+            scheduled_d2d_attempt,
+        )
         polling_d2d_drain = polling_d2d_drain + polling_rotation_drain
         fixed_d2d_drain = fixed_d2d_drain + fixed_rotation_drain
-        optimized_d2d_drain = optimized_d2d_drain + optimized_rotation_drain
+        optimized_d2d_drain = (
+            optimized_d2d_drain
+            + optimized_rotation_drain
+            + optimized_schedule_control_drain
+        )
         polling_d2d_ch_drain = polling_d2d_ch_drain + polling_rotation_drain
         fixed_d2d_ch_drain = fixed_d2d_ch_drain + fixed_rotation_drain
-        optimized_d2d_ch_drain = optimized_d2d_ch_drain + optimized_rotation_drain
+        optimized_d2d_ch_drain = (
+            optimized_d2d_ch_drain
+            + optimized_rotation_drain
+            + optimized_schedule_control_drain
+        )
 
         battery_drain = jnp.stack(
             [
@@ -5384,6 +5415,7 @@ def error_calculator(
     optimized_d2d_member_collision_min_quota_scale: float = 0.25,
     optimized_d2d_member_schedule_fraction: float = 0.10,
     optimized_d2d_member_schedule_deficit_weight: float = 0.0,
+    optimized_d2d_member_schedule_control_cost: float = 0.0,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -5494,6 +5526,9 @@ def error_calculator(
         ),
         optimized_d2d_member_schedule_deficit_weight=(
             optimized_d2d_member_schedule_deficit_weight
+        ),
+        optimized_d2d_member_schedule_control_cost=(
+            optimized_d2d_member_schedule_control_cost
         ),
         checkpoints=[number_of_iterations__t],
         dtype=dtype,

@@ -52,7 +52,9 @@ Reserves a small number of D2D channels for the highest active member-pressure
 clusters and runs utility ALOHA on the remaining channels. The scheduled CH
 attempts are collision-free, but they still require CH battery feasibility and
 CH-to-BS link success. This is the first implemented step beyond global ALOHA
-probability shaping.
+probability shaping. `--optimized-d2d-member-schedule-control-cost` can charge
+a normalized per-scheduled-CH coordination overhead, so the semi-scheduled
+claim can be stress-tested against nonzero control-plane cost.
 
 `member_deficit_utility`
 
@@ -150,6 +152,32 @@ increase useful CH deliveries instead of spending energy on collided ALOHA
 contention. The main cost is conceptual rather than numerical: it changes the
 protocol class from random access to semi-scheduled access.
 
+The first coordination-overhead sweep keeps that conclusion intact. Adding
+`--optimized-d2d-member-schedule-control-cost` at `0.0001`, `0.0005`, and
+`0.0010` to the `s=0.20`, `deficit_weight=0` point barely changes convergence
+or member freshness: final error stays near `6.1e-9`, member stale75 stays near
+`0.253`, and zero-participation fraction stays near `0.138`. Energy efficiency
+falls monotonically from `1040.6` with no overhead to `1028.8`, `983.5`, and
+`932.2`, respectively, but even the largest tested overhead remains above
+`member_quota_w015` (`762.7`). This supports the claim that the semi-scheduled
+gain is not erased by a small normalized control-plane cost.
+
+The schedule-fraction sweep with `control_cost=0.0010` shows the expected
+integer-channel steps because the simulator reserves
+`ceil(M * schedule_fraction)` channels and these runs use `M=10`. Fractions
+`0.05` and `0.10` both reserve one channel; `0.15` and `0.20` both reserve two;
+`0.25` and `0.30` both reserve three. One reserved channel already improves over
+`member_quota_w015` (`member_stale75=0.358`, `zero=0.283`,
+`energy_efficiency=990.7`). Two channels recover the previous `s=0.20`
+freshness regime with overhead (`member_stale75=0.253`, `zero=0.138`,
+`energy_efficiency=932.2`). Three channels are the strongest tested
+freshness/error point (`final_error=3.36e-9`, `member_stale75=0.183`,
+`zero=0.026`, `energy_efficiency=870.3`) and still remain above
+`member_quota_w015` on energy efficiency. Thus, under `M=10` and
+`control_cost=0.0010`, the practical choices are one channel for a conservative
+energy/freshness tradeoff, two channels for the balanced point, and three
+channels for the strongest member-freshness point.
+
 This means the current dense physical/Rayleigh regime is not limited only by
 "which stale cluster should get more probability". It is also collision limited.
 Persistent probability shaping is therefore not enough once the access overlay
@@ -157,7 +185,8 @@ becomes too concentrated.
 
 ## Current Recommendation
 
-Use `member_quota_utility` as the current member-level freshness contribution.
+Use `member_quota_utility` as the current pure ALOHA/probability-shaping
+member-level freshness contribution.
 
 Recommended points:
 
@@ -177,22 +206,27 @@ ablation showing that feedback can protect convergence/energy, but that simple
 global collision damping gives back too much member freshness.
 
 Use `semi_scheduled_member_refresh` as the current strongest enhanced-policy
-candidate when coordinated refresh slots are allowed. The best tested point is
-`--optimized-d2d-member-schedule-fraction 0.20` with
-`--optimized-d2d-member-schedule-deficit-weight 0.0`. The `0.10` deficit-weight
-variant changed little, so persistent deficit is not needed for the first paper
-claim.
+candidate when coordinated refresh slots are allowed. With `M=10`, the
+two-channel point (`schedule_fraction` `0.15` or `0.20`) is the balanced
+candidate, while the three-channel point (`0.25` or `0.30`) is the strongest
+tested member-freshness/error candidate. The `0.10` deficit-weight variant
+changed little, so persistent deficit is not needed for the first paper claim.
+For overhead-sensitive reporting, include the control-cost sweep through
+`--optimized-d2d-member-schedule-control-cost 0.0010`: both the two-channel and
+three-channel points still dominate the best pure ALOHA/probability-shaping
+member policy on member freshness and energy efficiency.
 
 ## Next Research Direction
 
 The next experiments should validate whether the semi-scheduled gain is robust
-and where the coordination/freshness tradeoff saturates:
+outside the current `K=1000`, `M=10`, `rounds=100` setting:
 
-1. Sweep intermediate schedule fractions such as `0.05`, `0.15`, `0.25`, and
-   `0.30` to find the smallest reserved-slot budget that captures most of the
-   member-freshness gain.
-2. Re-run the best points at larger `K` and/or more rounds to verify that the
-   dominance is not a `K=1000`, `rounds=100` artifact.
+1. Re-run the best two-channel and three-channel points at larger `K` and/or
+   more rounds to verify that the dominance is not a `K=1000`, `rounds=100`
+   artifact.
+2. Sweep larger nonzero `--optimized-d2d-member-schedule-control-cost` values
+   above `0.0010` if a break-even overhead is needed; the tested range up to
+   `0.0010` still keeps energy efficiency above `member_quota_w015`.
 3. Per-cluster or per-refresh-class collision control: keep the member quota
    for the most starved clusters, but cap the base/overlay load locally instead
    of damping the entire refresh overlay from one global EWMA.
@@ -202,8 +236,10 @@ and where the coordination/freshness tradeoff saturates:
    access did not collide, so debt does not push too many CHs into the same
    contention interval.
 
-The immediate paper-defensible claim is narrower: member-level D2D freshness
-reveals starvation hidden by cluster-level AoI, and a quota-based refresh overlay
-improves that member freshness under physical energy/Rayleigh assumptions. The
-deficit experiments show the boundary where access opportunity becomes collision
-limited.
+The immediate paper-defensible claim is now two-tiered: member-level D2D
+freshness reveals starvation hidden by cluster-level AoI; a quota-based refresh
+overlay improves that member freshness under physical energy/Rayleigh
+assumptions while staying in pure ALOHA probability shaping; and a small
+semi-scheduled refresh budget improves much further when lightweight
+coordination is allowed. The deficit experiments show the boundary where access
+opportunity becomes collision limited.

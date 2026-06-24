@@ -668,7 +668,10 @@ Policy differences:
   `--optimized-d2d-member-schedule-deficit-weight` only as a tie-breaker among
   repeatedly missed refresh opportunities. This mode assumes a small BS/CH
   control decision for reserved slots and is therefore a coordinated
-  semi-scheduled ablation, not a pure distributed ALOHA mode.
+  semi-scheduled ablation, not a pure distributed ALOHA mode. The optional
+  `--optimized-d2d-member-schedule-control-cost` parameter charges a normalized
+  per-scheduled-CH coordination overhead to optimized+D2D CH energy/battery;
+  leave it at `0.0` to reproduce the original no-overhead semi-scheduled runs.
 - `member_deficit_utility` keeps the quota split but ranks the refresh overlay
   with a persistent missed-refresh deficit. This is intended for cases where
   many member AoIs saturate at the same value, making instantaneous stale-tail

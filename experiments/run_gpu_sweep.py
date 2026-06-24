@@ -299,6 +299,9 @@ def run_gpu_sweep(args):
             optimized_d2d_member_schedule_deficit_weight=(
                 args.optimized_d2d_member_schedule_deficit_weight
             ),
+            optimized_d2d_member_schedule_control_cost=(
+                args.optimized_d2d_member_schedule_control_cost
+            ),
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -781,6 +784,9 @@ def run_gpu_sweep(args):
         ),
         "optimized_d2d_member_schedule_deficit_weight": float(
             args.optimized_d2d_member_schedule_deficit_weight
+        ),
+        "optimized_d2d_member_schedule_control_cost": float(
+            args.optimized_d2d_member_schedule_control_cost
         ),
         "clustering_strategy_note": (
             dense_strategy_note
@@ -1701,6 +1707,18 @@ def build_parser():
             "semi_scheduled_member_refresh optional weight for persistent "
             "missed-refresh deficit when ranking scheduled clusters. 0.0 ranks "
             "only by current active member AoI/zero-participation pressure."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-schedule-control-cost",
+        type=float,
+        default=0.0,
+        help=(
+            "semi_scheduled_member_refresh normalized per-scheduled-CH "
+            "control-plane cost charged to the optimized+D2D CH battery and "
+            "energy accounting. The default 0.0 preserves previous results; "
+            "use a positive value to test whether reserved refresh slots stay "
+            "attractive after coordination overhead."
         ),
     )
     parser.add_argument(

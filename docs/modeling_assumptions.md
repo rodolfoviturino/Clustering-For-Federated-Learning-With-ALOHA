@@ -209,7 +209,10 @@ This document records the simulation defaults after the code cleanup.
   ranking; it does not create extra scheduled slots. This mode assumes a small
   BS/CH control decision for the reserved refresh slots, so it is a
   coordinated semi-scheduled ablation rather than fully distributed random
-  ALOHA.
+  ALOHA. `--optimized-d2d-member-schedule-control-cost` optionally charges a
+  normalized per-scheduled-CH coordination overhead to the optimized+D2D CH
+  battery and energy accounting. The default is `0.0` to preserve prior runs;
+  positive values are intended for overhead-sensitivity ablations.
 - `member_deficit_utility` adds one piece of memory to the explicit quota
   policy. The optimized-D2D scenario keeps a per-cluster missed-refresh deficit
   that increases when active stale or zero-participation members are available
@@ -224,8 +227,10 @@ This document records the simulation defaults after the code cleanup.
   ALOHA/probability-shaping member-freshness candidate, while
   `member_deficit_utility` is a negative collision-dominated ablation.
   `semi_scheduled_member_refresh` is the strongest current enhanced candidate
-  when a small explicit refresh schedule is allowed; its best tested point uses
-  schedule fraction `0.20` and deficit tie-breaker weight `0.0`.
+  when a small explicit refresh schedule is allowed. With `M=10`, the two-slot
+  point (`schedule_fraction` `0.15`/`0.20`) is the balanced candidate and the
+  three-slot point (`0.25`/`0.30`) is the strongest tested member-freshness
+  candidate; deficit tie-breaker weight `0.0` is sufficient for both.
 - AoI is tracked as an output metric for all six scenarios. Non-D2D scenarios
   track per-device AoI and reset a device to `1` after its successful upload.
   D2D scenarios track per-cluster AoI and reset a cluster to `1` after its CH

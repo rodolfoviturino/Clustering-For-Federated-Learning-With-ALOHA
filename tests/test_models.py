@@ -1926,6 +1926,7 @@ class JaxModelTests(unittest.TestCase):
             optimized_d2d_aoi_threshold_fraction=0.70,
             optimized_d2d_member_schedule_fraction=0.50,
             optimized_d2d_member_schedule_deficit_weight=0.10,
+            optimized_d2d_member_schedule_control_cost=0.0,
             checkpoints=[1, 4],
         )
 
@@ -1935,6 +1936,47 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
         )
+
+    def test_semi_scheduled_control_cost_increases_optimized_d2d_energy(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        common_kwargs = dict(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=113,
+            energy_drain_mode="dynamic",
+            energy_model="constant",
+            battery_feasibility_mode="required_energy",
+            energy_direct_bs_cost=0.0,
+            energy_d2d_member_cost=0.0,
+            energy_ch_bs_cost=0.0,
+            optimized_d2d_access_mode="semi_scheduled_member_refresh",
+            optimized_d2d_norm_exponent=0.0,
+            optimized_d2d_cluster_size_exponent=0.0,
+            optimized_d2d_freshness_exponent=0.0,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.0,
+            optimized_d2d_member_schedule_fraction=0.50,
+            optimized_d2d_member_schedule_deficit_weight=0.0,
+            checkpoints=[3],
+        )
+        no_cost = error_calculator_trace_jax(
+            **common_kwargs,
+            optimized_d2d_member_schedule_control_cost=0.0,
+        )
+        with_cost = error_calculator_trace_jax(
+            **common_kwargs,
+            optimized_d2d_member_schedule_control_cost=0.01,
+        )
+
+        no_cost_energy = np.asarray(no_cost.mean_energy_used)[0, 5]
+        with_cost_energy = np.asarray(with_cost.mean_energy_used)[0, 5]
+        self.assertGreater(with_cost_energy, no_cost_energy)
 
     def test_member_fair_utility_prioritizes_zero_participation_members(self):
         probability = jax_models._member_fair_utility_access_probability(
@@ -2307,6 +2349,7 @@ class JaxModelTests(unittest.TestCase):
             {"optimized_d2d_member_schedule_fraction": 1.1},
             {"optimized_d2d_member_schedule_deficit_weight": -0.1},
             {"optimized_d2d_member_schedule_deficit_weight": 1.1},
+            {"optimized_d2d_member_schedule_control_cost": -0.1},
         )
         for kwargs in invalid_kwargs:
             with self.subTest(kwargs=kwargs):

@@ -350,7 +350,10 @@ utility-controlled ALOHA allocator. The optional
 deficit act as a tie-breaker without turning the whole policy into probability
 over-concentration. Unlike the quota modes, this assumes a small BS/CH control
 decision for the reserved refresh slots and should be reported as a coordinated
-semi-scheduled ablation, not pure distributed ALOHA.
+semi-scheduled ablation, not pure distributed ALOHA. The optional
+`--optimized-d2d-member-schedule-control-cost` charges a normalized per-slot
+coordination overhead to the scheduled CH battery/energy accounting; its
+default is `0.0` so previously published runs remain reproducible.
 
 The stateful deficit variant is
 `--optimized-d2d-access-mode member_deficit_utility`. It keeps the explicit

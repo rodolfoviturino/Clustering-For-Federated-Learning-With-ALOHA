@@ -687,13 +687,13 @@ The most important current results are:
 
 ## Recommended Future Work Order
 
-### Step 1: Replicate The Physical Member-Fair Pareto Point
+### Step 1: Diagnose And Attack Member Stale Causes
 
-The immediate validation step is not a new formula. The refreshed physical
-`utility` baseline with member metrics is now available, and the current
-member-fair Pareto candidate is `w=0.05 / threshold=0.70`. Before promoting it
-in a paper, repeat or extend that point with more seeds/iterations and keep the
-same physical-link options used by the baseline. Compare:
+The code now includes member-stale failure attribution columns and member-aware
+CH-rotation triggers. The refreshed physical `utility` baseline with member
+metrics is available, and the current access-only member-fair Pareto candidate
+is `w=0.05 / threshold=0.70`. The immediate research step is to run that access
+candidate beside a structural CH-rotation candidate, then compare:
 
 ```text
 mean AoI
@@ -701,6 +701,7 @@ p75/p90/p95 AoI
 stale_fraction_50/75/100
 member_mean/member_p95 AoI
 member_zero_participation_fraction
+member_stale_*_failure_fraction
 error norm
 energy efficiency
 CH uploads
@@ -711,11 +712,65 @@ Expected benefit:
 - confirms whether the moderate freshness gain at `w=0.05` survives higher
   Monte Carlo precision;
 - checks whether the roughly 2x final-error cost is stable or just seed noise;
+- identifies whether stale members are dominated by member compute, member link,
+  member energy, CH no-attempt, ALOHA collision, or CH-to-BS physical decoding;
 - documents that the severe p90/p95 AoI tail already exists in the tuned
   physical utility baseline and is not solved by light member-fair access
   reweighting;
+- tests whether `--d2d-ch-rotation-trigger-mode interval_or_member_aoi` can
+  reduce the stale tail by changing the CH rather than only changing access
+  probability;
 - provides a clean reference before implementing deeper structural changes such
-  as AoI/channel-aware CH rotation, re-clustering, or data-aware D2D discovery.
+  as re-clustering or data-aware D2D discovery.
+
+Latest member-rotation result (`K=1000`, `rounds=100`, physical
+energy/Rayleigh, `performance` CH rotation profile):
+
+```text
+utility_physical_member_diag_r100:
+  final_error       = 1.603e-07
+  member_aoi        = 62.043
+  member_stale75    = 0.483
+  member_zero       = 0.431
+  energy_efficiency = 877.028
+  stale cause       = 99.2% CH no-attempt
+
+member_rotation_utility_physical_r100:
+  final_error       = 1.148e-07
+  member_aoi        = 62.229
+  member_stale75    = 0.484
+  member_zero       = 0.432
+  energy_efficiency = 871.632
+  stale cause       = 99.3% CH no-attempt
+
+member_fair_w005_rotation_physical_r100:
+  final_error       = 2.849e-07
+  member_aoi        = 60.711
+  member_stale75    = 0.455
+  member_zero       = 0.394
+  energy_efficiency = 809.473
+  stale cause       = 98.8% CH no-attempt
+```
+
+Interpretation: member-aware CH rotation improves the physical utility error
+curve, probably by moving to stronger CH-to-BS candidates, but it does not
+materially improve member freshness. The failure attribution shows that stale
+members are almost never blocked by member compute, member-to-CH Rayleigh links,
+member energy, or CH-to-BS decoding. The dominant cause is that the CH carrying
+those stale members does not attempt in that round. Therefore the next
+implementation should target stale-member access opportunity directly: a
+virtual-queue/member-refresh access mode, a bounded scheduled refresh overlay,
+or local re-clustering that reduces the number of stale members competing for
+the same sparse CH access opportunities.
+
+Implemented next access test: `--optimized-d2d-access-mode
+member_refresh_utility`. It uses the same base utility and active
+stale/zero-member pressure as `member_fair_utility`, but adds a local refresh
+floor through `--optimized-d2d-member-refresh-floor-fraction`. This directly
+tests the `CH no attempt` diagnosis by raising the minimum attempt probability
+only for refresh-eligible clusters. It is still an ALOHA probability policy, not
+a centralized scheduler; the floor should be swept conservatively because it can
+increase collisions when many clusters are stale at once.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

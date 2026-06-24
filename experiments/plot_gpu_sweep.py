@@ -50,6 +50,20 @@ THESIS_FIGURE_15_STYLES = (
     ("optimized_aloha_d2d", "ALOHA with optimized access prob with D2D", "blue", "--", None),
 )
 
+MEMBER_FAILURE_BREAKDOWN = (
+    ("member_stale_compute_failure_fraction", "Member compute", "#4c78a8"),
+    ("member_stale_link_failure_fraction", "Member link", "#f58518"),
+    (
+        "member_stale_member_energy_failure_fraction",
+        "Member energy",
+        "#54a24b",
+    ),
+    ("member_stale_ch_no_attempt_fraction", "CH no attempt", "#b279a2"),
+    ("member_stale_collision_fraction", "ALOHA collision", "#e45756"),
+    ("member_stale_ch_bs_failure_fraction", "CH-BS decode", "#72b7b2"),
+    ("member_stale_other_failure_fraction", "Other", "#bab0ac"),
+)
+
 
 def _clean_formats(formats):
     """Normalize plot format strings passed by the CLI or another script."""
@@ -252,6 +266,49 @@ def _plot_cluster_quality(frame, output_stem, formats):
     axes[1].tick_params(axis="x", labelrotation=20)
     axes[1].grid(True, axis="y", alpha=0.25)
 
+    fig.tight_layout()
+    return _save_figure(fig, output_stem, formats)
+
+
+def _plot_member_failure_breakdown(
+    frame,
+    output_stem,
+    formats,
+    scenario="optimized_aloha_d2d",
+):
+    """Plot the reason stale D2D members were not refreshed."""
+    available_metrics = [
+        (metric_name, label, color)
+        for metric_name, label, color in MEMBER_FAILURE_BREAKDOWN
+        if f"{scenario}_{metric_name}_mean" in frame.columns
+    ]
+    if not available_metrics:
+        return []
+
+    x_values = frame["t"].to_numpy(dtype=float)
+    y_values = [
+        frame[f"{scenario}_{metric_name}_mean"].to_numpy(dtype=float)
+        for metric_name, _, _ in available_metrics
+    ]
+    labels = [label for _, label, _ in available_metrics]
+    colors = [color for _, _, color in available_metrics]
+
+    fig, axis = plt.subplots(figsize=(9.0, 5.0))
+    axis.stackplot(
+        x_values,
+        y_values,
+        labels=labels,
+        colors=colors,
+        alpha=0.88,
+    )
+    axis.set_ylim(0.0, 1.0)
+    axis.set_xlabel("FL iterations (t)")
+    axis.set_ylabel("Fraction of stale D2D-clustered devices")
+    axis.set_title(
+        f"Member Stale Failure Breakdown: {SCENARIO_LABELS.get(scenario, scenario)}"
+    )
+    axis.grid(True, alpha=0.25)
+    axis.legend(loc="upper left", fontsize=8, ncol=2)
     fig.tight_layout()
     return _save_figure(fig, output_stem, formats)
 
@@ -515,6 +572,15 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
             title="D2D-Clustered Device Zero-Participation Fraction",
             output_stem=base_stem.with_name(
                 f"{base_stem.name}_member_zero_participation_fraction"
+            ),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_member_failure_breakdown(
+            frame,
+            output_stem=base_stem.with_name(
+                f"{base_stem.name}_member_failure_breakdown"
             ),
             formats=formats,
         )

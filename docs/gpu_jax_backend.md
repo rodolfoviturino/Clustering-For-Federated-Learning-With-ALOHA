@@ -642,6 +642,10 @@ Policy differences:
   `final_error=3.066e-07` versus `1.603e-07`, `energy_efficiency=817.898`
   versus `877.028`). Larger weights reduce freshness metrics more but are not
   physical defaults because convergence and energy efficiency degrade quickly.
+- `member_refresh_utility` is the next access-side test after the member-stale
+  failure attribution showed `CH no attempt` dominates stale samples. It keeps
+  utility load control but gives refresh-eligible clusters a local minimum
+  access probability via `--optimized-d2d-member-refresh-floor-fraction`.
 
 The utility Pareto tuning runner is:
 
@@ -723,6 +727,14 @@ The returned `JaxTraceResult` contains:
 - `d2d_member_mean_aoi`, `d2d_member_peak_aoi`, `d2d_member_p75_aoi`,
   `d2d_member_p90_aoi`, `d2d_member_p95_aoi`: `float[checkpoints, 3]`,
   member-level AoI over devices in non-singleton D2D clusters.
+- `d2d_member_stale_compute_failure_fraction`,
+  `d2d_member_stale_link_failure_fraction`,
+  `d2d_member_stale_member_energy_failure_fraction`,
+  `d2d_member_stale_ch_no_attempt_fraction`,
+  `d2d_member_stale_collision_fraction`,
+  `d2d_member_stale_ch_bs_failure_fraction`, and
+  `d2d_member_stale_other_failure_fraction`: `float[checkpoints, 3]`,
+  severe-stale member failure attribution fractions for D2D scenarios.
 - `d2d_member_stale_fraction_50`, `d2d_member_stale_fraction_75`,
   `d2d_member_stale_fraction_100`: `float[checkpoints, 3]`, member-level
   stale-tail fractions using the same thresholds as the cluster/device AoI
@@ -818,6 +830,8 @@ That command writes:
 - `Runs/gpu_smoke/results_peak_aoi.png` and `.pdf` when peak-AoI columns exist.
 - `Runs/gpu_smoke/results_p75_aoi.png`, `results_p90_aoi.png`,
   `results_p95_aoi.png`, and stale-fraction plots when those columns exist.
+- `Runs/gpu_smoke/results_member_failure_breakdown.png` when optimized-D2D
+  member-stale failure attribution columns exist.
 - `Runs/gpu_smoke/results_member_aoi.png`, `results_member_p95_aoi.png`,
   `results_member_stale_fraction_75.png`, and
   `results_member_zero_participation_fraction.png` when D2D member-level

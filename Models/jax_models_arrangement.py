@@ -112,6 +112,13 @@ class JaxTraceResult(NamedTuple):
     d2d_member_stale_fraction_100: Any
     d2d_member_participation_p05: Any
     d2d_member_zero_participation_fraction: Any
+    d2d_member_stale_compute_failure_fraction: Any
+    d2d_member_stale_link_failure_fraction: Any
+    d2d_member_stale_member_energy_failure_fraction: Any
+    d2d_member_stale_ch_no_attempt_fraction: Any
+    d2d_member_stale_collision_fraction: Any
+    d2d_member_stale_ch_bs_failure_fraction: Any
+    d2d_member_stale_other_failure_fraction: Any
 
 
 D2D_ENERGY_EFFICIENCY_PROFILES = {
@@ -1138,6 +1145,160 @@ def _member_fair_utility_access_probability(
     return jnp.where(fairness_active, bounded_probability, base_probability)
 
 
+def _member_refresh_utility_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    member_aoi_by_cluster,
+    member_participation_by_cluster,
+    active_member_mask,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    refresh_weight,
+    refresh_exponent,
+    refresh_threshold_fraction,
+    refresh_floor_fraction,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Give stale active D2D members an explicit CH-attempt opportunity.
+
+    ``member_fair_utility`` is a smooth quota blend.  The failure-attribution
+    diagnostics showed that severe stale members are usually locally active but
+    their CH does not attempt, so this policy adds a targeted refresh overlay:
+    clusters with active stale or zero-participation members receive both a
+    reserved load-controlled quota and an optional minimum access floor.  The
+    floor is local to refresh-eligible clusters and is still bounded by ``pcomp``.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    refresh_quota = jnp.clip(jnp.asarray(refresh_weight, dtype=dtype), 0.0, 1.0)
+    refresh_exponent = jnp.asarray(refresh_exponent, dtype=dtype)
+    refresh_threshold_fraction = jnp.asarray(
+        refresh_threshold_fraction,
+        dtype=dtype,
+    )
+    refresh_floor_fraction = jnp.asarray(refresh_floor_fraction, dtype=dtype)
+
+    base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+    base_probability = _load_controlled_access_from_utility(
+        utility=base_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+    active_mask = active_member_mask & cluster_mask[:, None]
+    active_counts = jnp.sum(active_mask, axis=1).astype(dtype)
+    eligible_mask = cluster_mask & (active_counts > 1.0)
+    safe_counts = jnp.maximum(active_counts, jnp.asarray(1.0, dtype=dtype))
+
+    member_aoi = member_aoi_by_cluster.astype(dtype)
+    active_member_aoi = jnp.where(active_mask, member_aoi, 0.0)
+    peak_member_aoi = jnp.max(active_member_aoi, axis=1)
+    active_peak_member_aoi = jnp.where(eligible_mask, peak_member_aoi, 0.0)
+    normalized_peak_aoi = (
+        (active_peak_member_aoi + eps)
+        / (jnp.max(active_peak_member_aoi) + eps)
+    )
+    remaining_tail_width = jnp.maximum(1.0 - refresh_threshold_fraction, eps)
+    peak_tail_pressure = jnp.clip(
+        (normalized_peak_aoi - refresh_threshold_fraction)
+        / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+
+    zero_participation = (
+        member_participation_by_cluster.astype(dtype)
+        <= jnp.asarray(0.0, dtype=dtype)
+    )
+    zero_participation_fraction = (
+        jnp.sum((zero_participation & active_mask).astype(dtype), axis=1)
+        / safe_counts
+    )
+    refresh_pressure = jnp.maximum(peak_tail_pressure, zero_participation_fraction)
+    no_attempt_pressure = jnp.clip(
+        1.0 - (base_probability / jnp.maximum(pcomp, eps)),
+        0.0,
+        1.0,
+    )
+    refresh_priority = jnp.where(
+        eligible_mask,
+        (refresh_pressure**refresh_exponent) * (eps + no_attempt_pressure),
+        0.0,
+    )
+    has_positive_refresh = (
+        jnp.sum(jnp.where(eligible_mask, refresh_priority, 0.0)) > eps
+    )
+    refresh_mask = eligible_mask & (refresh_priority > eps) & has_positive_refresh
+
+    refresh_probability = _load_controlled_access_from_utility(
+        utility=jnp.where(has_positive_refresh, refresh_priority, base_utility),
+        cluster_mask=jnp.where(has_positive_refresh, refresh_mask, cluster_mask),
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=jnp.asarray(0.0, dtype=dtype),
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+    mixed_probability = (1.0 - refresh_quota) * base_probability + (
+        refresh_quota * refresh_probability
+    )
+    targeted_floor = refresh_floor_fraction * fixed_access_probability
+    floored_probability = jnp.where(
+        refresh_mask,
+        jnp.maximum(mixed_probability, targeted_floor),
+        mixed_probability,
+    )
+    bounded_probability = jnp.where(
+        cluster_mask,
+        jnp.clip(floored_probability, 0.0, pcomp),
+        0.0,
+    )
+    return jnp.where(has_positive_refresh, bounded_probability, base_probability)
+
+
 def _load_controlled_access_from_utility(
     utility,
     cluster_mask,
@@ -1605,6 +1766,7 @@ def _successful_from_draws(
     n_channels,
     link_key=None,
     link_success_probability=None,
+    return_details=False,
 ):
     """Resolve multichannel ALOHA contenders for one model.
 
@@ -1633,6 +1795,7 @@ def _successful_from_draws(
     )
     collision_free = candidates & (channel_counts[selected_channels] == 1)
     if link_success_probability is None:
+        link_success = jnp.ones_like(collision_free, dtype=jnp.bool_)
         successful = collision_free
     else:
         if link_key is None:
@@ -1646,8 +1809,12 @@ def _successful_from_draws(
             random_draws.shape,
             dtype=random_draws.dtype,
         )
-        successful = collision_free & (link_draws < link_success_probability)
-    return successful, jnp.sum(candidates).astype(jnp.int32)
+        link_success = link_draws < link_success_probability
+        successful = collision_free & link_success
+    candidate_count = jnp.sum(candidates).astype(jnp.int32)
+    if return_details:
+        return successful, candidate_count, candidates, collision_free, link_success
+    return successful, candidate_count
 
 
 def error_calculator_trace_jax(
@@ -1698,6 +1865,8 @@ def error_calculator_trace_jax(
     d2d_ch_rotation_interval: int = 10,
     d2d_ch_rotation_trigger_mode: str = "interval",
     d2d_ch_rotation_aoi_threshold_fraction: float = 0.75,
+    d2d_ch_rotation_member_threshold_fraction: float = 0.75,
+    d2d_ch_rotation_member_link_weight: float = 0.25,
     d2d_energy_efficiency_level: str = "balanced",
     device_coords=None,
     device_radius=None,
@@ -1729,6 +1898,7 @@ def error_calculator_trace_jax(
     optimized_d2d_aoi_threshold_fraction: float = 0.75,
     optimized_d2d_aoi_channel_exponent: float = 1.0,
     optimized_d2d_aoi_battery_exponent: float = 0.5,
+    optimized_d2d_member_refresh_floor_fraction: float = 0.05,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -1841,16 +2011,27 @@ def error_calculator_trace_jax(
     if d2d_ch_rotation_trigger_mode not in {
         "interval",
         "aoi",
+        "member_aoi",
         "interval_or_aoi",
+        "interval_or_member_aoi",
+        "aoi_or_member_aoi",
+        "interval_or_aoi_or_member_aoi",
     }:
         raise ValueError(
             "d2d_ch_rotation_trigger_mode must be 'interval', 'aoi', "
-            "or 'interval_or_aoi'"
+            "'member_aoi', 'interval_or_aoi', 'interval_or_member_aoi', "
+            "'aoi_or_member_aoi', or 'interval_or_aoi_or_member_aoi'"
         )
     if not 0.0 <= d2d_ch_rotation_aoi_threshold_fraction <= 1.0:
         raise ValueError(
             "d2d_ch_rotation_aoi_threshold_fraction must be in [0, 1]"
         )
+    if not 0.0 <= d2d_ch_rotation_member_threshold_fraction <= 1.0:
+        raise ValueError(
+            "d2d_ch_rotation_member_threshold_fraction must be in [0, 1]"
+        )
+    if d2d_ch_rotation_member_link_weight < 0.0:
+        raise ValueError("d2d_ch_rotation_member_link_weight must be non-negative")
     _d2d_energy_efficiency_profile_weights(d2d_energy_efficiency_level)
     if d2d_ch_rotation_mode == "energy_aware":
         if energy_drain_mode != "dynamic":
@@ -1876,12 +2057,14 @@ def error_calculator_trace_jax(
         "aoi_tail_utility",
         "aoi_quality_tail_utility",
         "member_fair_utility",
+        "member_refresh_utility",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
             "'max_weight', 'hybrid', 'adaptive_diversity', or "
             "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'/"
-            "'aoi_quality_tail_utility'/'member_fair_utility'"
+            "'aoi_quality_tail_utility'/'member_fair_utility'/"
+            "'member_refresh_utility'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -1942,6 +2125,10 @@ def error_calculator_trace_jax(
         raise ValueError("optimized_d2d_aoi_channel_exponent must be non-negative")
     if optimized_d2d_aoi_battery_exponent < 0.0:
         raise ValueError("optimized_d2d_aoi_battery_exponent must be non-negative")
+    if not 0.0 <= optimized_d2d_member_refresh_floor_fraction <= 1.0:
+        raise ValueError(
+            "optimized_d2d_member_refresh_floor_fraction must be in [0, 1]"
+        )
 
     dtype = jnp.float32 if dtype is None else dtype
     pcomp = jnp.asarray(
@@ -2017,6 +2204,14 @@ def error_calculator_trace_jax(
         d2d_ch_rotation_aoi_threshold_fraction,
         dtype=dtype,
     )
+    d2d_ch_rotation_member_threshold_fraction = jnp.asarray(
+        d2d_ch_rotation_member_threshold_fraction,
+        dtype=dtype,
+    )
+    d2d_ch_rotation_member_link_weight = jnp.asarray(
+        d2d_ch_rotation_member_link_weight,
+        dtype=dtype,
+    )
     d2d_rotation_channel_weight, d2d_rotation_battery_weight, d2d_rotation_stability_weight = (
         _d2d_energy_efficiency_profile_weights(d2d_energy_efficiency_level, dtype)
     )
@@ -2084,6 +2279,10 @@ def error_calculator_trace_jax(
     )
     d2d_aoi_battery_exponent = jnp.asarray(
         optimized_d2d_aoi_battery_exponent,
+        dtype=dtype,
+    )
+    d2d_member_refresh_floor_fraction = jnp.asarray(
+        optimized_d2d_member_refresh_floor_fraction,
         dtype=dtype,
     )
 
@@ -2287,7 +2486,11 @@ def error_calculator_trace_jax(
     def apply_gradient(current_weight, gradient):
         return current_weight - learning_rate * gradient / normalization_factor
 
-    def select_energy_aware_cluster_heads(current_heads, scenario_battery):
+    def select_energy_aware_cluster_heads(
+        current_heads,
+        scenario_battery,
+        scenario_member_aoi=None,
+    ):
         """Select one valid CH per cluster from current battery/channel state.
 
         current_heads: int[max_clusters], the CHs used by this D2D scenario in
@@ -2301,10 +2504,67 @@ def error_calculator_trace_jax(
         stability_score = (
             safe_members == current_heads[:, None]
         ).astype(users_input__x.dtype)
+        member_link_score = jnp.zeros(cluster_members.shape, dtype=users_input__x.dtype)
+        if scenario_member_aoi is not None and "member_aoi" in d2d_ch_rotation_trigger_mode:
+            member_aoi_by_cluster = scenario_member_aoi[safe_members]
+            stale_member_weight = jnp.where(
+                member_mask & cluster_mask[:, None],
+                jnp.maximum(member_aoi_by_cluster - 1.0, 0.0),
+                0.0,
+            )
+            fallback_member_weight = (member_mask & cluster_mask[:, None]).astype(
+                users_input__x.dtype
+            )
+            member_weight_sum = jnp.sum(stale_member_weight, axis=1, keepdims=True)
+            member_weights = jnp.where(
+                member_weight_sum > 0.0,
+                stale_member_weight,
+                fallback_member_weight,
+            )
+            member_weight_sum = jnp.maximum(
+                jnp.sum(member_weights, axis=1, keepdims=True),
+                jnp.asarray(1.0, dtype=users_input__x.dtype),
+            )
+            if d2d_member_link_success_mode == "constant" or coords is None:
+                candidate_member_probability = jnp.full(
+                    (
+                        cluster_members.shape[0],
+                        cluster_members.shape[1],
+                        cluster_members.shape[1],
+                    ),
+                    d2d_link_probability,
+                    dtype=users_input__x.dtype,
+                )
+            else:
+                candidate_coords = coords[safe_members]
+                member_coords = coords[safe_members]
+                deltas = candidate_coords[:, :, None, :] - member_coords[:, None, :, :]
+                distances = jnp.sqrt(jnp.sum(deltas * deltas, axis=-1))
+                candidate_member_probability = _rayleigh_outage_success_from_distance(
+                    distances,
+                    dtype=dtype,
+                    pathloss_exponent=d2d_member_pathloss_exponent,
+                    reference_snr=d2d_member_reference_snr,
+                    snr_threshold=d2d_member_snr_threshold,
+                )
+            member_link_score = (
+                jnp.sum(
+                    candidate_member_probability * member_weights[:, None, :],
+                    axis=2,
+                )
+                / member_weight_sum
+            )
+            member_link_score = jnp.where(
+                valid_ch_candidate,
+                member_link_score,
+                0.0,
+            )
+
         candidate_scores = (
             d2d_rotation_channel_weight * bs_channel_quality[safe_members]
             + d2d_rotation_battery_weight * scenario_battery[safe_members]
             + d2d_rotation_stability_weight * stability_score
+            + d2d_ch_rotation_member_link_weight * member_link_score
         )
         candidate_scores = jnp.where(
             valid_ch_candidate,
@@ -2641,26 +2901,64 @@ def error_calculator_trace_jax(
             & (d2d_aoi > jnp.asarray(1.0, dtype=dtype))
             & (normalized_d2d_aoi >= d2d_ch_rotation_aoi_threshold_fraction)
         )
+        member_aoi_by_cluster = jnp.where(
+            member_mask[None, :, :] & cluster_mask[None, :, None],
+            d2d_member_aoi[:, safe_members],
+            0.0,
+        )
+        member_cluster_peak_aoi = jnp.max(member_aoi_by_cluster, axis=2)
+        max_member_cluster_aoi = jnp.maximum(
+            jnp.max(member_cluster_peak_aoi, axis=1, keepdims=True),
+            jnp.asarray(1.0, dtype=dtype),
+        )
+        normalized_member_cluster_aoi = (
+            member_cluster_peak_aoi / max_member_cluster_aoi
+        )
+        member_aoi_rotation_mask = (
+            d2d_ch_rotation_enabled
+            & cluster_mask[None, :]
+            & (cluster_sizes[None, :] > 1)
+            & (member_cluster_peak_aoi > jnp.asarray(1.0, dtype=dtype))
+            & (
+                normalized_member_cluster_aoi
+                >= d2d_ch_rotation_member_threshold_fraction
+            )
+        )
         if d2d_ch_rotation_trigger_mode == "interval":
             rotation_mask = interval_rotation_mask
         elif d2d_ch_rotation_trigger_mode == "aoi":
             rotation_mask = aoi_rotation_mask
-        else:
+        elif d2d_ch_rotation_trigger_mode == "member_aoi":
+            rotation_mask = member_aoi_rotation_mask
+        elif d2d_ch_rotation_trigger_mode == "interval_or_aoi":
             rotation_mask = interval_rotation_mask | aoi_rotation_mask
+        elif d2d_ch_rotation_trigger_mode == "interval_or_member_aoi":
+            rotation_mask = interval_rotation_mask | member_aoi_rotation_mask
+        elif d2d_ch_rotation_trigger_mode == "aoi_or_member_aoi":
+            rotation_mask = aoi_rotation_mask | member_aoi_rotation_mask
+        else:
+            rotation_mask = (
+                interval_rotation_mask
+                | aoi_rotation_mask
+                | member_aoi_rotation_mask
+            )
 
         proposed_d2d_heads = jnp.stack(
             [
                 select_energy_aware_cluster_heads(
                     current_d2d_heads[0],
                     current_batteries[3],
+                    d2d_member_aoi[0],
                 ),
                 select_energy_aware_cluster_heads(
                     current_d2d_heads[1],
                     current_batteries[4],
+                    d2d_member_aoi[1],
                 ),
                 select_energy_aware_cluster_heads(
                     current_d2d_heads[2],
                     current_batteries[5],
+                    d2d_member_aoi[2],
                 ),
             ],
             axis=0,
@@ -2923,9 +3221,10 @@ def error_calculator_trace_jax(
         polling_d2d_attempt = polling_d2d_compute_success & ch_can_attempt_1[
             scheduled_clusters
         ]
-        polling_success_d2d = polling_d2d_attempt & (
+        polling_d2d_ch_bs_link_success = (
             polling_d2d_link_draws < ch_bs_success_probability_1[scheduled_clusters]
         )
+        polling_success_d2d = polling_d2d_attempt & polling_d2d_ch_bs_link_success
         gradient_1_d2d = jnp.sum(
             jnp.where(
                 polling_success_d2d[:, None],
@@ -2968,7 +3267,13 @@ def error_calculator_trace_jax(
         )
         candidates_2_d2d_mask = (fixed_cluster_draws < threshold_d2d) & cluster_mask
         candidates_2_d2d_mask = candidates_2_d2d_mask & ch_can_attempt_2
-        success_2_d2d, _ = _successful_from_draws(
+        (
+            success_2_d2d,
+            _,
+            candidates_2_d2d_detail,
+            collision_free_2_d2d,
+            ch_bs_link_success_2_d2d,
+        ) = _successful_from_draws(
             channel_key_2_d2d,
             fixed_cluster_draws,
             threshold_d2d,
@@ -2976,6 +3281,7 @@ def error_calculator_trace_jax(
             n_channels,
             link_key=fixed_d2d_link_key,
             link_success_probability=ch_bs_success_probability_2,
+            return_details=True,
         )
         gradient_2_d2d = jnp.sum(
             jnp.where(success_2_d2d[:, None], aggregate_updates_model_2, 0.0),
@@ -3199,6 +3505,38 @@ def error_calculator_trace_jax(
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
+        elif optimized_d2d_access_mode == "member_refresh_utility":
+            optimized_probability_d2d = _member_refresh_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                refresh_weight=d2d_aoi_weight,
+                refresh_exponent=d2d_aoi_exponent,
+                refresh_threshold_fraction=d2d_aoi_threshold_fraction,
+                refresh_floor_fraction=d2d_member_refresh_floor_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
         elif optimized_d2d_access_mode == "max_weight":
             optimized_probability_d2d = _max_weight_threshold_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -3293,7 +3631,13 @@ def error_calculator_trace_jax(
             optimized_cluster_draws < optimized_probability_d2d
         ) & cluster_mask
         candidates_3_d2d_mask = candidates_3_d2d_mask & ch_can_attempt_3
-        success_3_d2d, candidates_3_d2d = _successful_from_draws(
+        (
+            success_3_d2d,
+            candidates_3_d2d,
+            candidates_3_d2d_detail,
+            collision_free_3_d2d,
+            ch_bs_link_success_3_d2d,
+        ) = _successful_from_draws(
             channel_key_3_d2d,
             optimized_cluster_draws,
             optimized_probability_d2d,
@@ -3301,6 +3645,7 @@ def error_calculator_trace_jax(
             n_channels,
             link_key=optimized_d2d_link_key,
             link_success_probability=ch_bs_success_probability_3,
+            return_details=True,
         )
         gradient_3_d2d = jnp.sum(
             jnp.where(success_3_d2d[:, None], aggregate_updates_model_3, 0.0),
@@ -3574,6 +3919,96 @@ def error_calculator_trace_jax(
             ].add(delivered_member_mask.reshape(-1).astype(jnp.int32))
             return delivered_counts > 0
 
+        def member_stale_failure_breakdown(
+            heads,
+            scenario_battery,
+            member_energy,
+            member_link_success,
+            active_member_mask,
+            cluster_attempt_mask,
+            collision_free_mask,
+            ch_bs_link_success_mask,
+            next_member_aoi,
+            current_iteration,
+        ):
+            is_scenario_ch = safe_members == heads[:, None]
+            if battery_feasibility_enabled:
+                member_has_energy = scenario_battery[safe_members] >= member_energy
+            else:
+                member_has_energy = jnp.ones(cluster_members.shape, dtype=jnp.bool_)
+
+            current_t = current_iteration.astype(users_input__x.dtype)
+            stale_threshold = 1.0 + 0.75 * current_t
+            stale_positions = (
+                member_mask
+                & cluster_mask[:, None]
+                & (cluster_sizes[:, None] > 1)
+                & (next_member_aoi[safe_members] > stale_threshold)
+            )
+            denominator = jnp.maximum(
+                jnp.sum(stale_positions).astype(users_input__x.dtype),
+                jnp.asarray(1.0, dtype=users_input__x.dtype),
+            )
+
+            non_ch = ~is_scenario_ch
+            compute_failure = stale_positions & non_ch & (~member_compute_success)
+            link_failure = (
+                stale_positions
+                & non_ch
+                & member_compute_success
+                & (~member_link_success)
+            )
+            member_energy_failure = (
+                stale_positions
+                & non_ch
+                & member_compute_success
+                & member_link_success
+                & (~member_has_energy)
+            )
+
+            locally_active = active_member_mask
+            cluster_attempt = cluster_attempt_mask[:, None]
+            collision_free = collision_free_mask[:, None]
+            ch_bs_link_success = ch_bs_link_success_mask[:, None]
+            ch_no_attempt = stale_positions & locally_active & (~cluster_attempt)
+            collision_failure = (
+                stale_positions
+                & locally_active
+                & cluster_attempt
+                & (~collision_free)
+            )
+            ch_bs_failure = (
+                stale_positions
+                & locally_active
+                & collision_free
+                & (~ch_bs_link_success)
+            )
+            explained = (
+                compute_failure
+                | link_failure
+                | member_energy_failure
+                | ch_no_attempt
+                | collision_failure
+                | ch_bs_failure
+            )
+            other_failure = stale_positions & (~explained)
+
+            def fraction(mask):
+                return jnp.sum(mask).astype(users_input__x.dtype) / denominator
+
+            return jnp.asarray(
+                [
+                    fraction(compute_failure),
+                    fraction(link_failure),
+                    fraction(member_energy_failure),
+                    fraction(ch_no_attempt),
+                    fraction(collision_failure),
+                    fraction(ch_bs_failure),
+                    fraction(other_failure),
+                ],
+                dtype=users_input__x.dtype,
+            )
+
         delivered_member_mask_1 = active_member_mask_1 & polling_cluster_success[:, None]
         delivered_member_mask_2 = active_member_mask_2 & success_2_d2d[:, None]
         delivered_member_mask_3 = active_member_mask_3 & success_3_d2d[:, None]
@@ -3595,6 +4030,72 @@ def error_calculator_trace_jax(
             d2d_member_participation_counts
             + d2d_member_success.astype(d2d_member_participation_counts.dtype)
         )
+        polling_d2d_attempt_by_cluster = (
+            jnp.zeros(cluster_mask.shape, dtype=jnp.int32)
+            .at[scheduled_clusters]
+            .add(polling_d2d_attempt.astype(jnp.int32))
+            > 0
+        )
+        polling_d2d_ch_bs_link_success_by_cluster = (
+            jnp.zeros(cluster_mask.shape, dtype=jnp.int32)
+            .at[scheduled_clusters]
+            .add(
+                (polling_d2d_attempt & polling_d2d_ch_bs_link_success).astype(
+                    jnp.int32
+                )
+            )
+            > 0
+        )
+        d2d_member_stale_failure_breakdown = jnp.stack(
+            [
+                member_stale_failure_breakdown(
+                    polling_d2d_heads,
+                    current_batteries[3],
+                    member_energy_1,
+                    member_link_success_1,
+                    active_member_mask_1,
+                    polling_d2d_attempt_by_cluster,
+                    polling_d2d_attempt_by_cluster,
+                    polling_d2d_ch_bs_link_success_by_cluster,
+                    next_d2d_member_aoi[0],
+                    iteration_index + jnp.asarray(1, dtype=jnp.int32),
+                ),
+                member_stale_failure_breakdown(
+                    fixed_d2d_heads,
+                    current_batteries[4],
+                    member_energy_2,
+                    member_link_success_2,
+                    active_member_mask_2,
+                    candidates_2_d2d_detail,
+                    collision_free_2_d2d,
+                    ch_bs_link_success_2_d2d,
+                    next_d2d_member_aoi[1],
+                    iteration_index + jnp.asarray(1, dtype=jnp.int32),
+                ),
+                member_stale_failure_breakdown(
+                    optimized_d2d_heads,
+                    current_batteries[5],
+                    member_energy_3,
+                    member_link_success_3,
+                    active_member_mask_3,
+                    candidates_3_d2d_detail,
+                    collision_free_3_d2d,
+                    ch_bs_link_success_3_d2d,
+                    next_d2d_member_aoi[2],
+                    iteration_index + jnp.asarray(1, dtype=jnp.int32),
+                ),
+            ],
+            axis=0,
+        )
+        (
+            d2d_member_stale_compute_failure_fraction,
+            d2d_member_stale_link_failure_fraction,
+            d2d_member_stale_member_energy_failure_fraction,
+            d2d_member_stale_ch_no_attempt_fraction,
+            d2d_member_stale_collision_fraction,
+            d2d_member_stale_ch_bs_failure_fraction,
+            d2d_member_stale_other_failure_fraction,
+        ) = jnp.moveaxis(d2d_member_stale_failure_breakdown, 1, 0)
         (
             mean_aoi,
             peak_aoi,
@@ -3720,6 +4221,13 @@ def error_calculator_trace_jax(
             d2d_member_stale_fraction_100,
             d2d_member_participation_p05,
             d2d_member_zero_participation_fraction,
+            d2d_member_stale_compute_failure_fraction,
+            d2d_member_stale_link_failure_fraction,
+            d2d_member_stale_member_energy_failure_fraction,
+            d2d_member_stale_ch_no_attempt_fraction,
+            d2d_member_stale_collision_fraction,
+            d2d_member_stale_ch_bs_failure_fraction,
+            d2d_member_stale_other_failure_fraction,
         )
         return next_state, trace_row
 
@@ -3791,6 +4299,13 @@ def error_calculator_trace_jax(
             d2d_member_stale_fraction_100,
             d2d_member_participation_p05,
             d2d_member_zero_participation_fraction,
+            d2d_member_stale_compute_failure_fraction,
+            d2d_member_stale_link_failure_fraction,
+            d2d_member_stale_member_energy_failure_fraction,
+            d2d_member_stale_ch_no_attempt_fraction,
+            d2d_member_stale_collision_fraction,
+            d2d_member_stale_ch_bs_failure_fraction,
+            d2d_member_stale_other_failure_fraction,
         ),
     ) = jax.lax.scan(
         scan_iteration,
@@ -3843,6 +4358,27 @@ def error_calculator_trace_jax(
         d2d_member_zero_participation_fraction=(
             d2d_member_zero_participation_fraction[checkpoint_indices]
         ),
+        d2d_member_stale_compute_failure_fraction=(
+            d2d_member_stale_compute_failure_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_link_failure_fraction=(
+            d2d_member_stale_link_failure_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_member_energy_failure_fraction=(
+            d2d_member_stale_member_energy_failure_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_ch_no_attempt_fraction=(
+            d2d_member_stale_ch_no_attempt_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_collision_fraction=(
+            d2d_member_stale_collision_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_ch_bs_failure_fraction=(
+            d2d_member_stale_ch_bs_failure_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_other_failure_fraction=(
+            d2d_member_stale_other_failure_fraction[checkpoint_indices]
+        ),
     )
 
 
@@ -3894,6 +4430,8 @@ def error_calculator(
     d2d_ch_rotation_interval: int = 10,
     d2d_ch_rotation_trigger_mode: str = "interval",
     d2d_ch_rotation_aoi_threshold_fraction: float = 0.75,
+    d2d_ch_rotation_member_threshold_fraction: float = 0.75,
+    d2d_ch_rotation_member_link_weight: float = 0.25,
     d2d_energy_efficiency_level: str = "balanced",
     device_coords=None,
     device_radius=None,
@@ -3925,6 +4463,7 @@ def error_calculator(
     optimized_d2d_aoi_threshold_fraction: float = 0.75,
     optimized_d2d_aoi_channel_exponent: float = 1.0,
     optimized_d2d_aoi_battery_exponent: float = 0.5,
+    optimized_d2d_member_refresh_floor_fraction: float = 0.05,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -3979,6 +4518,10 @@ def error_calculator(
         d2d_ch_rotation_aoi_threshold_fraction=(
             d2d_ch_rotation_aoi_threshold_fraction
         ),
+        d2d_ch_rotation_member_threshold_fraction=(
+            d2d_ch_rotation_member_threshold_fraction
+        ),
+        d2d_ch_rotation_member_link_weight=d2d_ch_rotation_member_link_weight,
         d2d_energy_efficiency_level=d2d_energy_efficiency_level,
         device_coords=device_coords,
         device_radius=device_radius,
@@ -4014,6 +4557,9 @@ def error_calculator(
         optimized_d2d_aoi_threshold_fraction=optimized_d2d_aoi_threshold_fraction,
         optimized_d2d_aoi_channel_exponent=optimized_d2d_aoi_channel_exponent,
         optimized_d2d_aoi_battery_exponent=optimized_d2d_aoi_battery_exponent,
+        optimized_d2d_member_refresh_floor_fraction=(
+            optimized_d2d_member_refresh_floor_fraction
+        ),
         checkpoints=[number_of_iterations__t],
         dtype=dtype,
     )

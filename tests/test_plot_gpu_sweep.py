@@ -53,6 +53,13 @@ class PlotGpuSweepTests(unittest.TestCase):
                     "polling_d2d_member_stale_fraction_75_ci95": 0.0,
                     "polling_d2d_member_zero_participation_fraction_mean": 0.30,
                     "polling_d2d_member_zero_participation_fraction_ci95": 0.0,
+                    "optimized_aloha_d2d_member_stale_compute_failure_fraction_mean": 0.10,
+                    "optimized_aloha_d2d_member_stale_link_failure_fraction_mean": 0.20,
+                    "optimized_aloha_d2d_member_stale_member_energy_failure_fraction_mean": 0.00,
+                    "optimized_aloha_d2d_member_stale_ch_no_attempt_fraction_mean": 0.40,
+                    "optimized_aloha_d2d_member_stale_collision_fraction_mean": 0.20,
+                    "optimized_aloha_d2d_member_stale_ch_bs_failure_fraction_mean": 0.10,
+                    "optimized_aloha_d2d_member_stale_other_failure_fraction_mean": 0.00,
                 },
                 {
                     "t": 2,
@@ -85,6 +92,13 @@ class PlotGpuSweepTests(unittest.TestCase):
                     "polling_d2d_member_stale_fraction_75_ci95": 0.0,
                     "polling_d2d_member_zero_participation_fraction_mean": 0.35,
                     "polling_d2d_member_zero_participation_fraction_ci95": 0.0,
+                    "optimized_aloha_d2d_member_stale_compute_failure_fraction_mean": 0.08,
+                    "optimized_aloha_d2d_member_stale_link_failure_fraction_mean": 0.22,
+                    "optimized_aloha_d2d_member_stale_member_energy_failure_fraction_mean": 0.00,
+                    "optimized_aloha_d2d_member_stale_ch_no_attempt_fraction_mean": 0.35,
+                    "optimized_aloha_d2d_member_stale_collision_fraction_mean": 0.25,
+                    "optimized_aloha_d2d_member_stale_ch_bs_failure_fraction_mean": 0.10,
+                    "optimized_aloha_d2d_member_stale_other_failure_fraction_mean": 0.00,
                 },
             ]
             with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -110,6 +124,7 @@ class PlotGpuSweepTests(unittest.TestCase):
                 "results_member_zero_participation_fraction.png",
                 generated_names,
             )
+            self.assertIn("results_member_failure_breakdown.png", generated_names)
         finally:
             shutil.rmtree(output_dir, ignore_errors=True)
 

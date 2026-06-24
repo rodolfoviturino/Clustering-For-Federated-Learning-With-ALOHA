@@ -52,6 +52,13 @@ FINAL_METRICS = (
     "member_stale_fraction_100",
     "member_participation_p05",
     "member_zero_participation_fraction",
+    "member_stale_compute_failure_fraction",
+    "member_stale_link_failure_fraction",
+    "member_stale_member_energy_failure_fraction",
+    "member_stale_ch_no_attempt_fraction",
+    "member_stale_collision_fraction",
+    "member_stale_ch_bs_failure_fraction",
+    "member_stale_other_failure_fraction",
 )
 
 
@@ -175,6 +182,7 @@ def summarize_run(csv_path, scenario=DEFAULT_SCENARIO):
             "optimized_d2d_aoi_threshold_fraction",
             "optimized_d2d_aoi_channel_exponent",
             "optimized_d2d_aoi_battery_exponent",
+            "optimized_d2d_member_refresh_floor_fraction",
             "d2d_member_link_success_mode",
             "d2d_member_link_success_probability",
             "d2d_member_pathloss_exponent",
@@ -182,6 +190,12 @@ def summarize_run(csv_path, scenario=DEFAULT_SCENARIO):
             "d2d_member_snr_threshold",
             "energy_model",
             "battery_feasibility_mode",
+            "d2d_ch_rotation_mode",
+            "d2d_ch_rotation_interval",
+            "d2d_ch_rotation_trigger_mode",
+            "d2d_ch_rotation_aoi_threshold_fraction",
+            "d2d_ch_rotation_member_threshold_fraction",
+            "d2d_ch_rotation_member_link_weight",
             "d2d_ch_bs_success_mode",
             "device_bs_success_mode",
         ):

@@ -73,6 +73,15 @@ class JaxModelTests(unittest.TestCase):
         d2d_member_zero_participation_fraction = np.asarray(
             result.d2d_member_zero_participation_fraction
         )
+        d2d_member_failure_fractions = [
+            np.asarray(result.d2d_member_stale_compute_failure_fraction),
+            np.asarray(result.d2d_member_stale_link_failure_fraction),
+            np.asarray(result.d2d_member_stale_member_energy_failure_fraction),
+            np.asarray(result.d2d_member_stale_ch_no_attempt_fraction),
+            np.asarray(result.d2d_member_stale_collision_fraction),
+            np.asarray(result.d2d_member_stale_ch_bs_failure_fraction),
+            np.asarray(result.d2d_member_stale_other_failure_fraction),
+        ]
 
         self.assertEqual(error_norms.shape, (2, 6))
         self.assertEqual(uploads.shape, (2, 6))
@@ -94,6 +103,8 @@ class JaxModelTests(unittest.TestCase):
         self.assertEqual(d2d_member_stale_fraction_100.shape, (2, 3))
         self.assertEqual(d2d_member_participation_p05.shape, (2, 3))
         self.assertEqual(d2d_member_zero_participation_fraction.shape, (2, 3))
+        for fraction in d2d_member_failure_fractions:
+            self.assertEqual(fraction.shape, (2, 3))
         self.assertTrue(np.all(np.isfinite(error_norms)))
         self.assertTrue(np.all(uploads >= 0))
         self.assertTrue(np.all(np.isfinite(mean_aoi)))
@@ -114,6 +125,8 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(d2d_member_stale_fraction_100)))
         self.assertTrue(np.all(np.isfinite(d2d_member_participation_p05)))
         self.assertTrue(np.all(np.isfinite(d2d_member_zero_participation_fraction)))
+        for fraction in d2d_member_failure_fractions:
+            self.assertTrue(np.all(np.isfinite(fraction)))
         self.assertTrue(np.all(mean_aoi >= 1.0))
         self.assertTrue(np.all(peak_aoi >= 1.0))
         self.assertTrue(np.all(p75_aoi >= 1.0))
@@ -131,6 +144,8 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(d2d_member_stale_fraction_75 >= 0.0))
         self.assertTrue(np.all(d2d_member_stale_fraction_100 >= 0.0))
         self.assertTrue(np.all(d2d_member_zero_participation_fraction >= 0.0))
+        for fraction in d2d_member_failure_fractions:
+            self.assertTrue(np.all(fraction >= 0.0))
         self.assertTrue(np.all(stale_fraction_50 <= 1.0))
         self.assertTrue(np.all(stale_fraction_75 <= 1.0))
         self.assertTrue(np.all(stale_fraction_100 <= 1.0))
@@ -138,6 +153,8 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(d2d_member_stale_fraction_75 <= 1.0))
         self.assertTrue(np.all(d2d_member_stale_fraction_100 <= 1.0))
         self.assertTrue(np.all(d2d_member_zero_participation_fraction <= 1.0))
+        for fraction in d2d_member_failure_fractions:
+            self.assertTrue(np.all(fraction <= 1.0))
 
     def test_legacy_error_calculator_tuple_shape(self):
         result = error_calculator(
@@ -711,6 +728,9 @@ class JaxModelTests(unittest.TestCase):
             {"d2d_ch_rotation_trigger_mode": "invalid"},
             {"d2d_ch_rotation_aoi_threshold_fraction": -0.1},
             {"d2d_ch_rotation_aoi_threshold_fraction": 1.1},
+            {"d2d_ch_rotation_member_threshold_fraction": -0.1},
+            {"d2d_ch_rotation_member_threshold_fraction": 1.1},
+            {"d2d_ch_rotation_member_link_weight": -0.1},
             {
                 "d2d_ch_rotation_mode": "energy_aware",
                 "energy_drain_mode": "none",
@@ -772,6 +792,58 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(mean_energy_used)))
         self.assertTrue(np.all(np.isfinite(energy_efficiency)))
         self.assertTrue(np.all(np.isfinite(mean_clusterhead_energy_used)))
+
+    def test_member_aoi_d2d_ch_rotation_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1, 2], [3, 4]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=5,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=3,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=31,
+            device_coords=jax_models.jnp.asarray(
+                [
+                    [0.0, 0.0],
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                    [10.0, 0.0],
+                    [11.0, 0.0],
+                ]
+            ),
+            device_radius=2.0,
+            device_distance_to_bs=jax_models.jnp.asarray(
+                [80.0, 5.0, 60.0, 20.0, 10.0]
+            ),
+            device_battery=jax_models.jnp.ones(5) * 100.0,
+            energy_drain_mode="dynamic",
+            energy_direct_bs_cost=0.01,
+            energy_d2d_member_cost=0.005,
+            energy_ch_bs_cost=0.02,
+            d2d_ch_rotation_mode="energy_aware",
+            d2d_ch_rotation_interval=2,
+            d2d_ch_rotation_trigger_mode="interval_or_member_aoi",
+            d2d_ch_rotation_member_threshold_fraction=0.5,
+            d2d_ch_rotation_member_link_weight=0.5,
+            d2d_member_link_success_mode="rayleigh_outage",
+            d2d_member_reference_snr=1000.0,
+            d2d_member_snr_threshold=1.0,
+            d2d_ch_bs_success_mode="channel_quality",
+            d2d_ch_bs_min_success_probability=0.35,
+            checkpoints=[1, 3],
+        )
+
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertEqual(
+            np.asarray(result.d2d_member_stale_ch_no_attempt_fraction).shape,
+            (2, 3),
+        )
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_stale_collision_fraction)))
+        )
         self.assertTrue(np.all(mean_energy_used >= 0.0))
         self.assertTrue(np.all(mean_clusterhead_energy_used >= 0.0))
 
@@ -1706,6 +1778,36 @@ class JaxModelTests(unittest.TestCase):
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
         )
 
+    def test_member_refresh_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=101,
+            optimized_d2d_access_mode="member_refresh_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.10,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_member_refresh_floor_fraction=0.20,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
     def test_member_fair_utility_prioritizes_zero_participation_members(self):
         probability = jax_models._member_fair_utility_access_probability(
             aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
@@ -1844,6 +1946,8 @@ class JaxModelTests(unittest.TestCase):
             {"optimized_d2d_aoi_threshold_fraction": 1.0},
             {"optimized_d2d_aoi_channel_exponent": -0.1},
             {"optimized_d2d_aoi_battery_exponent": -0.1},
+            {"optimized_d2d_member_refresh_floor_fraction": -0.1},
+            {"optimized_d2d_member_refresh_floor_fraction": 1.1},
         )
         for kwargs in invalid_kwargs:
             with self.subTest(kwargs=kwargs):

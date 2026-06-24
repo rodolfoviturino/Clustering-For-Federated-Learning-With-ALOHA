@@ -103,9 +103,14 @@ This document records the simulation defaults after the code cleanup.
   `--energy-drain-mode dynamic`, keeps cluster membership fixed, and re-elects a
   CH per D2D curve from valid members that still cover the full cluster in one
   hop. The trigger can be periodic (`interval`), AoI-tail based (`aoi`), or the
-  union of both (`interval_or_aoi`). The score combines normalized BS channel
+  union of both (`interval_or_aoi`). It can also use member-level AoI triggers:
+  `member_aoi`, `interval_or_member_aoi`, `aoi_or_member_aoi`, and
+  `interval_or_aoi_or_member_aoi`. The score combines normalized BS channel
   quality, current battery, and a stability bonus for keeping the current CH.
-  The default `static` preserves thesis-compatible fixed CH identity.
+  When the trigger contains `member_aoi`, an optional member-link score
+  (`--d2d-ch-rotation-member-link-weight`) favors CHs that are more likely to
+  decode stale members under Rayleigh D2D links. The default `static` preserves
+  thesis-compatible fixed CH identity.
 - First-tier HFL aggregation at the CH is a sum of member updates.
 - The thesis figure code applies the BS update as an unscaled SGD step:
   `w <- w - u1 * gradient`.
@@ -172,6 +177,13 @@ This document records the simulation defaults after the code cleanup.
   This tests whether member starvation is caused by CH access allocation rather
   than by clustering alone. It is disabled by default and does not introduce
   non-IID/FedAvg semantics.
+- `member_refresh_utility` is the access-side response to the observed
+  `CH no attempt` stale-member diagnosis. It keeps the same base utility and
+  refresh pressure as `member_fair_utility`, but applies
+  `--optimized-d2d-member-refresh-floor-fraction` as a local minimum attempt
+  probability for refresh-eligible clusters. It remains distributed ALOHA:
+  clusters draw locally from a probability, and the floor can increase collision
+  risk when many stale clusters become eligible at once.
 - AoI is tracked as an output metric for all six scenarios. Non-D2D scenarios
   track per-device AoI and reset a device to `1` after its successful upload.
   D2D scenarios track per-cluster AoI and reset a cluster to `1` after its CH
@@ -190,6 +202,14 @@ This document records the simulation defaults after the code cleanup.
   because compute, D2D link, or energy feasibility kept them out of delivered
   aggregates. The CSV uses the
   `<scenario>_member_*` prefix for these D2D-only diagnostics.
+- D2D scenarios also report member-stale failure attribution columns. They are
+  fractions over devices in non-singleton D2D clusters that remain stale at the
+  checkpoint, using the `AoI > 1 + 0.75 * elapsed_t` severe-tail threshold. The
+  hierarchy is diagnostic rather than causal proof: member compute failure,
+  member-to-CH link failure, member energy infeasibility, CH no-attempt, ALOHA
+  collision, CH-to-BS decode failure, and an `other` residual bucket. These
+  columns identify whether stale-tail AoI is mostly local member availability,
+  medium access, physical uplink, or an instrumentation gap.
 - AoI affects scheduling only when an explicit AoI-enhanced policy is selected.
 
 These defaults are intended to preserve the thesis figure behavior while fixing

@@ -119,8 +119,10 @@ class GpuSweepTests(unittest.TestCase):
                 energy_rotation_control_cost=0.00001,
                 d2d_ch_rotation_mode="energy_aware",
                 d2d_ch_rotation_interval=2,
-                d2d_ch_rotation_trigger_mode="interval_or_aoi",
+                d2d_ch_rotation_trigger_mode="interval_or_aoi_or_member_aoi",
                 d2d_ch_rotation_aoi_threshold_fraction=0.80,
+                d2d_ch_rotation_member_threshold_fraction=0.65,
+                d2d_ch_rotation_member_link_weight=0.40,
                 d2d_energy_efficiency_level="eco",
                 optimized_d2d_load_allocation_mode="proportional_clip",
                 optimized_d2d_redistribution_fraction=0.0,
@@ -133,6 +135,7 @@ class GpuSweepTests(unittest.TestCase):
                 optimized_d2d_aoi_threshold_fraction=0.70,
                 optimized_d2d_aoi_channel_exponent=1.25,
                 optimized_d2d_aoi_battery_exponent=0.75,
+                optimized_d2d_member_refresh_floor_fraction=0.15,
             )
         )
 
@@ -177,8 +180,16 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["energy_rotation_control_cost"], 0.00001)
         self.assertEqual(metadata["d2d_ch_rotation_mode"], "energy_aware")
         self.assertEqual(metadata["d2d_ch_rotation_interval"], 2)
-        self.assertEqual(metadata["d2d_ch_rotation_trigger_mode"], "interval_or_aoi")
+        self.assertEqual(
+            metadata["d2d_ch_rotation_trigger_mode"],
+            "interval_or_aoi_or_member_aoi",
+        )
         self.assertEqual(metadata["d2d_ch_rotation_aoi_threshold_fraction"], 0.80)
+        self.assertEqual(
+            metadata["d2d_ch_rotation_member_threshold_fraction"],
+            0.65,
+        )
+        self.assertEqual(metadata["d2d_ch_rotation_member_link_weight"], 0.40)
         self.assertEqual(metadata["d2d_energy_efficiency_level"], "eco")
         self.assertEqual(
             metadata["d2d_energy_efficiency_profile_weights"],
@@ -198,6 +209,10 @@ class GpuSweepTests(unittest.TestCase):
         self.assertEqual(metadata["optimized_d2d_aoi_threshold_fraction"], 0.70)
         self.assertEqual(metadata["optimized_d2d_aoi_channel_exponent"], 1.25)
         self.assertEqual(metadata["optimized_d2d_aoi_battery_exponent"], 0.75)
+        self.assertEqual(
+            metadata["optimized_d2d_member_refresh_floor_fraction"],
+            0.15,
+        )
         self.assertIn("optimized_aloha_d2d_energy_used_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_energy_efficiency_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_clusterhead_energy_used_mean", rows[0])
@@ -220,6 +235,34 @@ class GpuSweepTests(unittest.TestCase):
         self.assertIn("optimized_aloha_d2d_member_participation_p05_mean", rows[0])
         self.assertIn(
             "optimized_aloha_d2d_member_zero_participation_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_compute_failure_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_link_failure_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_member_energy_failure_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_ch_no_attempt_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_collision_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_ch_bs_failure_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_other_failure_fraction_mean",
             rows[0],
         )
 

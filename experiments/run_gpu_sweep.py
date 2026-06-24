@@ -222,6 +222,12 @@ def run_gpu_sweep(args):
             d2d_ch_rotation_aoi_threshold_fraction=(
                 args.d2d_ch_rotation_aoi_threshold_fraction
             ),
+            d2d_ch_rotation_member_threshold_fraction=(
+                args.d2d_ch_rotation_member_threshold_fraction
+            ),
+            d2d_ch_rotation_member_link_weight=(
+                args.d2d_ch_rotation_member_link_weight
+            ),
             d2d_energy_efficiency_level=args.d2d_energy_efficiency_level,
             device_coords=devices.coords,
             device_radius=args.device_radius,
@@ -269,6 +275,9 @@ def run_gpu_sweep(args):
             optimized_d2d_aoi_battery_exponent=(
                 args.optimized_d2d_aoi_battery_exponent
             ),
+            optimized_d2d_member_refresh_floor_fraction=(
+                args.optimized_d2d_member_refresh_floor_fraction
+            ),
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -299,6 +308,13 @@ def run_gpu_sweep(args):
             trace.d2d_member_stale_fraction_100,
             trace.d2d_member_participation_p05,
             trace.d2d_member_zero_participation_fraction,
+            trace.d2d_member_stale_compute_failure_fraction,
+            trace.d2d_member_stale_link_failure_fraction,
+            trace.d2d_member_stale_member_energy_failure_fraction,
+            trace.d2d_member_stale_ch_no_attempt_fraction,
+            trace.d2d_member_stale_collision_fraction,
+            trace.d2d_member_stale_ch_bs_failure_fraction,
+            trace.d2d_member_stale_other_failure_fraction,
             trace.clusterized_devices_rate,
             cluster_quality,
         )
@@ -333,6 +349,13 @@ def run_gpu_sweep(args):
         d2d_member_stale_fraction_100,
         d2d_member_participation_p05,
         d2d_member_zero_participation_fraction,
+        d2d_member_stale_compute_failure_fraction,
+        d2d_member_stale_link_failure_fraction,
+        d2d_member_stale_member_energy_failure_fraction,
+        d2d_member_stale_ch_no_attempt_fraction,
+        d2d_member_stale_collision_fraction,
+        d2d_member_stale_ch_bs_failure_fraction,
+        d2d_member_stale_other_failure_fraction,
         cluster_rates,
         cluster_quality,
     ) = batched_runner(seeds)
@@ -366,6 +389,27 @@ def run_gpu_sweep(args):
     d2d_member_participation_p05 = np.asarray(d2d_member_participation_p05)
     d2d_member_zero_participation_fraction = np.asarray(
         d2d_member_zero_participation_fraction
+    )
+    d2d_member_stale_compute_failure_fraction = np.asarray(
+        d2d_member_stale_compute_failure_fraction
+    )
+    d2d_member_stale_link_failure_fraction = np.asarray(
+        d2d_member_stale_link_failure_fraction
+    )
+    d2d_member_stale_member_energy_failure_fraction = np.asarray(
+        d2d_member_stale_member_energy_failure_fraction
+    )
+    d2d_member_stale_ch_no_attempt_fraction = np.asarray(
+        d2d_member_stale_ch_no_attempt_fraction
+    )
+    d2d_member_stale_collision_fraction = np.asarray(
+        d2d_member_stale_collision_fraction
+    )
+    d2d_member_stale_ch_bs_failure_fraction = np.asarray(
+        d2d_member_stale_ch_bs_failure_fraction
+    )
+    d2d_member_stale_other_failure_fraction = np.asarray(
+        d2d_member_stale_other_failure_fraction
     )
     cluster_rates = np.asarray(cluster_rates)
     cluster_quality = np.asarray(cluster_quality)
@@ -500,6 +544,34 @@ def run_gpu_sweep(args):
                     "member_zero_participation_fraction",
                     d2d_member_zero_participation_fraction,
                 ),
+                (
+                    "member_stale_compute_failure_fraction",
+                    d2d_member_stale_compute_failure_fraction,
+                ),
+                (
+                    "member_stale_link_failure_fraction",
+                    d2d_member_stale_link_failure_fraction,
+                ),
+                (
+                    "member_stale_member_energy_failure_fraction",
+                    d2d_member_stale_member_energy_failure_fraction,
+                ),
+                (
+                    "member_stale_ch_no_attempt_fraction",
+                    d2d_member_stale_ch_no_attempt_fraction,
+                ),
+                (
+                    "member_stale_collision_fraction",
+                    d2d_member_stale_collision_fraction,
+                ),
+                (
+                    "member_stale_ch_bs_failure_fraction",
+                    d2d_member_stale_ch_bs_failure_fraction,
+                ),
+                (
+                    "member_stale_other_failure_fraction",
+                    d2d_member_stale_other_failure_fraction,
+                ),
             )
             for metric_name, metric_values in d2d_member_metrics:
                 mean, ci95 = _confidence_interval_95(
@@ -587,6 +659,12 @@ def run_gpu_sweep(args):
         "d2d_ch_rotation_aoi_threshold_fraction": float(
             args.d2d_ch_rotation_aoi_threshold_fraction
         ),
+        "d2d_ch_rotation_member_threshold_fraction": float(
+            args.d2d_ch_rotation_member_threshold_fraction
+        ),
+        "d2d_ch_rotation_member_link_weight": float(
+            args.d2d_ch_rotation_member_link_weight
+        ),
         "d2d_energy_efficiency_level": args.d2d_energy_efficiency_level,
         "d2d_energy_efficiency_profile_weights": {
             "channel": float(
@@ -658,6 +736,9 @@ def run_gpu_sweep(args):
         ),
         "optimized_d2d_aoi_battery_exponent": float(
             args.optimized_d2d_aoi_battery_exponent
+        ),
+        "optimized_d2d_member_refresh_floor_fraction": float(
+            args.optimized_d2d_member_refresh_floor_fraction
         ),
         "clustering_strategy_note": (
             dense_strategy_note
@@ -1141,12 +1222,22 @@ def build_parser():
     )
     parser.add_argument(
         "--d2d-ch-rotation-trigger-mode",
-        choices=("interval", "aoi", "interval_or_aoi"),
+        choices=(
+            "interval",
+            "aoi",
+            "member_aoi",
+            "interval_or_aoi",
+            "interval_or_member_aoi",
+            "aoi_or_member_aoi",
+            "interval_or_aoi_or_member_aoi",
+        ),
         default="interval",
         help=(
             "Trigger for energy-aware D2D CH re-election. interval preserves "
             "the previous periodic behavior; aoi rotates only clusters whose "
-            "AoI is in the stale tail; interval_or_aoi applies either trigger."
+            "cluster AoI is in the stale tail; member_aoi rotates clusters whose "
+            "member-level AoI is in the stale tail; combined modes apply either "
+            "listed trigger."
         ),
     )
     parser.add_argument(
@@ -1157,6 +1248,27 @@ def build_parser():
             "AoI-trigger threshold as a fraction of the current maximum active "
             "cluster AoI within each D2D scenario. Used when the trigger mode "
             "contains aoi."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-rotation-member-threshold-fraction",
+        type=float,
+        default=0.75,
+        help=(
+            "Member-AoI rotation threshold as a fraction of the current maximum "
+            "member peak AoI across active D2D clusters within each scenario. "
+            "Used when the trigger mode contains member_aoi."
+        ),
+    )
+    parser.add_argument(
+        "--d2d-ch-rotation-member-link-weight",
+        type=float,
+        default=0.25,
+        help=(
+            "Extra CH-election score weight for candidate member-to-CH link "
+            "quality when the trigger mode contains member_aoi. With constant "
+            "D2D links this term is neutral; with Rayleigh links it favors CHs "
+            "that better decode stale members."
         ),
     )
     parser.add_argument(
@@ -1200,6 +1312,7 @@ def build_parser():
             "aoi_tail_utility",
             "aoi_quality_tail_utility",
             "member_fair_utility",
+            "member_refresh_utility",
         ),
         default="norm",
         help=(
@@ -1216,7 +1329,8 @@ def build_parser():
             "stale clusters whose CH also has good BS-channel success and "
             "remaining battery; member_fair_utility reserves part of the load "
             "budget for clusters whose active aggregate can refresh stale or "
-            "zero-participation D2D members."
+            "zero-participation D2D members; member_refresh_utility adds a "
+            "targeted access floor for those refresh-eligible clusters."
         ),
     )
     parser.add_argument(
@@ -1400,8 +1514,9 @@ def build_parser():
             "for aoi_tail_utility it is a reserved load-budget fraction clipped "
             "to [0, 1]; for aoi_quality_tail_utility it is the same reserved "
             "fraction, but assigned by AoI, CH-BS channel quality, and CH battery; "
-            "for member_fair_utility it is the reserved load-budget fraction for "
-            "active aggregates containing stale or zero-participation members."
+            "for member_fair_utility/member_refresh_utility it is the reserved "
+            "load-budget fraction for active aggregates containing stale or "
+            "zero-participation members."
         ),
     )
     parser.add_argument(
@@ -1440,6 +1555,17 @@ def build_parser():
             "aoi_quality_tail_utility exponent for current normalized CH "
             "battery. Larger values avoid spending stale-tail quota on depleted "
             "cluster heads."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-refresh-floor-fraction",
+        type=float,
+        default=0.05,
+        help=(
+            "member_refresh_utility minimum access probability for "
+            "refresh-eligible clusters, expressed as a fraction of the fixed "
+            "D2D ALOHA access probability. It is local to clusters whose active "
+            "aggregate contains stale or zero-participation members."
         ),
     )
     parser.add_argument(

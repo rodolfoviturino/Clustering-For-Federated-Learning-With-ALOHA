@@ -243,8 +243,18 @@ devices in non-singleton D2D clusters: `<scenario>_member_aoi_*`,
 `<scenario>_member_stale_fraction_75_*`,
 `<scenario>_member_stale_fraction_100_*`,
 `<scenario>_member_participation_p05_*`, and
-`<scenario>_member_zero_participation_fraction_*`. The plotter emits these
-families when the columns are present.
+`<scenario>_member_zero_participation_fraction_*`. The runner also writes a
+member-stale failure attribution family for D2D scenarios:
+`<scenario>_member_stale_compute_failure_fraction_*`,
+`<scenario>_member_stale_link_failure_fraction_*`,
+`<scenario>_member_stale_member_energy_failure_fraction_*`,
+`<scenario>_member_stale_ch_no_attempt_fraction_*`,
+`<scenario>_member_stale_collision_fraction_*`,
+`<scenario>_member_stale_ch_bs_failure_fraction_*`, and
+`<scenario>_member_stale_other_failure_fraction_*`. These fractions are
+conditioned on devices in non-singleton D2D clusters that remain stale at the
+checkpoint. The plotter emits these families when the columns are present,
+including `results_member_failure_breakdown.*` for optimized D2D.
 
 AoI can also be used as an explicit optimized-D2D scheduling objective with
 `--optimized-d2d-access-mode aoi_aware_utility`. This mode keeps the same
@@ -299,8 +309,17 @@ cluster-level AoI looks acceptable because the CH uploads, but member-level
 AoI/participation shows that non-CH devices are rarely refreshed. It is a
 diagnostic research mode and is disabled by default.
 
-Current `K=1000`, `rounds=100` ideal-link tests show that this policy directly
-reduces member starvation. Against the default optimized-D2D `norm` run
+The access-side response to the `CH no attempt` diagnosis is
+`--optimized-d2d-access-mode member_refresh_utility`. It keeps the same base
+utility allocator and stale/zero member pressure, but adds a local minimum
+attempt probability for refresh-eligible clusters through
+`--optimized-d2d-member-refresh-floor-fraction`. This mode is more aggressive
+than `member_fair_utility`: it directly tests whether member stale tails are
+access-opportunity limited rather than CH-identity limited.
+
+Current `K=1000`, `rounds=100` ideal-link tests show that
+`member_fair_utility` directly reduces member starvation. Against the default
+optimized-D2D `norm` run
 (`member_aoi=63.409`, `member_stale75=0.509`, `member_zero=0.451`,
 `final_error=1.295e-07`), `member_fair_utility` with
 `w=0.15 / threshold=0.70` reached `member_aoi=46.451`,
@@ -321,12 +340,26 @@ Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
 `--d2d-ch-rotation-mode energy_aware` together with
 `--energy-drain-mode dynamic`. The simulator can then periodically re-elect a
-CH or re-elect only clusters whose AoI is in the stale tail, depending on
-`--d2d-ch-rotation-trigger-mode`. The candidate must still cover all members in
-one hop, so the cluster membership and `Cmax` constraint do not change. The
-selectable profiles are `performance`, `balanced`, and `eco`, trading
-BS-channel quality against current battery and a small stability bonus for
-keeping the current CH.
+CH, re-elect only clusters whose aggregate AoI is in the stale tail, or re-elect
+clusters whose member-level AoI is in the stale tail, depending on
+`--d2d-ch-rotation-trigger-mode`. Member-aware trigger modes are `member_aoi`,
+`interval_or_member_aoi`, `aoi_or_member_aoi`, and
+`interval_or_aoi_or_member_aoi`. The candidate must still cover all members in
+one hop, so the cluster membership and `Cmax` constraint do not change. With
+Rayleigh member links, `--d2d-ch-rotation-member-link-weight` adds an optional
+candidate score term that favors CHs with better member-to-CH decoding for stale
+members. The selectable energy profiles are `performance`, `balanced`, and
+`eco`, trading BS-channel quality against current battery and a small stability
+bonus for keeping the current CH.
+
+The first physical/Rayleigh member-rotation runs are diagnostic rather than a
+new main strategy. `member_rotation_utility_physical_r100` improved optimized
+D2D final error from `1.603e-07` to `1.148e-07`, but member AoI and
+zero-participation were essentially unchanged. The new failure breakdown showed
+that more than `98%` of optimized-D2D stale-member samples are explained by
+`CH no attempt`, not by member compute, member-to-CH link, member energy, or
+CH-to-BS decoding. This points the next research step toward explicit
+stale-member access/refresh policies or re-clustering, not CH rotation alone.
 
 Recommended fair channel-aware comparison:
 

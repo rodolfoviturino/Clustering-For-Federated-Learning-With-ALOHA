@@ -652,6 +652,13 @@ Policy differences:
   refresh-eligible overlay. This gives the experiment a cleaner answer to
   whether member freshness improves when part of the optimized-D2D access budget
   is reserved for stale or never-delivered active members.
+- `member_capped_quota_utility` keeps the same pure ALOHA base/overlay quota
+  structure, but caps only the extra refresh overlay before it is added to the
+  base probability. The cap is set with
+  `--optimized-d2d-member-quota-cap-fraction` as a fraction of the fixed D2D
+  ALOHA access probability. This tests whether stale-member quota pressure is
+  too concentrated in a few CHs without introducing scheduled slots, SIC, MPR,
+  NOMA, TDMA/OFDMA, or a centralized scheduler.
 - `member_collision_aware_quota` keeps the member quota but dampens it when an
   EWMA of optimized-D2D CH collisions exceeds
   `--optimized-d2d-member-collision-target-fraction`. The damping strength is
@@ -695,8 +702,9 @@ energy efficiency. The pure-ALOHA K=3000 matrix with larger
 `member_collision_aware_quota` damping has now been run: stronger quota weights
 did not help, while `member_collision_quota_k3000_w015_t002_g2_min050` is best
 kept as a convergence/energy ablation rather than a new member-freshness
-winner. The next ALOHA-only work should be structural, such as per-cluster load
-caps or collision-aware virtual queues.
+winner. The first ALOHA-only structural load-cap candidate is now
+`member_capped_quota_utility`; compare cap fractions before moving to
+collision-aware virtual queues or re-clustering.
 
 The utility Pareto tuning runner is:
 

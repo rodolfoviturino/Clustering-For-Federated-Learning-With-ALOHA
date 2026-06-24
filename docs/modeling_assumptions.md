@@ -192,6 +192,14 @@ This document records the simulation defaults after the code cleanup.
   floor on the overlay. This tests whether the dominant member-stale cause is
   truly lack of CH access opportunity rather than the smoother probability
   blending used by `member_fair_utility`/`member_refresh_utility`.
+- `member_capped_quota_utility` keeps the same explicit base/overlay split, but
+  limits only the extra member-refresh overlay with
+  `--optimized-d2d-member-quota-cap-fraction`. The cap is a fraction of the
+  fixed D2D ALOHA access probability and is applied before adding the overlay to
+  the base utility probability. This is a pure ALOHA load-shaping ablation:
+  CHs still attempt locally with a probability, multichannel collisions remain
+  the MAC abstraction, and the mode does not reserve slots or add SIC, MPR,
+  NOMA, TDMA/OFDMA, or a centralized scheduler.
 - `member_collision_aware_quota` keeps that explicit member-refresh quota but
   dampens it using an EWMA of optimized-D2D CH collisions. The quota is
   unchanged below `--optimized-d2d-member-collision-target-fraction` and is
@@ -224,8 +232,10 @@ This document records the simulation defaults after the code cleanup.
   overlay; it is not centralized scheduling.
   See `docs/member_level_d2d_freshness_experiments.md` for the current
   physical/Rayleigh conclusion: `member_quota_utility` is the useful pure
-  ALOHA/probability-shaping member-freshness candidate, while
-  `member_deficit_utility` is a negative collision-dominated ablation.
+  ALOHA/probability-shaping member-freshness baseline, while
+  `member_capped_quota_utility` is the next pure-ALOHA load-cap candidate to
+  compare against it. `member_deficit_utility` is a negative
+  collision-dominated ablation.
   `semi_scheduled_member_refresh` is the strongest current enhanced candidate
   when a small explicit refresh schedule is allowed. With `M=10`, the two-slot
   point (`schedule_fraction` `0.15`/`0.20`) is the balanced candidate and the

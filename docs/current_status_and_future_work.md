@@ -903,8 +903,14 @@ nearly neutral. The best less aggressive collision-aware point was
 final energy efficiency by `5.34%`, and slightly lowered member stale75, but it
 also slightly worsened zero-participation. Treat it as a convergence/energy
 ablation, not as a replacement for the pure member-freshness baseline. The next
-ALOHA-only implementation should be structural: per-cluster/load-class caps,
-collision-aware virtual queues, or re-clustering/cluster splitting.
+ALOHA-only implementation path is now structural. The first step,
+`member_capped_quota_utility`, has been implemented as a pure ALOHA load-cap
+extension of `member_quota_utility`: it caps only the extra member-refresh
+overlay using `--optimized-d2d-member-quota-cap-fraction`, then adds the capped
+overlay to the base utility probability. It does not reserve slots or add SIC,
+MPR, NOMA, TDMA/OFDMA, or scheduling. The next runs should compare cap fractions
+`0.50`, `0.75`, and `1.00` at `K=3000` before moving to collision-aware virtual
+queues or re-clustering/cluster splitting.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

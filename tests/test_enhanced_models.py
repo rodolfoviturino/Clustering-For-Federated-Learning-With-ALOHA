@@ -136,6 +136,7 @@ class GpuSweepTests(unittest.TestCase):
                 optimized_d2d_aoi_channel_exponent=1.25,
                 optimized_d2d_aoi_battery_exponent=0.75,
                 optimized_d2d_member_refresh_floor_fraction=0.15,
+                optimized_d2d_member_quota_cap_fraction=0.65,
                 optimized_d2d_member_deficit_decay=0.82,
                 optimized_d2d_member_deficit_weight=0.35,
                 optimized_d2d_member_collision_target_fraction=0.04,
@@ -221,6 +222,7 @@ class GpuSweepTests(unittest.TestCase):
             metadata["optimized_d2d_member_refresh_floor_fraction"],
             0.15,
         )
+        self.assertEqual(metadata["optimized_d2d_member_quota_cap_fraction"], 0.65)
         self.assertEqual(metadata["optimized_d2d_member_deficit_decay"], 0.82)
         self.assertEqual(metadata["optimized_d2d_member_deficit_weight"], 0.35)
         self.assertEqual(

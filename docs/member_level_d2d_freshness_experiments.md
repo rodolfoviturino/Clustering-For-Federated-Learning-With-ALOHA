@@ -39,6 +39,16 @@ explicit member-refresh overlay. `--optimized-d2d-aoi-weight` is the reserved
 refresh quota. This is the current best pure ALOHA/probability-shaping
 member-freshness candidate.
 
+`member_capped_quota_utility`
+
+Uses the same base utility plus member-refresh overlay as
+`member_quota_utility`, but caps the overlay per cluster before adding it to
+the base probability. The cap is controlled by
+`--optimized-d2d-member-quota-cap-fraction` and is measured as a fraction of
+the fixed D2D ALOHA access probability. This is a pure ALOHA load-cap
+candidate: CHs still draw local access attempts, and multichannel ALOHA
+collisions remain the MAC abstraction.
+
 `member_collision_aware_quota`
 
 Keeps the quota structure but reduces the reserved member-refresh overlay when
@@ -289,19 +299,24 @@ a new member-freshness winner.
 
 ## Next Research Direction
 
-The current pure-ALOHA path has likely reached a local limit with global quota
-scalars. The next implementation should be more structural while staying in
-ALOHA:
+The first structural pure-ALOHA load-cap candidate is now implemented as
+`member_capped_quota_utility`. It should be tested before adding another access
+mechanism, because it is the smallest change that addresses quota
+concentration while preserving the same ALOHA comparison axis:
 
-1. Add per-cluster or per-refresh-class load caps so stale-member pressure does
-   not concentrate too many CHs into the same random-access round.
-2. Add virtual queues with collision-aware debt updates: increase debt for
+1. Run `member_capped_quota_utility` with `w=0.15`, `floor=0`, and cap
+   fractions `0.50`, `0.75`, and `1.00` against
+   `member_quota_k3000_w015_floor000_physical_r100`.
+2. Optionally run `w=0.20`, `cap=0.50` only if the `w=0.15` cap points show a
+   real member-freshness gain without collision blow-up.
+3. Add virtual queues with collision-aware debt updates only after the capped
+   quota result is known: increase debt for
    missed stale members, but avoid increasing the same debt when the added
    pressure only caused collisions.
-3. Consider re-clustering or cluster splitting as a separate ALOHA-compatible
+4. Consider re-clustering or cluster splitting as a separate ALOHA-compatible
    path, because the remaining zero-participation tail suggests some members
    are hidden behind sparse CH opportunities.
-4. Keep `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` as the
+5. Keep `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` as the
    best current pure-ALOHA convergence/energy ablation, but keep
    `member_quota_k3000_w015_floor000_physical_r100` as the cleaner
    member-freshness baseline unless a later candidate improves both stale75 and

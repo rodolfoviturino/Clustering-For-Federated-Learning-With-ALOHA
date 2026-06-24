@@ -278,6 +278,9 @@ def run_gpu_sweep(args):
             optimized_d2d_member_refresh_floor_fraction=(
                 args.optimized_d2d_member_refresh_floor_fraction
             ),
+            optimized_d2d_member_quota_cap_fraction=(
+                args.optimized_d2d_member_quota_cap_fraction
+            ),
             optimized_d2d_member_deficit_decay=(
                 args.optimized_d2d_member_deficit_decay
             ),
@@ -763,6 +766,9 @@ def run_gpu_sweep(args):
         ),
         "optimized_d2d_member_refresh_floor_fraction": float(
             args.optimized_d2d_member_refresh_floor_fraction
+        ),
+        "optimized_d2d_member_quota_cap_fraction": float(
+            args.optimized_d2d_member_quota_cap_fraction
         ),
         "optimized_d2d_member_deficit_decay": float(
             args.optimized_d2d_member_deficit_decay
@@ -1362,6 +1368,7 @@ def build_parser():
             "member_fair_utility",
             "member_refresh_utility",
             "member_quota_utility",
+            "member_capped_quota_utility",
             "member_deficit_utility",
             "member_collision_aware_quota",
             "semi_scheduled_member_refresh",
@@ -1385,6 +1392,8 @@ def build_parser():
             "targeted access floor for those refresh-eligible clusters; "
             "member_quota_utility splits the CH contender target into a base "
             "utility budget and an explicit stale-member refresh quota; "
+            "member_capped_quota_utility keeps that split but caps each "
+            "cluster's extra refresh-quota probability; "
             "member_deficit_utility ranks that quota by persistent missed "
             "refresh opportunity deficit; member_collision_aware_quota keeps "
             "the quota but dampens it when optimized-D2D collisions exceed a "
@@ -1578,9 +1587,11 @@ def build_parser():
             "load-budget fraction for active aggregates containing stale or "
             "zero-participation members; for member_quota_utility it is the "
             "explicit stale-member quota fraction subtracted from the base "
-            "utility contender target; for member_deficit_utility it is the "
-            "same quota, ranked by current member pressure plus deficit; for "
-            "member_collision_aware_quota it is the maximum quota before "
+            "utility contender target; member_capped_quota_utility uses the "
+            "same quota before applying the per-cluster overlay cap; for "
+            "member_deficit_utility it is the same quota, ranked by current "
+            "member pressure plus deficit; for member_collision_aware_quota it "
+            "is the maximum quota before "
             "collision feedback damping; semi_scheduled_member_refresh ignores "
             "this weight and uses --optimized-d2d-member-schedule-fraction "
             "to size its reserved refresh budget."
@@ -1632,7 +1643,19 @@ def build_parser():
             "member_refresh_utility minimum access probability for "
             "refresh-eligible clusters, expressed as a fraction of the fixed "
             "D2D ALOHA access probability. member_quota_utility also applies "
-            "this as an optional local floor on the refresh overlay."
+            "this as an optional local floor on the refresh overlay; in "
+            "member_capped_quota_utility the cap is applied after this floor."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-quota-cap-fraction",
+        type=float,
+        default=1.0,
+        help=(
+            "member_capped_quota_utility cap on the extra member-refresh quota "
+            "overlay per cluster, expressed as a fraction of the fixed D2D "
+            "ALOHA access probability. The default 1.0 is used only by the "
+            "capped mode and does not affect other access modes."
         ),
     )
     parser.add_argument(

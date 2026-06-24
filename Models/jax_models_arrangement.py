@@ -1331,6 +1331,7 @@ def _member_quota_utility_access_probability(
     clusterized_devices_fraction,
     optimized_success_ewma,
     fixed_success_target,
+    quota_cap_fraction=None,
 ):
     """Reserve an explicit contender-load quota for stale D2D members.
 
@@ -1451,9 +1452,20 @@ def _member_quota_utility_access_probability(
         jnp.maximum(quota_probability, targeted_floor),
         quota_probability,
     )
+    quota_overlay_probability = floored_quota_probability
+    if quota_cap_fraction is not None:
+        quota_cap = (
+            jnp.maximum(jnp.asarray(quota_cap_fraction, dtype=dtype), 0.0)
+            * fixed_access_probability
+        )
+        quota_overlay_probability = jnp.where(
+            quota_mask,
+            jnp.minimum(quota_overlay_probability, quota_cap),
+            quota_overlay_probability,
+        )
     combined_probability = base_probability + jnp.where(
         quota_active,
-        floored_quota_probability,
+        quota_overlay_probability,
         0.0,
     )
     bounded_probability = jnp.where(
@@ -1462,6 +1474,11 @@ def _member_quota_utility_access_probability(
         0.0,
     )
     return jnp.where(quota_active, bounded_probability, base_probability)
+
+
+def _member_capped_quota_utility_access_probability(**kwargs):
+    """Member-refresh quota with a per-cluster cap on the refresh overlay."""
+    return _member_quota_utility_access_probability(**kwargs)
 
 
 def _member_deficit_utility_access_probability(
@@ -2412,6 +2429,7 @@ def error_calculator_trace_jax(
     optimized_d2d_aoi_channel_exponent: float = 1.0,
     optimized_d2d_aoi_battery_exponent: float = 0.5,
     optimized_d2d_member_refresh_floor_fraction: float = 0.05,
+    optimized_d2d_member_quota_cap_fraction: float = 1.0,
     optimized_d2d_member_deficit_decay: float = 0.90,
     optimized_d2d_member_deficit_weight: float = 0.25,
     optimized_d2d_member_collision_target_fraction: float = 0.02,
@@ -2580,6 +2598,7 @@ def error_calculator_trace_jax(
         "member_fair_utility",
         "member_refresh_utility",
         "member_quota_utility",
+        "member_capped_quota_utility",
         "member_deficit_utility",
         "member_collision_aware_quota",
         "semi_scheduled_member_refresh",
@@ -2590,8 +2609,8 @@ def error_calculator_trace_jax(
             "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'/"
             "'aoi_quality_tail_utility'/'member_fair_utility'/"
             "'member_refresh_utility'/'member_quota_utility'/"
-            "'member_deficit_utility'/'member_collision_aware_quota'/"
-            "'semi_scheduled_member_refresh'"
+            "'member_capped_quota_utility'/'member_deficit_utility'/"
+            "'member_collision_aware_quota'/'semi_scheduled_member_refresh'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -2655,6 +2674,10 @@ def error_calculator_trace_jax(
     if not 0.0 <= optimized_d2d_member_refresh_floor_fraction <= 1.0:
         raise ValueError(
             "optimized_d2d_member_refresh_floor_fraction must be in [0, 1]"
+        )
+    if optimized_d2d_member_quota_cap_fraction < 0.0:
+        raise ValueError(
+            "optimized_d2d_member_quota_cap_fraction must be non-negative"
         )
     if not 0.0 <= optimized_d2d_member_deficit_decay <= 1.0:
         raise ValueError(
@@ -2840,6 +2863,10 @@ def error_calculator_trace_jax(
     )
     d2d_member_refresh_floor_fraction = jnp.asarray(
         optimized_d2d_member_refresh_floor_fraction,
+        dtype=dtype,
+    )
+    d2d_member_quota_cap_fraction = jnp.asarray(
+        optimized_d2d_member_quota_cap_fraction,
         dtype=dtype,
     )
     d2d_member_deficit_decay = jnp.asarray(
@@ -4229,6 +4256,39 @@ def error_calculator_trace_jax(
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
+        elif optimized_d2d_access_mode == "member_capped_quota_utility":
+            optimized_probability_d2d = _member_capped_quota_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                quota_weight=d2d_aoi_weight,
+                quota_exponent=d2d_aoi_exponent,
+                quota_threshold_fraction=d2d_aoi_threshold_fraction,
+                refresh_floor_fraction=d2d_member_refresh_floor_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+                quota_cap_fraction=d2d_member_quota_cap_fraction,
+            )
         elif optimized_d2d_access_mode == "member_collision_aware_quota":
             optimized_probability_d2d = _member_collision_aware_quota_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -5408,6 +5468,7 @@ def error_calculator(
     optimized_d2d_aoi_channel_exponent: float = 1.0,
     optimized_d2d_aoi_battery_exponent: float = 0.5,
     optimized_d2d_member_refresh_floor_fraction: float = 0.05,
+    optimized_d2d_member_quota_cap_fraction: float = 1.0,
     optimized_d2d_member_deficit_decay: float = 0.90,
     optimized_d2d_member_deficit_weight: float = 0.25,
     optimized_d2d_member_collision_target_fraction: float = 0.02,
@@ -5511,6 +5572,9 @@ def error_calculator(
         optimized_d2d_aoi_battery_exponent=optimized_d2d_aoi_battery_exponent,
         optimized_d2d_member_refresh_floor_fraction=(
             optimized_d2d_member_refresh_floor_fraction
+        ),
+        optimized_d2d_member_quota_cap_fraction=(
+            optimized_d2d_member_quota_cap_fraction
         ),
         optimized_d2d_member_deficit_decay=optimized_d2d_member_deficit_decay,
         optimized_d2d_member_deficit_weight=optimized_d2d_member_deficit_weight,

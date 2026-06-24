@@ -183,6 +183,7 @@ def summarize_run(csv_path, scenario=DEFAULT_SCENARIO):
             "optimized_d2d_aoi_channel_exponent",
             "optimized_d2d_aoi_battery_exponent",
             "optimized_d2d_member_refresh_floor_fraction",
+            "optimized_d2d_member_quota_cap_fraction",
             "optimized_d2d_member_deficit_decay",
             "optimized_d2d_member_deficit_weight",
             "optimized_d2d_member_collision_target_fraction",

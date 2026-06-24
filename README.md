@@ -329,6 +329,18 @@ probabilistic ALOHA, not centralized scheduling. The optional
 on refresh-eligible clusters, but it should be swept carefully because floors
 can increase collisions.
 
+The capped quota follow-up is
+`--optimized-d2d-access-mode member_capped_quota_utility`. It keeps the same
+base/overlay split as `member_quota_utility`, but caps only the extra
+member-refresh overlay before adding it to the base utility probability. The
+cap is controlled by `--optimized-d2d-member-quota-cap-fraction`, expressed as
+a fraction of the fixed D2D ALOHA access probability. For example, `0.50`
+means a refresh-eligible cluster can receive at most
+`0.5 * fixed_d2d_access_probability` of extra quota probability beyond its base
+utility probability. This is still pure ALOHA/probability shaping: CHs draw
+locally, collisions remain multichannel ALOHA collisions, and no slot
+reservation, SIC, MPR, NOMA, TDMA/OFDMA, or centralized scheduler is introduced.
+
 The collision-aware quota variant is
 `--optimized-d2d-access-mode member_collision_aware_quota`. It keeps the
 member-refresh quota structure, but monitors an EWMA of optimized-D2D CH
@@ -371,12 +383,15 @@ The current physical/Rayleigh member-level conclusion is documented in
 `docs/member_level_d2d_freshness_experiments.md`. The short version is that
 `member_quota_utility` remains the strongest pure ALOHA/probability-shaping
 member-freshness policy, with `w=0.15`, `floor=0` as its strongest tested
-point. `semi_scheduled_member_refresh` is a coordinated upper-bound ablation,
-not part of the main ALOHA claim: it shows how much is left if some refresh
-slots are reserved, but it changes the protocol class. The K=3000 pure-ALOHA
-matrix showed that stronger quota weights do not help and that the best less
-aggressive collision-aware setting is mainly a convergence/energy ablation, not
-a new member-freshness winner.
+point. The next implemented pure-ALOHA candidate is
+`member_capped_quota_utility`, which tests whether limiting per-cluster overlay
+concentration can reduce stale-member tails without crossing into scheduling.
+`semi_scheduled_member_refresh` is a coordinated upper-bound ablation, not part
+of the main ALOHA claim: it shows how much is left if some refresh slots are
+reserved, but it changes the protocol class. The K=3000 pure-ALOHA matrix showed
+that stronger quota weights do not help and that the best less aggressive
+collision-aware setting is mainly a convergence/energy ablation, not a new
+member-freshness winner.
 `member_deficit_utility` is retained as a negative ablation: it
 reduces `CH no attempt`, but it moves the bottleneck into ALOHA collisions and
 badly degrades convergence and energy efficiency.
@@ -1034,8 +1049,9 @@ skip cleanly when JAX is not installed in the local interpreter.
   and resets only for devices whose update was active inside that delivered
   aggregate. The member-level columns are diagnostics and do not change
   scheduling by default. Optional member-aware access policies such as
-  `member_fair_utility`, `member_refresh_utility`, `member_quota_utility`, and
-  `member_collision_aware_quota`, `member_deficit_utility`, and
+  `member_fair_utility`, `member_refresh_utility`, `member_quota_utility`,
+  `member_capped_quota_utility`, `member_collision_aware_quota`,
+  `member_deficit_utility`, and
   `semi_scheduled_member_refresh` consume those
   diagnostics only when explicitly selected.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching

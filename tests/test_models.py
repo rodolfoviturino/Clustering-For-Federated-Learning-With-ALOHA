@@ -1841,6 +1841,37 @@ class JaxModelTests(unittest.TestCase):
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
         )
 
+    def test_member_capped_quota_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=105,
+            optimized_d2d_access_mode="member_capped_quota_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.15,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_member_refresh_floor_fraction=0.05,
+            optimized_d2d_member_quota_cap_fraction=0.50,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
     def test_member_deficit_utility_trace_returns_finite_outputs(self):
         clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
         result = error_calculator_trace_jax(
@@ -2249,6 +2280,108 @@ class JaxModelTests(unittest.TestCase):
         self.assertGreater(probability[1], probability[2])
         self.assertTrue(np.all(probability <= 0.9))
 
+    def test_member_capped_quota_limits_refresh_overlay(self):
+        fixed_probability = jax_models.jnp.asarray(0.2)
+        quota_weight = 0.8
+        common_kwargs = dict(
+            aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            cluster_sizes=jax_models.jnp.asarray([2, 2, 2]),
+            freshness=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            member_aoi_by_cluster=jax_models.jnp.asarray(
+                [
+                    [2.0, 2.0],
+                    [2.0, 20.0],
+                    [2.0, 3.0],
+                ]
+            ),
+            member_participation_by_cluster=jax_models.jnp.asarray(
+                [
+                    [1, 1],
+                    [0, 0],
+                    [1, 1],
+                ]
+            ),
+            active_member_mask=jax_models.jnp.asarray(
+                [
+                    [True, True],
+                    [True, True],
+                    [True, True],
+                ]
+            ),
+            cluster_mask=jax_models.jnp.asarray([True, True, True]),
+            n_channels=2,
+            pcomp=jax_models.jnp.asarray(0.9),
+            fixed_access_probability=fixed_probability,
+            floor_fraction=0.0,
+            norm_exponent=0.0,
+            cluster_size_exponent=0.0,
+            freshness_exponent=0.0,
+            quota_weight=quota_weight,
+            quota_exponent=1.0,
+            quota_threshold_fraction=0.5,
+            refresh_floor_fraction=0.0,
+            load_target_factor=1.0,
+            load_allocation_mode="proportional_clip",
+            redistribution_fraction=0.0,
+            redistribution_trigger_ratio=0.95,
+            density_trigger_threshold=1.0,
+            dense_trigger_ratio=0.90,
+            clusterized_devices_fraction=0.0,
+            optimized_success_ewma=jax_models.jnp.asarray(0.0),
+            fixed_success_target=jax_models.jnp.asarray(1.0),
+        )
+        uncapped_probability = jax_models._member_quota_utility_access_probability(
+            **common_kwargs,
+        )
+        capped_probability = (
+            jax_models._member_capped_quota_utility_access_probability(
+                **common_kwargs,
+                quota_cap_fraction=0.25,
+            )
+        )
+        base_utility = jax_models._cluster_utility_scores(
+            aggregate_norms=common_kwargs["aggregate_norms"],
+            cluster_sizes=common_kwargs["cluster_sizes"],
+            freshness=common_kwargs["freshness"],
+            cluster_mask=common_kwargs["cluster_mask"],
+            norm_exponent=common_kwargs["norm_exponent"],
+            cluster_size_exponent=common_kwargs["cluster_size_exponent"],
+            freshness_exponent=common_kwargs["freshness_exponent"],
+        )
+        base_probability = jax_models._load_controlled_access_from_utility(
+            utility=base_utility,
+            cluster_mask=common_kwargs["cluster_mask"],
+            n_channels=common_kwargs["n_channels"],
+            pcomp=common_kwargs["pcomp"],
+            fixed_access_probability=fixed_probability * (1.0 - quota_weight),
+            floor_fraction=common_kwargs["floor_fraction"],
+            load_target_factor=(
+                common_kwargs["load_target_factor"] * (1.0 - quota_weight)
+            ),
+            load_allocation_mode=common_kwargs["load_allocation_mode"],
+            redistribution_fraction=common_kwargs["redistribution_fraction"],
+            redistribution_trigger_ratio=common_kwargs[
+                "redistribution_trigger_ratio"
+            ],
+            optimized_success_ewma=common_kwargs["optimized_success_ewma"],
+            fixed_success_target=common_kwargs["fixed_success_target"],
+            density_trigger_threshold=common_kwargs["density_trigger_threshold"],
+            dense_trigger_ratio=common_kwargs["dense_trigger_ratio"],
+            clusterized_devices_fraction=common_kwargs[
+                "clusterized_devices_fraction"
+            ],
+        )
+
+        uncapped_probability = np.asarray(uncapped_probability)
+        capped_probability = np.asarray(capped_probability)
+        base_probability = np.asarray(base_probability)
+        cap = 0.25 * float(np.asarray(fixed_probability))
+
+        self.assertGreater(uncapped_probability[1], capped_probability[1])
+        self.assertTrue(
+            np.all(capped_probability <= base_probability + cap + 1e-6)
+        )
+
     def test_aoi_quality_tail_utility_prefers_feasible_high_quality_tail(self):
         probability = jax_models._aoi_tail_utility_access_probability(
             aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
@@ -2336,6 +2469,7 @@ class JaxModelTests(unittest.TestCase):
             {"optimized_d2d_aoi_battery_exponent": -0.1},
             {"optimized_d2d_member_refresh_floor_fraction": -0.1},
             {"optimized_d2d_member_refresh_floor_fraction": 1.1},
+            {"optimized_d2d_member_quota_cap_fraction": -0.1},
             {"optimized_d2d_member_deficit_decay": -0.1},
             {"optimized_d2d_member_deficit_decay": 1.1},
             {"optimized_d2d_member_deficit_weight": -0.1},

@@ -825,8 +825,9 @@ improves convergence/energy relative to `member_quota_w015`, but it worsens the
 member-freshness objective. Member stale75 rose from `0.413` to about
 `0.461-0.462`, and zero-participation fraction rose from `0.337` to about
 `0.401-0.403`. Keep it as a conservative ablation, not as the main
-member-freshness policy. The next access-control step should be per-cluster or
-semi-scheduled rather than another global damping scalar.
+member-freshness policy. The next ALOHA-only access-control step should be
+stronger quota settings and less aggressive collision damping, rather than
+another global damping scalar.
 
 Implemented semi-scheduled member refresh follow-up:
 `--optimized-d2d-access-mode semi_scheduled_member_refresh`. It reserves
@@ -839,7 +840,8 @@ number of random ALOHA contenders. Compare it directly against
 `member_quota_w015_floor000_physical_r100` and reject it if it improves member
 freshness only by damaging convergence/energy.
 
-The first semi-scheduled physical/Rayleigh sweep is strongly positive. With
+The first semi-scheduled physical/Rayleigh sweep is strongly positive but now
+classified as a coordinated upper-bound ablation. With
 `--optimized-d2d-member-schedule-fraction 0.20` and no deficit tie-breaker,
 final optimized-D2D error improved from `6.11e-7` for `member_quota_w015` to
 `6.21e-9`; member AoI improved from `58.319` to `47.842`; member stale75
@@ -847,11 +849,12 @@ improved from `0.413` to `0.253`; zero-participation fraction improved from
 `0.337` to `0.138`; and energy efficiency improved from `762.7` to `1040.6`.
 The `0.10` schedule also improved all headline metrics, while adding
 `--optimized-d2d-member-schedule-deficit-weight 0.25` at `0.10` gave only a
-minor extra benefit. Treat `semi_scheduled_member_refresh` as the strongest
-current enhanced-policy candidate when a small coordinated refresh-slot control
-plane is acceptable. The control-cost parameter charges a normalized
-per-scheduled-CH coordination overhead to optimized+D2D CH energy/battery
-accounting; it defaults to `0.0` so the no-overhead results stay reproducible.
+minor extra benefit. Treat `semi_scheduled_member_refresh` as evidence that
+coordination can beat pure ALOHA, but not as the main research direction for
+the current ALOHA-focused paper. The control-cost parameter charges a
+normalized per-scheduled-CH coordination overhead to optimized+D2D
+CH energy/battery accounting; it defaults to `0.0` so the no-overhead results
+stay reproducible.
 
 The first control-cost sweep used the best `s=0.20`, deficit-free point and
 tested control costs `0.0001`, `0.0005`, and `0.0010`. The effect was almost
@@ -884,11 +887,17 @@ converged strongly: the two-channel point reached final error `2.37e-16` and
 better candidate so far (`member_aoi=63.863`, `member_stale75=0.437`,
 `member_zero=0.312`, `energy_efficiency=825.7`) than the two-channel point
 (`member_aoi=66.287`, `member_stale75=0.482`, `member_zero=0.387`,
-`energy_efficiency=809.4`). Do not overclaim this yet: the available comparison
-still mixes `K=3000` semi-scheduled runs with `K=1000` member-quota baselines.
-The next fair experiment is a same-`K=3000` `member_quota_utility` baseline and
-then a larger scheduled-budget sweep (`0.40`/`0.50`) or larger `M`, because the
-remaining stale-member breakdown is still dominated by `CH no attempt`.
+`energy_efficiency=809.4`). The fair same-`K=3000` member-quota baseline is now
+available: `member_quota_k3000_w015_floor000_physical_r100` reached final error
+`4.22e-13`, `t<=1e-12` only at round `100`, `member_aoi=74.230`,
+`member_stale75=0.618`, `member_zero=0.554`, and `energy_efficiency=653.8`.
+Thus the three-channel semi-scheduled point improves the member-quota baseline
+by `41` rounds to `1e-12`, `14.0%` member AoI, `29.2%` stale75, `43.6%` zero
+participation, and `26.3%` final energy efficiency. This is an upper-bound
+reference, not the next implementation direction. The next experiment is the
+pure-ALOHA K=3000 matrix: stronger `member_quota_utility` weights (`0.20` and
+`0.25`), small quota floors (`0.02`), and less aggressive
+`member_collision_aware_quota` damping.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

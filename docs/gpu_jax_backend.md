@@ -684,12 +684,15 @@ The detailed physical/Rayleigh member-level comparison is recorded in
 `docs/member_level_d2d_freshness_experiments.md`. Current guidance is to use
 `member_quota_utility` as the strongest pure ALOHA/probability-shaping
 member-freshness candidate, keep `member_deficit_utility` only as a negative
-collision-dominated ablation, and use `semi_scheduled_member_refresh` as the
-strongest enhanced candidate when coordinated refresh slots are acceptable.
+collision-dominated ablation, and use `semi_scheduled_member_refresh` only as a
+coordinated upper-bound/future-work reference.
 The best tested `K=1000` balanced semi-scheduled point is schedule fraction
 `0.20` with deficit tie-breaker weight `0.0`; the first `K=3000` robustness
-check favored `0.30` over `0.20`, but still needs same-`K` member-quota
-baselines before being used as a scale claim.
+check favored `0.30` over `0.20` and beat the same-`K`
+`member_quota_utility` baseline on convergence, member freshness, and final
+energy efficiency. The current implementation priority remains pure ALOHA:
+larger `member_quota_utility` weights and less aggressive
+`member_collision_aware_quota` damping at `K=3000`.
 
 The utility Pareto tuning runner is:
 

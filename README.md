@@ -371,11 +371,12 @@ The current physical/Rayleigh member-level conclusion is documented in
 `docs/member_level_d2d_freshness_experiments.md`. The short version is that
 `member_quota_utility` remains the strongest pure ALOHA/probability-shaping
 member-freshness policy, with `w=0.15`, `floor=0` as its strongest tested
-point. `semi_scheduled_member_refresh` is now the strongest enhanced policy
-when a small coordinated refresh-slot control plane is acceptable; the best
-tested `K=1000` balanced point is `--optimized-d2d-member-schedule-fraction
-0.20` with no deficit tie-breaker, while the first `K=3000` robustness check
-favored `0.30` over `0.20` among the two tested settings.
+point. `semi_scheduled_member_refresh` is a coordinated upper-bound ablation,
+not part of the main ALOHA claim: it shows how much is left if some refresh
+slots are reserved, but it changes the protocol class. The next research pass
+therefore stays inside pure ALOHA/probability shaping and sweeps stronger
+`member_quota_utility` and less aggressive `member_collision_aware_quota`
+settings at `K=3000`.
 `member_deficit_utility` is retained as a negative ablation: it
 reduces `CH no attempt`, but it moves the bottleneck into ALOHA collisions and
 badly degrades convergence and energy efficiency.

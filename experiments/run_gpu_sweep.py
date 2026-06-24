@@ -259,6 +259,12 @@ def run_gpu_sweep(args):
             optimized_d2d_aoi_threshold_fraction=(
                 args.optimized_d2d_aoi_threshold_fraction
             ),
+            optimized_d2d_aoi_channel_exponent=(
+                args.optimized_d2d_aoi_channel_exponent
+            ),
+            optimized_d2d_aoi_battery_exponent=(
+                args.optimized_d2d_aoi_battery_exponent
+            ),
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -578,6 +584,12 @@ def run_gpu_sweep(args):
         "optimized_d2d_aoi_exponent": float(args.optimized_d2d_aoi_exponent),
         "optimized_d2d_aoi_threshold_fraction": float(
             args.optimized_d2d_aoi_threshold_fraction
+        ),
+        "optimized_d2d_aoi_channel_exponent": float(
+            args.optimized_d2d_aoi_channel_exponent
+        ),
+        "optimized_d2d_aoi_battery_exponent": float(
+            args.optimized_d2d_aoi_battery_exponent
         ),
         "clustering_strategy_note": (
             dense_strategy_note
@@ -1080,6 +1092,7 @@ def build_parser():
             "aoi_aware_utility",
             "aoi_floor_utility",
             "aoi_tail_utility",
+            "aoi_quality_tail_utility",
         ),
         default="norm",
         help=(
@@ -1091,7 +1104,10 @@ def build_parser():
             "aoi_aware_utility adds a bounded stale-cluster AoI bonus to utility; "
             "aoi_floor_utility preserves base utility and only raises very stale "
             "clusters to a conservative minimum probability; aoi_tail_utility "
-            "reserves part of the load budget for stale-tail clusters."
+            "reserves part of the load budget for stale-tail clusters; "
+            "aoi_quality_tail_utility spends that reserved tail budget on "
+            "stale clusters whose CH also has good BS-channel success and "
+            "remaining battery."
         ),
     )
     parser.add_argument(
@@ -1273,7 +1289,8 @@ def build_parser():
             "multiplicative stale-tail bonus; for aoi_floor_utility it is the "
             "maximum stale floor as a fraction of fixed-D2D access probability; "
             "for aoi_tail_utility it is a reserved load-budget fraction clipped "
-            "to [0, 1]."
+            "to [0, 1]; for aoi_quality_tail_utility it is the same reserved "
+            "fraction, but assigned by AoI, CH-BS channel quality, and CH battery."
         ),
     )
     parser.add_argument(
@@ -1292,6 +1309,26 @@ def build_parser():
         help=(
             "AoI-enhanced stale-tail threshold as a fraction of current maximum "
             "cluster AoI. Clusters below the threshold keep base utility."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-aoi-channel-exponent",
+        type=float,
+        default=1.0,
+        help=(
+            "aoi_quality_tail_utility exponent for the CH-to-BS success score. "
+            "Larger values spend stale-tail quota on stale clusters whose CH "
+            "has better collision-free channel success."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-aoi-battery-exponent",
+        type=float,
+        default=0.5,
+        help=(
+            "aoi_quality_tail_utility exponent for current normalized CH "
+            "battery. Larger values avoid spending stale-tail quota on depleted "
+            "cluster heads."
         ),
     )
     parser.add_argument(

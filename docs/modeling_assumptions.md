@@ -303,6 +303,30 @@ member-to-CH availability.
   the latest physical-energy observation that mean AoI can improve while
   p75/p90/p95 AoI remain saturated; this policy reserves a real share of the
   load budget for the stale tail instead of only multiplying utility.
+- `--optimized-d2d-access-mode aoi_quality_tail_utility` uses the same quota
+  structure as `aoi_tail_utility`, but the tail allocator is physically
+  qualified:
+
+  ```text
+  quality_tail_h =
+    tail_h^aoi_exp *
+    q_ch_bs_h^aoi_channel_exp *
+    battery_ch_h^aoi_battery_exp
+
+  tail_probability_h = load_control(quality_tail_h, floor = 0)
+  p_h =
+    (1 - quota) * base_probability_h +
+    quota * tail_probability_h
+  ```
+
+  Here `q_ch_bs_h` is the current collision-free CH-to-BS success probability
+  under the selected channel model, and `battery_ch_h` is current normalized CH
+  battery. This is the next AoI/access hypothesis after plain stale-tail quota:
+  it tests whether AoI tail reduction can be obtained without spending scarce
+  CH contender probability on stale clusters whose CH is unlikely to deliver
+  the aggregate. The deployment interpretation is still distributed: the CH can
+  know or estimate its own BS-channel success and battery, while the BS only
+  needs to broadcast scalar exponents and normalizers.
 - `conditional_selective_water_filling` is the default allocator for enhanced
   load-controlled policies. It is intentionally not a centralized scheduler:
   the BS can broadcast only the target load, trigger ratio, redistribution

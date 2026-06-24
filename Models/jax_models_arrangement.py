@@ -32,6 +32,9 @@ The simulation follows the same thesis-level structure as the original model:
 * the AoI-tail utility D2D policy reserves a bounded share of the load budget
   for clusters in a differentiated AoI tail while returning exact base utility
   when all active clusters have similar AoI.
+* the AoI-quality-tail utility D2D policy keeps the same AoI-tail quota, but
+  spends it on stale clusters whose current CH also has favorable CH-to-BS
+  success probability and remaining battery.
 * optional CH-to-BS link realism can make a collision-free CH upload succeed
   with probability derived from the elected CH's BS channel quality and battery.
 * optional device-to-BS link realism can apply the same physical decoding model
@@ -780,6 +783,10 @@ def _aoi_tail_utility_access_probability(
     clusterized_devices_fraction,
     optimized_success_ewma,
     fixed_success_target,
+    tail_channel_quality=None,
+    tail_battery_quality=None,
+    aoi_channel_exponent=0.0,
+    aoi_battery_exponent=0.0,
 ):
     """Reserve part of the optimized-D2D load budget for stale AoI-tail clusters.
 
@@ -800,6 +807,12 @@ def _aoi_tail_utility_access_probability(
     - If active clusters have no differentiated stale-tail AoI, the function
       returns the base utility probability exactly.  This avoids disturbing
       early rounds where every cluster has nearly identical AoI.
+    - Optional ``tail_channel_quality`` and ``tail_battery_quality`` convert
+      the plain stale-tail policy into a physically qualified stale-tail
+      policy.  The tail quota then prefers old clusters whose CH has a good
+      collision-free CH-to-BS success probability and enough remaining battery.
+      These signals are local to the CH or observable from ACK/SNR feedback;
+      the BS still only broadcasts scalar normalizers and exponents.
 
     Array contracts:
     - aggregate_norms: float[max_clusters], one aggregate norm per CH.
@@ -807,12 +820,18 @@ def _aoi_tail_utility_access_probability(
     - freshness: float[max_clusters], rounds since optimized-D2D success.
     - cluster_aoi: float[max_clusters], ACK age for each optimized-D2D cluster.
     - cluster_mask: bool[max_clusters], true for real padded cluster rows.
+    - tail_channel_quality: optional float[max_clusters], collision-free
+      CH-to-BS success score in [0, 1] for the current optimized CH.
+    - tail_battery_quality: optional float[max_clusters], current normalized CH
+      battery in [0, 1], already zeroed for infeasible CH attempts if desired.
     """
     dtype = aggregate_norms.dtype
     eps = jnp.asarray(1e-12, dtype=dtype)
     aoi_quota = jnp.clip(jnp.asarray(aoi_weight, dtype=dtype), 0.0, 1.0)
     aoi_exponent = jnp.asarray(aoi_exponent, dtype=dtype)
     aoi_threshold_fraction = jnp.asarray(aoi_threshold_fraction, dtype=dtype)
+    aoi_channel_exponent = jnp.asarray(aoi_channel_exponent, dtype=dtype)
+    aoi_battery_exponent = jnp.asarray(aoi_battery_exponent, dtype=dtype)
 
     base_utility = _cluster_utility_scores(
         aggregate_norms=aggregate_norms,
@@ -862,11 +881,32 @@ def _aoi_tail_utility_access_probability(
         1.0,
     )
     tail_active = has_differentiated_tail & (jnp.max(tail_pressure) > eps)
+    # Tail pressure answers "who is old?".  The optional quality factors answer
+    # "who is old and likely to make good use of a scarce CH-to-BS slot?".  This
+    # is the key difference from plain aoi_tail_utility: a stale cluster with a
+    # poor Rayleigh-outage probability or depleted CH battery no longer receives
+    # the same tail quota as a stale, feasible, high-quality CH.
+    channel_quality = (
+        jnp.ones_like(tail_pressure)
+        if tail_channel_quality is None
+        else jnp.clip(tail_channel_quality.astype(dtype), eps, 1.0)
+    )
+    battery_quality = (
+        jnp.ones_like(tail_pressure)
+        if tail_battery_quality is None
+        else jnp.clip(tail_battery_quality.astype(dtype), eps, 1.0)
+    )
     tail_priority = jnp.where(
         tail_pressure > eps,
-        tail_pressure**aoi_exponent,
+        (tail_pressure**aoi_exponent)
+        * (channel_quality**aoi_channel_exponent)
+        * (battery_quality**aoi_battery_exponent),
         0.0,
     )
+    has_positive_tail_priority = (
+        jnp.sum(jnp.where(cluster_mask, tail_priority, 0.0)) > eps
+    )
+    tail_active = tail_active & has_positive_tail_priority
     tail_utility = jnp.where(
         cluster_mask,
         tail_priority,
@@ -1494,6 +1534,8 @@ def error_calculator_trace_jax(
     optimized_d2d_aoi_weight: float = 0.5,
     optimized_d2d_aoi_exponent: float = 1.0,
     optimized_d2d_aoi_threshold_fraction: float = 0.75,
+    optimized_d2d_aoi_channel_exponent: float = 1.0,
+    optimized_d2d_aoi_battery_exponent: float = 0.5,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -1625,11 +1667,13 @@ def error_calculator_trace_jax(
         "aoi_aware_utility",
         "aoi_floor_utility",
         "aoi_tail_utility",
+        "aoi_quality_tail_utility",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
             "'max_weight', 'hybrid', 'adaptive_diversity', or "
-            "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'"
+            "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'/"
+            "'aoi_quality_tail_utility'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -1686,6 +1730,10 @@ def error_calculator_trace_jax(
         raise ValueError("optimized_d2d_aoi_exponent must be non-negative")
     if not 0.0 <= optimized_d2d_aoi_threshold_fraction < 1.0:
         raise ValueError("optimized_d2d_aoi_threshold_fraction must be in [0, 1)")
+    if optimized_d2d_aoi_channel_exponent < 0.0:
+        raise ValueError("optimized_d2d_aoi_channel_exponent must be non-negative")
+    if optimized_d2d_aoi_battery_exponent < 0.0:
+        raise ValueError("optimized_d2d_aoi_battery_exponent must be non-negative")
 
     dtype = jnp.float32 if dtype is None else dtype
     pcomp = jnp.asarray(
@@ -1814,6 +1862,14 @@ def error_calculator_trace_jax(
     d2d_aoi_exponent = jnp.asarray(optimized_d2d_aoi_exponent, dtype=dtype)
     d2d_aoi_threshold_fraction = jnp.asarray(
         optimized_d2d_aoi_threshold_fraction,
+        dtype=dtype,
+    )
+    d2d_aoi_channel_exponent = jnp.asarray(
+        optimized_d2d_aoi_channel_exponent,
+        dtype=dtype,
+    )
+    d2d_aoi_battery_exponent = jnp.asarray(
+        optimized_d2d_aoi_battery_exponent,
         dtype=dtype,
     )
 
@@ -2724,6 +2780,51 @@ def error_calculator_trace_jax(
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
+        elif optimized_d2d_access_mode == "aoi_quality_tail_utility":
+            # Same stale-tail quota as aoi_tail_utility, but the reserved tail
+            # budget is not blindly given to every old cluster.  It is weighted
+            # by the current CH-to-BS success probability and by the current CH
+            # battery, so a scarce D2D CH contender slot is spent on stale
+            # clusters that are still physically likely to decode at the BS.
+            # ch_bs_success_probability_3: float[max_clusters], collision-free
+            # CH-to-BS success probability under the selected channel model.
+            # current_batteries[5][optimized_d2d_heads]: float[max_clusters],
+            # normalized battery of the elected optimized-D2D CH.
+            optimized_ch_battery_quality = jnp.where(
+                ch_can_attempt_3,
+                current_batteries[5][optimized_d2d_heads],
+                0.0,
+            )
+            optimized_probability_d2d = _aoi_tail_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                cluster_aoi=d2d_aoi[2],
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                aoi_weight=d2d_aoi_weight,
+                aoi_exponent=d2d_aoi_exponent,
+                aoi_threshold_fraction=d2d_aoi_threshold_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+                tail_channel_quality=ch_bs_success_probability_3,
+                tail_battery_quality=optimized_ch_battery_quality,
+                aoi_channel_exponent=d2d_aoi_channel_exponent,
+                aoi_battery_exponent=d2d_aoi_battery_exponent,
+            )
         elif optimized_d2d_access_mode == "max_weight":
             optimized_probability_d2d = _max_weight_threshold_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -3352,6 +3453,8 @@ def error_calculator(
     optimized_d2d_aoi_weight: float = 0.5,
     optimized_d2d_aoi_exponent: float = 1.0,
     optimized_d2d_aoi_threshold_fraction: float = 0.75,
+    optimized_d2d_aoi_channel_exponent: float = 1.0,
+    optimized_d2d_aoi_battery_exponent: float = 0.5,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -3435,6 +3538,8 @@ def error_calculator(
         optimized_d2d_aoi_weight=optimized_d2d_aoi_weight,
         optimized_d2d_aoi_exponent=optimized_d2d_aoi_exponent,
         optimized_d2d_aoi_threshold_fraction=optimized_d2d_aoi_threshold_fraction,
+        optimized_d2d_aoi_channel_exponent=optimized_d2d_aoi_channel_exponent,
+        optimized_d2d_aoi_battery_exponent=optimized_d2d_aoi_battery_exponent,
         checkpoints=[number_of_iterations__t],
         dtype=dtype,
     )

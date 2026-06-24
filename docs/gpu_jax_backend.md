@@ -580,6 +580,24 @@ overhead. The deployment model remains the same scalar-control ALOHA model:
 ACK age is local to the CH, and the BS can broadcast normalizers, threshold,
 and quota.
 
+The quality-gated stale-tail mode is selected with
+`--optimized-d2d-access-mode aoi_quality_tail_utility`. It keeps the same base
+probability and AoI-tail quota, but changes the tail utility from only
+`tail_h^aoi_exp` to:
+
+```text
+tail_h^aoi_exp *
+q_ch_bs_h^aoi_channel_exp *
+battery_ch_h^aoi_battery_exp
+```
+
+where `q_ch_bs_h` is the current collision-free CH-to-BS success probability
+and `battery_ch_h` is the current normalized battery of the elected CH. This is
+intended for the physical-energy/Rayleigh path: stale clusters are favored only
+when their CH is also likely to decode at the BS and has enough energy to make
+the attempt plausible. It remains scalar-control ALOHA; no CH is centrally
+scheduled by the BS.
+
 Policy differences:
 
 - `norm` is the thesis-compatible optimized-D2D controller based on aggregate
@@ -600,6 +618,10 @@ Policy differences:
 - `aoi_tail_utility` keeps most probability on base utility but reserves an
   explicit quota for stale-tail clusters; it is the current test aimed at p75,
   p90, p95, and stale-fraction AoI rather than only mean AoI.
+- `aoi_quality_tail_utility` applies that same stale-tail quota only after
+  weighting the tail by CH-BS success probability and current CH battery, so it
+  is the next test when plain AoI quota lowers freshness metrics but damages
+  convergence or energy efficiency.
 
 The utility Pareto tuning runner is:
 

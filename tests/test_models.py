@@ -1463,6 +1463,73 @@ class JaxModelTests(unittest.TestCase):
         self.assertGreater(probability[2], probability[1])
         self.assertTrue(np.all(probability <= 0.9))
 
+    def test_aoi_quality_tail_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=96,
+            d2d_ch_bs_success_mode="rayleigh_outage",
+            device_bs_success_mode="rayleigh_outage",
+            optimized_d2d_access_mode="aoi_quality_tail_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.25,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_aoi_channel_exponent=1.0,
+            optimized_d2d_aoi_battery_exponent=0.5,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.p90_aoi).shape, (2, 6))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.p90_aoi))))
+
+    def test_aoi_quality_tail_utility_prefers_feasible_high_quality_tail(self):
+        probability = jax_models._aoi_tail_utility_access_probability(
+            aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            cluster_sizes=jax_models.jnp.asarray([2, 2, 2]),
+            freshness=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            cluster_aoi=jax_models.jnp.asarray([2.0, 20.0, 20.0]),
+            cluster_mask=jax_models.jnp.asarray([True, True, True]),
+            n_channels=2,
+            pcomp=jax_models.jnp.asarray(0.9),
+            fixed_access_probability=jax_models.jnp.asarray(0.2),
+            floor_fraction=0.0,
+            norm_exponent=0.0,
+            cluster_size_exponent=0.0,
+            freshness_exponent=0.0,
+            aoi_weight=0.5,
+            aoi_exponent=1.0,
+            aoi_threshold_fraction=0.5,
+            load_target_factor=1.0,
+            load_allocation_mode="proportional_clip",
+            redistribution_fraction=0.0,
+            redistribution_trigger_ratio=0.95,
+            density_trigger_threshold=1.0,
+            dense_trigger_ratio=0.90,
+            clusterized_devices_fraction=0.0,
+            optimized_success_ewma=jax_models.jnp.asarray(0.0),
+            fixed_success_target=jax_models.jnp.asarray(1.0),
+            tail_channel_quality=jax_models.jnp.asarray([1.0, 0.10, 0.90]),
+            tail_battery_quality=jax_models.jnp.asarray([1.0, 0.20, 0.90]),
+            aoi_channel_exponent=1.0,
+            aoi_battery_exponent=1.0,
+        )
+        probability = np.asarray(probability)
+
+        self.assertGreater(probability[2], probability[1])
+        self.assertTrue(np.all(probability <= 0.9))
+
     def test_aoi_tail_utility_returns_base_when_aoi_has_no_tail(self):
         common_kwargs = dict(
             aggregate_norms=jax_models.jnp.asarray([1.0, 2.0, 3.0]),
@@ -1510,6 +1577,8 @@ class JaxModelTests(unittest.TestCase):
             {"optimized_d2d_aoi_exponent": -0.1},
             {"optimized_d2d_aoi_threshold_fraction": -0.1},
             {"optimized_d2d_aoi_threshold_fraction": 1.0},
+            {"optimized_d2d_aoi_channel_exponent": -0.1},
+            {"optimized_d2d_aoi_battery_exponent": -0.1},
         )
         for kwargs in invalid_kwargs:
             with self.subTest(kwargs=kwargs):

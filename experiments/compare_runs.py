@@ -162,6 +162,8 @@ def summarize_run(csv_path, scenario=DEFAULT_SCENARIO):
             "optimized_d2d_aoi_weight",
             "optimized_d2d_aoi_exponent",
             "optimized_d2d_aoi_threshold_fraction",
+            "optimized_d2d_aoi_channel_exponent",
+            "optimized_d2d_aoi_battery_exponent",
             "energy_model",
             "battery_feasibility_mode",
             "d2d_ch_bs_success_mode",

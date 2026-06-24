@@ -683,6 +683,22 @@ undercount devices when collisions are frequent.
 - Is intended to attack p75/p90/p95 AoI directly after the AoI bonus/floor and
   AoI-triggered CH rotation tests did not clear the stale tail.
 
+`aoi_quality_tail_utility`
+
+- Keeps the same base utility probability and reserved quota structure as
+  `aoi_tail_utility`.
+- Changes the reserved-tail utility from AoI pressure alone to AoI pressure
+  multiplied by CH-to-BS success probability and current CH battery.
+- Uses the selected physical channel model, so with `rayleigh_outage` the
+  channel term is directly tied to outage probability rather than an arbitrary
+  distance score.
+- Is intended to test whether AoI tail relief can be made less wasteful:
+  stale clusters still get attention, but stale clusters with poor CH channel
+  or depleted CH energy do not receive the same reserved probability.
+- Remains a distributed ALOHA policy. The BS can broadcast exponents and
+  normalizers; each CH computes its own score from local AoI, channel estimate,
+  and battery before drawing its local ALOHA attempt.
+
 ## Control-Plane Arrangement In A Real System
 
 A plausible real deployment would separate control signaling from FL update
@@ -893,9 +909,9 @@ should be stated clearly:
   control overhead currently exposed is the optional CH-rotation control cost.
 - AoI is now tracked explicitly as mean, peak, percentile, and stale-tail
   metrics. It drives scheduling only in opt-in policies such as
-  `aoi_aware_utility`, `aoi_floor_utility`, or `aoi_tail_utility`; it remains
-  information-age over successful uploads, not semantic freshness of labels or
-  data distribution.
+  `aoi_aware_utility`, `aoi_floor_utility`, `aoi_tail_utility`, or
+  `aoi_quality_tail_utility`; it remains information-age over successful
+  uploads, not semantic freshness of labels or data distribution.
 
 ## Best Next Architecture Improvements
 
@@ -908,9 +924,14 @@ The most productive next implementation steps are summarized in
    member success is not only a global probability.
 3. Extend Rayleigh outage toward an SINR/PER abstraction if co-channel
    interference power, modulation, and coding need to be represented.
-4. Test `aoi_tail_utility`, then compare mean/p75/p90/p95/stale AoI against
-   error norm, energy efficiency, and CH battery.
-5. Run structured sensitivity sweeps for utility exponents, allocator
+4. Rerun the physical `utility` baseline with current p75/p90/p95 and
+   stale-fraction AoI columns before treating any AoI-enhanced run as a fair
+   improvement.
+5. Move stale-tail work beyond access probability if the refreshed baseline
+   confirms the same tail problem: per-link D2D outage, AoI/channel-aware CH
+   rotation, or re-clustering are more likely to address structural stale
+   clusters than more access-score tuning.
+6. Run structured sensitivity sweeps for utility exponents, allocator
    thresholds, CH-rotation weights, energy coefficients, and Rayleigh SNR
    thresholds.
 

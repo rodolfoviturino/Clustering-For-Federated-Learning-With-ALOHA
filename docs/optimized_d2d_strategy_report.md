@@ -77,13 +77,17 @@ Observed conclusions:
 The physical-energy path is opt-in. It uses normalized first-order radio costs,
 battery feasibility, Rayleigh outage for collision-free decoding, and explicit
 AoI metrics. The following `K=1000`, `rounds=100`, `float64` runs compare the
-current physical utility baseline against the two AoI-enhanced policies:
+current physical utility baseline against the AoI-enhanced access policies:
 
 | Run | Mode | log_error_auc | t_to_1e-12 | t200 error | uploads | CH uploads | energy used | energy eff. | mean AoI | p75/p90/p95 AoI | stale75 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
 | `k1000_physical_energy_r100` | utility | -1348.359 | 176 | 2.251e-14 | 2806.96 | 533.74 | 0.003504 | 802.729 | 134.828 | not recorded | not recorded |
 | `k1000_physical_energy_aoi_aware_r100` | aoi_aware_utility | -1299.338 | 182 | 5.953e-14 | 2732.34 | 531.10 | 0.003578 | 765.165 | 130.751 | p95 = 201 | not recorded |
 | `k1000_physical_energy_aoi_floor_r100` | aoi_floor_utility | -1209.083 | 193 | 2.784e-13 | 2671.16 | 542.22 | 0.003614 | 741.292 | 128.172 | 201 / 201 / 201 | 0.512 |
+| `k1000_physical_energy_aoi_tail_w005_thr085_r100` | aoi_tail_utility | -1250.431 | 190 | 1.820e-13 | 2674.56 | 530.81 | 0.003489 | 768.431 | 130.783 | 201 / 201 / 201 | 0.535 |
+| `k1000_physical_energy_aoi_quality_tail_w005_thr085_r100` | aoi_quality_tail_utility | -1236.095 | 190 | 1.837e-13 | 2673.74 | 531.59 | 0.003492 | 768.403 | 130.089 | 201 / 201 / 201 | 0.528 |
+| `k1000_physical_energy_aoi_tail_w010_thr090_r100` | aoi_tail_utility | -1136.130 | not reached | 2.056e-12 | 2519.99 | 523.34 | 0.003525 | 717.753 | 125.824 | 201 / 201 / 201 | 0.488 |
+| `k1000_physical_energy_aoi_quality_tail_w010_thr090_r100` | aoi_quality_tail_utility | -1167.030 | not reached | 1.026e-12 | 2553.54 | 529.75 | 0.003476 | 737.406 | 125.412 | 201 / 201 / 201 | 0.486 |
 
 Observed conclusions:
 
@@ -100,10 +104,28 @@ Observed conclusions:
   contention without improving the model enough.
 - Therefore, the first AoI-aware access policies should remain ablations. A
   CH-side AoI-triggered rotation was implemented and tested next; it preserved
-  energy-rotation tradeoffs but did not materially clear the stale tail. The
-  current access-side continuation is `aoi_tail_utility`, which reserves an
-  explicit load quota for stale-tail clusters instead of only multiplying score
-  or applying a small floor.
+  energy-rotation tradeoffs but did not materially clear the stale tail.
+- `aoi_tail_utility` confirmed that reserving explicit access budget for stale
+  clusters reduces mean AoI, but it can steal too much probability from
+  high-value aggregates. The lighter point `w=0.05`, `threshold=0.85` preserved
+  `t_to_1e-12=190`; the stronger point `w=0.10`, `threshold=0.90` improved
+  mean AoI but did not reach `1e-12` by `t=200`.
+- `aoi_quality_tail_utility` partially validated the physical intuition. At
+  the stronger point, adding CH-BS success and CH battery improved error AUC,
+  final error, CH uploads, energy used, energy efficiency, mean AoI, and
+  `stale75` relative to pure AoI-tail with the same quota. At the lighter
+  point, it marginally improved mean AoI and `stale75`, but slightly worsened
+  log-error AUC and `t_to_1e-9`. This is useful evidence, but not a clear
+  Pareto improvement.
+- The persistent problem is that p75/p90/p95 AoI still reach the horizon value
+  `201` in all current AoI-tail variants. That means access probability
+  reweighting alone has not solved the severe stale-tail problem.
+- The immediate next validation step is to rerun the physical `utility`
+  baseline with the current AoI percentile/stale metrics, because
+  `k1000_physical_energy_r100` was generated before all tail columns were
+  available. After that, the more productive implementation direction is
+  structural: per-link D2D outage, AoI/channel-aware CH rotation, or
+  re-clustering, not only another access-probability formula.
 
 The latest `K=3000` CH-quality and energy-rotation runs also clarified the
 physical enhanced direction:
@@ -838,6 +860,7 @@ updates, hybrid novelty, and adaptive-diversity state.
 | AoI-aware utility | utility plus ACK age | AoI normalizers and load parameters | low to moderate | can trade too much error/energy for mean AoI |
 | AoI-floor utility | base utility probability plus ACK age | stale-tail threshold and floor scalar | low to moderate | mean AoI can improve while stale tail remains severe |
 | AoI-tail utility | utility plus ACK age | stale-tail threshold, quota, and load normalizers | moderate | quota can steal too much load from high-value aggregates |
+| AoI-quality-tail utility | ACK age, CH-BS success, CH battery | stale-tail threshold, quota, quality exponents, and load normalizers | moderate | may under-serve stale clusters with poor channel/battery |
 
 ## Current Recommendation
 
@@ -920,8 +943,45 @@ quota for stale-tail clusters. It remains scalar-control ALOHA rather than
 central scheduling, and it directly targets the stale-tail failure mode that
 the latest AoI-triggered rotation sweep exposed.
 
+The continuation after the first tail-quota runs is
+`aoi_quality_tail_utility`:
+
+```text
+--optimized-d2d-access-mode aoi_quality_tail_utility
+--optimized-d2d-aoi-weight 0.10
+--optimized-d2d-aoi-exponent 1.0
+--optimized-d2d-aoi-threshold-fraction 0.90
+--optimized-d2d-aoi-channel-exponent 1.0
+--optimized-d2d-aoi-battery-exponent 0.5
+```
+
+This keeps the same quota mechanism but changes the tail allocator from pure
+AoI pressure to AoI pressure multiplied by CH-BS success probability and CH
+battery. Scientifically, it tests whether the stale-tail benefit can be kept
+while avoiding low-quality CHs that are unlikely to decode at the BS or lack
+energy. Architecturally, it remains a real-world plausible scalar-control
+policy: no individual CH is centrally scheduled, and the CH can compute the
+tail score from its local AoI, channel-quality estimate, and battery state.
+
+Status after validation:
+
+- At `w=0.10`, `threshold=0.90`, quality gating improved the matching pure
+  AoI-tail run in error AUC, final error, uploads, energy, energy efficiency,
+  mean AoI, and `stale75`, but still failed to reach `1e-12` by `t=200`.
+- At `w=0.05`, `threshold=0.85`, quality gating preserved `t_to_1e-12=190`
+  and slightly improved mean AoI and `stale75`, but slightly worsened
+  log-error AUC and `t_to_1e-9`.
+- In both points, p75/p90/p95 AoI remained at `201`. The policy is therefore a
+  useful ablation showing that channel/battery-aware AoI quota is less wasteful,
+  but it is not yet a Pareto-dominant optimized-D2D strategy.
+- The next run should refresh the physical `utility` baseline with the current
+  AoI percentile and stale-fraction columns before adding another policy.
+
 ## Open Validation Work
 
+- Rerun the physical `utility` baseline with current AoI percentile/stale-tail
+  columns. The older `k1000_physical_energy_r100` run lacks p75/p90/p95 and
+  stale-fraction fields, so it is incomplete as an AoI-tail baseline.
 - Test robustness when `clusterized_devices_fraction` is noisy or delayed.
 - Test imperfect D2D member compute/link probabilities below `1.0`.
 - Test whether density thresholds generalize to `K=500`, `K=5000`, and
@@ -935,8 +995,8 @@ the latest AoI-triggered rotation sweep exposed.
 - Separate "better final numerical floor" from "better convergence before
   numerical saturation" by emphasizing target times and log-error AUC.
 - Validate `aoi_tail_utility` against `utility`, `aoi_aware_utility`,
-  `aoi_floor_utility`, and AoI-triggered CH rotation. The key question is
-  whether p75/p90/p95 AoI and stale75 fall without giving up too much
-  log-error AUC, energy efficiency, or CH battery.
+  `aoi_floor_utility`, `aoi_quality_tail_utility`, and AoI-triggered CH
+  rotation. The key question is whether p75/p90/p95 AoI and stale75 fall
+  without giving up too much log-error AUC, energy efficiency, or CH battery.
 - Calibrate AoI objectives using p75/p90/stale-fraction metrics, not only mean
   AoI. Mean AoI can improve while the stale tail remains near the horizon.

@@ -349,6 +349,7 @@ What is implemented:
 - `aoi_aware_utility`
 - `aoi_floor_utility`
 - `aoi_tail_utility`
+- `aoi_quality_tail_utility`
 - `proportional_clip`
 - `water_filling`
 - `selective_water_filling`
@@ -434,10 +435,11 @@ on error, energy, mean AoI, p75/p90/p95 AoI, stale-tail fractions, and peak AoI
 together.  The initial multiplicative AoI-aware test improved mean AoI but did
 not improve the full error/energy tradeoff, so the code also includes
 `aoi_floor_utility`, a conservative variant that preserves base utility access
-and only gives very stale clusters a bounded minimum probability.  The latest
-continuation is `aoi_tail_utility`, which reserves a bounded share of the load
-budget for the differentiated stale AoI tail because previous AoI policies and
-AoI-triggered CH rotation did not reduce the p75/p90/p95 tail enough.
+and only gives very stale clusters a bounded minimum probability. The next
+continuations are `aoi_tail_utility`, which reserves a bounded share of the
+load budget for the differentiated stale AoI tail, and
+`aoi_quality_tail_utility`, which spends that reserved tail budget only after
+also considering CH-to-BS success probability and current CH battery.
 
 ## Current Main Limitations
 
@@ -460,9 +462,9 @@ following points should be explicitly disclosed:
 - member-to-CH link success is not distance/SINR dependent;
 - utility exponents and allocator thresholds are hyperparameters;
 - AoI is now measured explicitly and can drive `aoi_aware_utility`,
-  `aoi_floor_utility`, or `aoi_tail_utility`, but the weight, exponent,
-  stale-tail threshold, and quota are policy hyperparameters that need
-  sensitivity analysis;
+  `aoi_floor_utility`, `aoi_tail_utility`, or `aoi_quality_tail_utility`, but
+  the weight, exponent, stale-tail threshold, quota, and quality exponents are
+  policy hyperparameters that need sensitivity analysis;
 - data are synthetic linear-regression data, not non-IID task data.
 
 ## Current Empirical Findings
@@ -535,9 +537,59 @@ The most important current results are:
   exists. It is specifically meant to test whether p75/p90/p95 AoI can be
   reduced without discarding the tuned utility policy.
 
+- The next implemented refinement is
+  `--optimized-d2d-access-mode aoi_quality_tail_utility`. It keeps the same
+  stale-tail quota idea, but weights the reserved tail budget by CH-to-BS
+  success probability and current CH battery. This is a more physical
+  continuation: if AoI quota sends probability to a stale cluster whose CH has
+  poor Rayleigh-outage success or depleted battery, the slot is unlikely to
+  reduce either error or AoI. The policy is still deployable because the CH uses
+  local battery and channel/ACK-derived success estimates, while the BS only
+  broadcasts scalar exponents and normalizers.
+
+- The first `aoi_quality_tail_utility` runs showed a marginal but informative
+  tradeoff, not a new main strategy. With `w=0.10` and `threshold=0.90`, quality
+  gating improved the pure AoI-tail run on error, uploads, energy, mean AoI,
+  and `stale75`, but still did not reach `1e-12` by `t=200`. With the lighter
+  `w=0.05` and `threshold=0.85`, it preserved `t_to_1e-12=190` and slightly
+  reduced mean AoI and `stale75`, but it slightly worsened log-error AUC and
+  `t_to_1e-9`. In both cases p75/p90/p95 AoI stayed at the horizon value
+  `201`, so severe stale-tail AoI remains unresolved by access-probability
+  reweighting alone.
+
+- Before implementing another AoI policy, the physical `utility` baseline
+  should be rerun with the current metric set. The older
+  `k1000_physical_energy_r100` baseline was produced before all percentile and
+  stale-fraction AoI columns were available, so it cannot be used as a complete
+  stale-tail comparator.
+
 ## Recommended Future Work Order
 
-### Step 1: Calibrate The First-Order Energy Model
+### Step 1: Rerun The Physical Utility Baseline With Current AoI Metrics
+
+The immediate validation step is not a new formula. Rerun the current physical
+`utility` baseline after the AoI percentile/stale-fraction instrumentation is
+in place. This gives a fair comparator for:
+
+```text
+mean AoI
+p75/p90/p95 AoI
+stale_fraction_50/75/100
+error norm
+energy efficiency
+CH uploads
+```
+
+Expected benefit:
+
+- avoids comparing new AoI modes against an older baseline with missing tail
+  columns;
+- shows whether the severe p75/p90/p95 tail is specific to AoI-enhanced modes
+  or already present in the tuned utility baseline;
+- provides a clean reference before implementing structural changes such as
+  per-link D2D outage, AoI/channel-aware CH rotation, or re-clustering.
+
+### Step 2: Calibrate The First-Order Energy Model
 
 The code now implements opt-in first-order radio accounting:
 
@@ -573,7 +625,7 @@ Expected benefit:
 - allows energy/error/AoI tradeoffs to be reported with defensible units or
   normalized units derived from a source.
 
-### Step 2: Keep Battery As Feasibility In New Experiments
+### Step 3: Keep Battery As Feasibility In New Experiments
 
 The preferred enhanced path is now:
 
@@ -597,7 +649,7 @@ Expected benefit:
 - allows low-battery devices to skip or fail transmission because energy is
   insufficient, not because decoding magically degrades.
 
-### Step 3: Extend Rayleigh Outage Toward SINR/PER If Needed
+### Step 4: Extend Rayleigh Outage Toward SINR/PER If Needed
 
 The code now supports Rayleigh outage for collision-free direct and CH-to-BS
 decoding:
@@ -621,7 +673,7 @@ Expected benefit:
   communication-performance metric;
 - D2D and non-D2D comparisons become easier to defend.
 
-### Step 4: Tune AoI As A Policy Objective
+### Step 5: Treat AoI As A Policy Objective, But Move Beyond Access Only
 
 AoI is now tracked for all six scenarios:
 
@@ -630,9 +682,8 @@ non-D2D: per-device AoI
 D2D:     per-cluster AoI
 ```
 
-The next experiment should test `aoi_tail_utility`, because the mean-AoI bonus
-and floor policies did not clear the stale tail and AoI-triggered CH rotation
-mostly changed energy/battery tradeoffs. Compare:
+The first AoI policy experiments are informative ablations rather than a
+finished solution. Compare every future AoI strategy with:
 
 ```text
 mean AoI
@@ -651,9 +702,11 @@ Expected benefit:
 - freshness becomes measurable, not only a scheduling weight;
 - enables analysis of `freshness_exp`, AoI quota, exponent, and threshold
   against mean/percentile/stale-tail AoI;
-- provides another scientific objective beyond final error norm.
+- provides another scientific objective beyond final error norm;
+- redirects future implementation toward the structural cause of stale tails:
+  CH feasibility, per-link D2D reliability, and cluster/CH reassignment.
 
-### Step 5: Sensitivity Analysis For Policy Hyperparameters
+### Step 6: Sensitivity Analysis For Policy Hyperparameters
 
 Run structured sweeps for:
 

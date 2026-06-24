@@ -772,6 +772,46 @@ only for refresh-eligible clusters. It is still an ALOHA probability policy, not
 a centralized scheduler; the floor should be swept conservatively because it can
 increase collisions when many clusters are stale at once.
 
+Implemented explicit quota follow-up: `--optimized-d2d-access-mode
+member_quota_utility`. This mode uses `--optimized-d2d-aoi-weight` as a reserved
+stale-member refresh quota instead of only blending two full-load allocations:
+the base utility allocator receives `1 - weight` of the CH contender target, and
+refresh-eligible clusters receive a separate overlay with `weight` of the
+target. It is designed to test the most recent diagnosis directly: if
+`CH no attempt` remains near the previous `~0.986-0.992` level, then the next
+research step should move beyond local ALOHA probability shaping toward virtual
+queues, explicit refresh scheduling, or re-clustering.
+
+Implemented stateful deficit follow-up: `--optimized-d2d-access-mode
+member_deficit_utility`. It keeps the quota split but ranks the refresh overlay
+with a persistent missed-refresh deficit that decays by
+`--optimized-d2d-member-deficit-decay` and resets on successful optimized-D2D CH
+delivery. This targets the observed saturation of member AoI percentiles at the
+simulation horizon: when many clusters look equally stale, the deficit records
+which clusters have repeatedly missed refresh opportunities.
+
+The first undamped deficit test moved the diagnosed failure mode but was too
+aggressive: `CH no attempt` fell from roughly `0.984` to `0.931-0.937`, while
+ALOHA collision share rose to roughly `0.059-0.064`, final error degraded to
+about `3e-3`, and energy efficiency fell near `240`. The implementation now
+exposes `--optimized-d2d-member-deficit-weight` so the deficit can act as a
+small tie-breaker instead of dominating the refresh quota.
+
+The damped `member_deficit_utility` sweep did not recover the Pareto front.
+With `w=0.15`, `decay=0.95`, and deficit weights `0.05`, `0.10`, and `0.25`,
+the final optimized-D2D error stayed near `3.1e-3`, member stale75 stayed near
+`0.463`, and energy efficiency stayed near `241-246`. This is much worse than
+`member_quota_utility` with `w=0.15`, which reached final error `6.11e-7`,
+member stale75 `0.413`, and energy efficiency `762.7`. The useful conclusion is
+that persistent deficit probability shaping can move failures from `CH no
+attempt` to collisions, but it is not a good access policy in the current dense
+physical/Rayleigh regime. Keep `member_quota_utility` as the current
+member-freshness candidate.
+
+The full member-level D2D freshness experiment record is in
+`docs/member_level_d2d_freshness_experiments.md`, including the final table,
+negative-deficit interpretation, and recommended next research directions.
+
 ### Step 2: Calibrate The First-Order Energy Model
 
 The code now implements opt-in first-order radio accounting:

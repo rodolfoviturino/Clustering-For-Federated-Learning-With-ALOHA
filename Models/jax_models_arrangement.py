@@ -1299,6 +1299,338 @@ def _member_refresh_utility_access_probability(
     return jnp.where(has_positive_refresh, bounded_probability, base_probability)
 
 
+def _member_quota_utility_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    member_aoi_by_cluster,
+    member_participation_by_cluster,
+    active_member_mask,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    quota_weight,
+    quota_exponent,
+    quota_threshold_fraction,
+    refresh_floor_fraction,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Reserve an explicit contender-load quota for stale D2D members.
+
+    ``member_refresh_utility`` nudges refresh-eligible clusters by blending two
+    full-load probability allocations.  This mode makes the intervention more
+    measurable: the base utility allocator receives only ``1 - quota`` of the
+    CH contender target, while stale/zero-participation active members receive a
+    separate ``quota`` overlay.  The two local ALOHA probabilities are added and
+    clipped by ``pcomp``.  If no active member needs refresh, the base allocator
+    keeps the full load target.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    one = jnp.asarray(1.0, dtype=dtype)
+    quota_fraction = jnp.clip(jnp.asarray(quota_weight, dtype=dtype), 0.0, 1.0)
+    quota_exponent = jnp.asarray(quota_exponent, dtype=dtype)
+    quota_threshold_fraction = jnp.asarray(
+        quota_threshold_fraction,
+        dtype=dtype,
+    )
+    refresh_floor_fraction = jnp.asarray(refresh_floor_fraction, dtype=dtype)
+
+    active_mask = active_member_mask & cluster_mask[:, None]
+    active_counts = jnp.sum(active_mask, axis=1).astype(dtype)
+    eligible_mask = cluster_mask & (active_counts > 1.0)
+    safe_counts = jnp.maximum(active_counts, one)
+
+    member_aoi = member_aoi_by_cluster.astype(dtype)
+    active_member_aoi = jnp.where(active_mask, member_aoi, 0.0)
+    peak_member_aoi = jnp.max(active_member_aoi, axis=1)
+    active_peak_member_aoi = jnp.where(eligible_mask, peak_member_aoi, 0.0)
+    normalized_peak_aoi = (
+        (active_peak_member_aoi + eps)
+        / (jnp.max(active_peak_member_aoi) + eps)
+    )
+    remaining_tail_width = jnp.maximum(one - quota_threshold_fraction, eps)
+    peak_tail_pressure = jnp.clip(
+        (normalized_peak_aoi - quota_threshold_fraction)
+        / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+
+    zero_participation = (
+        member_participation_by_cluster.astype(dtype)
+        <= jnp.asarray(0.0, dtype=dtype)
+    )
+    zero_participation_fraction = (
+        jnp.sum((zero_participation & active_mask).astype(dtype), axis=1)
+        / safe_counts
+    )
+    refresh_pressure = jnp.maximum(peak_tail_pressure, zero_participation_fraction)
+    has_positive_refresh = (
+        jnp.sum(jnp.where(eligible_mask, refresh_pressure, 0.0)) > eps
+    )
+    quota_active = has_positive_refresh & (quota_fraction > eps)
+    base_share = jnp.where(quota_active, one - quota_fraction, one)
+    quota_share = jnp.where(quota_active, quota_fraction, 0.0)
+
+    base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+    base_probability = _load_controlled_access_from_utility(
+        utility=base_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability * base_share,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor * base_share,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+    base_attempt_gap = jnp.clip(
+        one - (base_probability / jnp.maximum(pcomp, eps)),
+        0.0,
+        1.0,
+    )
+    quota_priority = jnp.where(
+        eligible_mask,
+        (refresh_pressure**quota_exponent) * (eps + base_attempt_gap),
+        0.0,
+    )
+    quota_mask = eligible_mask & (quota_priority > eps) & quota_active
+    quota_probability = _load_controlled_access_from_utility(
+        utility=jnp.where(quota_active, quota_priority, base_utility),
+        cluster_mask=jnp.where(quota_active, quota_mask, cluster_mask),
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability * quota_share,
+        floor_fraction=jnp.asarray(0.0, dtype=dtype),
+        load_target_factor=load_target_factor * quota_share,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+    targeted_floor = refresh_floor_fraction * fixed_access_probability
+    floored_quota_probability = jnp.where(
+        quota_mask,
+        jnp.maximum(quota_probability, targeted_floor),
+        quota_probability,
+    )
+    combined_probability = base_probability + jnp.where(
+        quota_active,
+        floored_quota_probability,
+        0.0,
+    )
+    bounded_probability = jnp.where(
+        cluster_mask,
+        jnp.clip(combined_probability, 0.0, pcomp),
+        0.0,
+    )
+    return jnp.where(quota_active, bounded_probability, base_probability)
+
+
+def _member_deficit_utility_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    member_aoi_by_cluster,
+    member_participation_by_cluster,
+    active_member_mask,
+    member_refresh_deficit,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    quota_weight,
+    quota_exponent,
+    quota_threshold_fraction,
+    refresh_floor_fraction,
+    deficit_weight,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Prioritize stale-member clusters that repeatedly missed delivery.
+
+    This is the stateful version of ``member_quota_utility``.  The instantaneous
+    stale/zero-member pressure remains the eligibility gate, but the reserved
+    overlay is ranked by both current pressure and a persistent per-cluster
+    refresh deficit accumulated after previous missed opportunities.  The goal
+    is to break the common tie where many member AoIs are already saturated at
+    the simulation horizon.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    one = jnp.asarray(1.0, dtype=dtype)
+    quota_fraction = jnp.clip(jnp.asarray(quota_weight, dtype=dtype), 0.0, 1.0)
+    quota_exponent = jnp.asarray(quota_exponent, dtype=dtype)
+    quota_threshold_fraction = jnp.asarray(
+        quota_threshold_fraction,
+        dtype=dtype,
+    )
+    refresh_floor_fraction = jnp.asarray(refresh_floor_fraction, dtype=dtype)
+    deficit_weight = jnp.asarray(deficit_weight, dtype=dtype)
+    member_refresh_deficit = member_refresh_deficit.astype(dtype)
+
+    active_mask = active_member_mask & cluster_mask[:, None]
+    active_counts = jnp.sum(active_mask, axis=1).astype(dtype)
+    eligible_mask = cluster_mask & (active_counts > 1.0)
+    safe_counts = jnp.maximum(active_counts, one)
+
+    member_aoi = member_aoi_by_cluster.astype(dtype)
+    active_member_aoi = jnp.where(active_mask, member_aoi, 0.0)
+    peak_member_aoi = jnp.max(active_member_aoi, axis=1)
+    active_peak_member_aoi = jnp.where(eligible_mask, peak_member_aoi, 0.0)
+    normalized_peak_aoi = (
+        (active_peak_member_aoi + eps)
+        / (jnp.max(active_peak_member_aoi) + eps)
+    )
+    remaining_tail_width = jnp.maximum(one - quota_threshold_fraction, eps)
+    peak_tail_pressure = jnp.clip(
+        (normalized_peak_aoi - quota_threshold_fraction)
+        / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+
+    zero_participation = (
+        member_participation_by_cluster.astype(dtype)
+        <= jnp.asarray(0.0, dtype=dtype)
+    )
+    zero_participation_fraction = (
+        jnp.sum((zero_participation & active_mask).astype(dtype), axis=1)
+        / safe_counts
+    )
+    refresh_pressure = jnp.maximum(peak_tail_pressure, zero_participation_fraction)
+    refresh_mask = eligible_mask & (refresh_pressure > eps)
+    has_positive_refresh = jnp.sum(jnp.where(refresh_mask, refresh_pressure, 0.0)) > eps
+    quota_active = has_positive_refresh & (quota_fraction > eps)
+    base_share = jnp.where(quota_active, one - quota_fraction, one)
+    quota_share = jnp.where(quota_active, quota_fraction, 0.0)
+
+    base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+    base_probability = _load_controlled_access_from_utility(
+        utility=base_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability * base_share,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor * base_share,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+    active_deficit = jnp.where(refresh_mask, member_refresh_deficit, 0.0)
+    max_active_deficit = jnp.max(active_deficit)
+    normalized_deficit = jnp.where(
+        max_active_deficit > eps,
+        active_deficit / jnp.maximum(max_active_deficit, eps),
+        0.0,
+    )
+    base_attempt_gap = jnp.clip(
+        one - (base_probability / jnp.maximum(pcomp, eps)),
+        0.0,
+        1.0,
+    )
+    deficit_pressure = refresh_pressure * (one + deficit_weight * normalized_deficit)
+    quota_priority = jnp.where(
+        refresh_mask,
+        (deficit_pressure**quota_exponent) * (eps + base_attempt_gap),
+        0.0,
+    )
+    quota_mask = refresh_mask & (quota_priority > eps) & quota_active
+    quota_probability = _load_controlled_access_from_utility(
+        utility=jnp.where(quota_active, quota_priority, base_utility),
+        cluster_mask=jnp.where(quota_active, quota_mask, cluster_mask),
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability * quota_share,
+        floor_fraction=jnp.asarray(0.0, dtype=dtype),
+        load_target_factor=load_target_factor * quota_share,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+    targeted_floor = refresh_floor_fraction * fixed_access_probability
+    floored_quota_probability = jnp.where(
+        quota_mask,
+        jnp.maximum(quota_probability, targeted_floor),
+        quota_probability,
+    )
+    combined_probability = base_probability + jnp.where(
+        quota_active,
+        floored_quota_probability,
+        0.0,
+    )
+    bounded_probability = jnp.where(
+        cluster_mask,
+        jnp.clip(combined_probability, 0.0, pcomp),
+        0.0,
+    )
+    return jnp.where(quota_active, bounded_probability, base_probability)
+
+
 def _load_controlled_access_from_utility(
     utility,
     cluster_mask,
@@ -1899,6 +2231,8 @@ def error_calculator_trace_jax(
     optimized_d2d_aoi_channel_exponent: float = 1.0,
     optimized_d2d_aoi_battery_exponent: float = 0.5,
     optimized_d2d_member_refresh_floor_fraction: float = 0.05,
+    optimized_d2d_member_deficit_decay: float = 0.90,
+    optimized_d2d_member_deficit_weight: float = 0.25,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -2058,13 +2392,16 @@ def error_calculator_trace_jax(
         "aoi_quality_tail_utility",
         "member_fair_utility",
         "member_refresh_utility",
+        "member_quota_utility",
+        "member_deficit_utility",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
             "'max_weight', 'hybrid', 'adaptive_diversity', or "
             "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'/"
             "'aoi_quality_tail_utility'/'member_fair_utility'/"
-            "'member_refresh_utility'"
+            "'member_refresh_utility'/'member_quota_utility'/"
+            "'member_deficit_utility'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -2128,6 +2465,14 @@ def error_calculator_trace_jax(
     if not 0.0 <= optimized_d2d_member_refresh_floor_fraction <= 1.0:
         raise ValueError(
             "optimized_d2d_member_refresh_floor_fraction must be in [0, 1]"
+        )
+    if not 0.0 <= optimized_d2d_member_deficit_decay <= 1.0:
+        raise ValueError(
+            "optimized_d2d_member_deficit_decay must be in [0, 1]"
+        )
+    if not 0.0 <= optimized_d2d_member_deficit_weight <= 1.0:
+        raise ValueError(
+            "optimized_d2d_member_deficit_weight must be in [0, 1]"
         )
 
     dtype = jnp.float32 if dtype is None else dtype
@@ -2283,6 +2628,14 @@ def error_calculator_trace_jax(
     )
     d2d_member_refresh_floor_fraction = jnp.asarray(
         optimized_d2d_member_refresh_floor_fraction,
+        dtype=dtype,
+    )
+    d2d_member_deficit_decay = jnp.asarray(
+        optimized_d2d_member_deficit_decay,
+        dtype=dtype,
+    )
+    d2d_member_deficit_weight = jnp.asarray(
+        optimized_d2d_member_deficit_weight,
         dtype=dtype,
     )
 
@@ -2847,6 +3200,7 @@ def error_calculator_trace_jax(
             optimized_d2d_freshness,
             optimized_d2d_reference_direction,
             optimized_d2d_success_ewma,
+            optimized_d2d_member_deficit,
             non_d2d_aoi,
             d2d_aoi,
             d2d_member_aoi,
@@ -3537,6 +3891,72 @@ def error_calculator_trace_jax(
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
+        elif optimized_d2d_access_mode == "member_quota_utility":
+            optimized_probability_d2d = _member_quota_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                quota_weight=d2d_aoi_weight,
+                quota_exponent=d2d_aoi_exponent,
+                quota_threshold_fraction=d2d_aoi_threshold_fraction,
+                refresh_floor_fraction=d2d_member_refresh_floor_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
+        elif optimized_d2d_access_mode == "member_deficit_utility":
+            optimized_probability_d2d = _member_deficit_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                member_refresh_deficit=optimized_d2d_member_deficit,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                quota_weight=d2d_aoi_weight,
+                quota_exponent=d2d_aoi_exponent,
+                quota_threshold_fraction=d2d_aoi_threshold_fraction,
+                refresh_floor_fraction=d2d_member_refresh_floor_fraction,
+                deficit_weight=d2d_member_deficit_weight,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
         elif optimized_d2d_access_mode == "max_weight":
             optimized_probability_d2d = _max_weight_threshold_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -3695,6 +4115,85 @@ def error_calculator_trace_jax(
             d2d_throughput_ewma_decay * optimized_d2d_success_ewma
             + (1.0 - d2d_throughput_ewma_decay)
             * ch_upload_3_d2d.astype(users_input__x.dtype)
+        )
+        active_optimized_member_mask = active_member_mask_3 & cluster_mask[:, None]
+        optimized_active_member_counts = jnp.sum(
+            active_optimized_member_mask,
+            axis=1,
+        ).astype(users_input__x.dtype)
+        optimized_refresh_eligible = cluster_mask & (
+            optimized_active_member_counts > 1.0
+        )
+        optimized_safe_active_counts = jnp.maximum(
+            optimized_active_member_counts,
+            jnp.asarray(1.0, dtype=users_input__x.dtype),
+        )
+        optimized_member_aoi_by_cluster = d2d_member_aoi[2][safe_members]
+        optimized_active_member_aoi = jnp.where(
+            active_optimized_member_mask,
+            optimized_member_aoi_by_cluster,
+            0.0,
+        )
+        optimized_peak_member_aoi = jnp.max(optimized_active_member_aoi, axis=1)
+        optimized_active_peak_member_aoi = jnp.where(
+            optimized_refresh_eligible,
+            optimized_peak_member_aoi,
+            0.0,
+        )
+        optimized_normalized_peak_member_aoi = (
+            (optimized_active_peak_member_aoi + 1e-12)
+            / (jnp.max(optimized_active_peak_member_aoi) + 1e-12)
+        )
+        optimized_tail_width = jnp.maximum(
+            1.0 - d2d_aoi_threshold_fraction,
+            jnp.asarray(1e-12, dtype=users_input__x.dtype),
+        )
+        optimized_peak_tail_pressure = jnp.clip(
+            (
+                optimized_normalized_peak_member_aoi
+                - d2d_aoi_threshold_fraction
+            )
+            / optimized_tail_width,
+            0.0,
+            1.0,
+        )
+        optimized_zero_participation = (
+            d2d_member_participation_counts[2][safe_members]
+            <= jnp.asarray(0, dtype=d2d_member_participation_counts.dtype)
+        )
+        optimized_zero_participation_fraction = (
+            jnp.sum(
+                (optimized_zero_participation & active_optimized_member_mask).astype(
+                    users_input__x.dtype
+                ),
+                axis=1,
+            )
+            / optimized_safe_active_counts
+        )
+        optimized_refresh_pressure = jnp.where(
+            optimized_refresh_eligible,
+            jnp.maximum(
+                optimized_peak_tail_pressure,
+                optimized_zero_participation_fraction,
+            ),
+            0.0,
+        )
+        optimized_refresh_missed = optimized_refresh_pressure * (
+            ~success_3_d2d
+        ).astype(users_input__x.dtype)
+        next_optimized_d2d_member_deficit = (
+            d2d_member_deficit_decay * optimized_d2d_member_deficit
+            + optimized_refresh_missed
+        )
+        next_optimized_d2d_member_deficit = jnp.where(
+            success_3_d2d,
+            0.0,
+            next_optimized_d2d_member_deficit,
+        )
+        next_optimized_d2d_member_deficit = jnp.where(
+            cluster_mask,
+            next_optimized_d2d_member_deficit,
+            0.0,
         )
 
         def direct_attempt_drain(attempt_mask):
@@ -4141,6 +4640,7 @@ def error_calculator_trace_jax(
             next_optimized_d2d_freshness,
             next_optimized_d2d_reference_direction,
             next_optimized_d2d_success_ewma,
+            next_optimized_d2d_member_deficit,
             next_non_d2d_aoi,
             next_d2d_aoi,
             next_d2d_member_aoi,
@@ -4256,6 +4756,7 @@ def error_calculator_trace_jax(
         # Start from the fixed-D2D reference throughput to avoid an artificial
         # cold-start burst of redistribution before any ACK history exists.
         initial_expected_fixed_d2d_ch_successes,
+        jnp.zeros(cluster_mask.shape, dtype=users_input__x.dtype),
         jnp.ones((3, k_devices), dtype=users_input__x.dtype),
         jnp.where(
             cluster_mask[None, :],
@@ -4464,6 +4965,8 @@ def error_calculator(
     optimized_d2d_aoi_channel_exponent: float = 1.0,
     optimized_d2d_aoi_battery_exponent: float = 0.5,
     optimized_d2d_member_refresh_floor_fraction: float = 0.05,
+    optimized_d2d_member_deficit_decay: float = 0.90,
+    optimized_d2d_member_deficit_weight: float = 0.25,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -4560,6 +5063,8 @@ def error_calculator(
         optimized_d2d_member_refresh_floor_fraction=(
             optimized_d2d_member_refresh_floor_fraction
         ),
+        optimized_d2d_member_deficit_decay=optimized_d2d_member_deficit_decay,
+        optimized_d2d_member_deficit_weight=optimized_d2d_member_deficit_weight,
         checkpoints=[number_of_iterations__t],
         dtype=dtype,
     )

@@ -278,6 +278,12 @@ def run_gpu_sweep(args):
             optimized_d2d_member_refresh_floor_fraction=(
                 args.optimized_d2d_member_refresh_floor_fraction
             ),
+            optimized_d2d_member_deficit_decay=(
+                args.optimized_d2d_member_deficit_decay
+            ),
+            optimized_d2d_member_deficit_weight=(
+                args.optimized_d2d_member_deficit_weight
+            ),
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -739,6 +745,12 @@ def run_gpu_sweep(args):
         ),
         "optimized_d2d_member_refresh_floor_fraction": float(
             args.optimized_d2d_member_refresh_floor_fraction
+        ),
+        "optimized_d2d_member_deficit_decay": float(
+            args.optimized_d2d_member_deficit_decay
+        ),
+        "optimized_d2d_member_deficit_weight": float(
+            args.optimized_d2d_member_deficit_weight
         ),
         "clustering_strategy_note": (
             dense_strategy_note
@@ -1313,6 +1325,8 @@ def build_parser():
             "aoi_quality_tail_utility",
             "member_fair_utility",
             "member_refresh_utility",
+            "member_quota_utility",
+            "member_deficit_utility",
         ),
         default="norm",
         help=(
@@ -1330,7 +1344,11 @@ def build_parser():
             "remaining battery; member_fair_utility reserves part of the load "
             "budget for clusters whose active aggregate can refresh stale or "
             "zero-participation D2D members; member_refresh_utility adds a "
-            "targeted access floor for those refresh-eligible clusters."
+            "targeted access floor for those refresh-eligible clusters; "
+            "member_quota_utility splits the CH contender target into a base "
+            "utility budget and an explicit stale-member refresh quota; "
+            "member_deficit_utility ranks that quota by persistent missed "
+            "refresh opportunity deficit."
         ),
     )
     parser.add_argument(
@@ -1516,7 +1534,10 @@ def build_parser():
             "fraction, but assigned by AoI, CH-BS channel quality, and CH battery; "
             "for member_fair_utility/member_refresh_utility it is the reserved "
             "load-budget fraction for active aggregates containing stale or "
-            "zero-participation members."
+            "zero-participation members; for member_quota_utility it is the "
+            "explicit stale-member quota fraction subtracted from the base "
+            "utility contender target; for member_deficit_utility it is the "
+            "same quota, ranked by current member pressure plus deficit."
         ),
     )
     parser.add_argument(
@@ -1564,8 +1585,31 @@ def build_parser():
         help=(
             "member_refresh_utility minimum access probability for "
             "refresh-eligible clusters, expressed as a fraction of the fixed "
-            "D2D ALOHA access probability. It is local to clusters whose active "
-            "aggregate contains stale or zero-participation members."
+            "D2D ALOHA access probability. member_quota_utility also applies "
+            "this as an optional local floor on the refresh overlay."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-deficit-decay",
+        type=float,
+        default=0.90,
+        help=(
+            "member_deficit_utility decay for the persistent per-cluster "
+            "missed-refresh deficit. 0.0 forgets after one round; values near "
+            "1.0 keep older missed opportunities as a tie-breaker among stale "
+            "or zero-participation active member aggregates."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-deficit-weight",
+        type=float,
+        default=0.25,
+        help=(
+            "member_deficit_utility weight for the normalized persistent "
+            "missed-refresh deficit. 0.0 matches member_quota_utility; larger "
+            "values make old missed opportunities a stronger tie-breaker. "
+            "Keep this small in dense regimes because excessive concentration "
+            "can trade CH no-attempt failures for ALOHA collisions."
         ),
     )
     parser.add_argument(

@@ -50,6 +50,7 @@ docs/
   current_status_and_future_work.md         Implemented features, current findings, and next steps
   gpu_jax_backend.md                        GPU backend notes, validation, and Colab guidance
   modeling_assumptions.md                   Thesis defaults and realism switches
+  member_level_d2d_freshness_experiments.md Member-level D2D freshness results
   optimized_d2d_strategy_report.md          Strategy evolution, results, and deployment notes
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
@@ -317,6 +318,37 @@ attempt probability for refresh-eligible clusters through
 than `member_fair_utility`: it directly tests whether member stale tails are
 access-opportunity limited rather than CH-identity limited.
 
+The explicit quota follow-up is
+`--optimized-d2d-access-mode member_quota_utility`. It uses
+`--optimized-d2d-aoi-weight` as a stale-member refresh quota: only
+`1 - weight` of the CH contender target goes to the normal utility allocator,
+and `weight` is allocated as a separate overlay to clusters whose active
+aggregate contains stale or never-delivered members. The overlay is still
+probabilistic ALOHA, not centralized scheduling. The optional
+`--optimized-d2d-member-refresh-floor-fraction` can still enforce a local floor
+on refresh-eligible clusters, but it should be swept carefully because floors
+can increase collisions.
+
+The stateful deficit variant is
+`--optimized-d2d-access-mode member_deficit_utility`. It keeps the explicit
+quota split, but ranks the refresh overlay with a persistent per-cluster missed
+refresh deficit. The deficit grows when a cluster has active stale or
+never-delivered members and the optimized-D2D aggregate does not reach the BS;
+it resets on success and decays by
+`--optimized-d2d-member-deficit-decay`. The normalized deficit is damped by
+`--optimized-d2d-member-deficit-weight`, which should usually stay small:
+aggressive deficit ranking can reduce `CH no attempt` while turning the failure
+mode into ALOHA collisions. This tests whether the remaining member-stale tail
+is caused by many clusters tying at saturated member AoI.
+
+The current physical/Rayleigh member-level conclusion is documented in
+`docs/member_level_d2d_freshness_experiments.md`. The short version is that
+`member_quota_utility` is the current member-freshness candidate, with
+`w=0.15`, `floor=0` as the strongest tested point. `member_deficit_utility`
+is retained as a negative ablation: it reduces `CH no attempt`, but it moves
+the bottleneck into ALOHA collisions and badly degrades convergence and energy
+efficiency.
+
 Current `K=1000`, `rounds=100` ideal-link tests show that
 `member_fair_utility` directly reduces member starvation. Against the default
 optimized-D2D `norm` run
@@ -329,12 +361,13 @@ The stronger `w=0.25 / threshold=0.70` improved fairness further
 `8.758e-07`. Under the physical energy/Rayleigh path, the refreshed `utility`
 baseline reached `member_aoi=62.043`, `member_zero=0.431`,
 `final_error=1.603e-07`, and `energy_efficiency=877.028`. A light
-member-fair weight (`w=0.05 / threshold=0.70`) is the current physical Pareto
-candidate (`member_aoi=60.541`, `member_zero=0.393`,
-`final_error=3.066e-07`, `energy_efficiency=817.898`), while `w>=0.10`
-increasingly trades convergence and energy efficiency for freshness. This mode
-therefore remains a diagnostic ablation rather than the main optimized-D2D
-strategy.
+member-fair weight (`w=0.05 / threshold=0.70`) was the first conservative
+physical candidate inside the member-fair family (`member_aoi=60.541`,
+`member_zero=0.393`, `final_error=3.066e-07`,
+`energy_efficiency=817.898`), while `w>=0.10` increasingly trades convergence
+and energy efficiency for freshness. The later `member_quota_utility` runs
+supersede this as the stronger member-freshness candidate under the physical
+setup.
 
 Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
@@ -965,8 +998,10 @@ skip cleanly when JAX is not installed in the local interpreter.
   member-level AoI is computed only over devices in non-singleton D2D clusters
   and resets only for devices whose update was active inside that delivered
   aggregate. The member-level columns are diagnostics and do not change
-  scheduling by default. The optional `member_fair_utility` ablation is the
-  only current access policy that consumes those member-level diagnostics.
+  scheduling by default. Optional member-aware access policies such as
+  `member_fair_utility`, `member_refresh_utility`, `member_quota_utility`, and
+  `member_deficit_utility` consume those diagnostics only when explicitly
+  selected.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation
   candidate, not the default implementation.

@@ -836,6 +836,9 @@ class JaxModelTests(unittest.TestCase):
             checkpoints=[1, 3],
         )
 
+        mean_energy_used = np.asarray(result.mean_energy_used)
+        mean_clusterhead_energy_used = np.asarray(result.mean_clusterhead_energy_used)
+
         self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
         self.assertEqual(
             np.asarray(result.d2d_member_stale_ch_no_attempt_fraction).shape,
@@ -1808,6 +1811,68 @@ class JaxModelTests(unittest.TestCase):
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
         )
 
+    def test_member_quota_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=103,
+            optimized_d2d_access_mode="member_quota_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.15,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_member_refresh_floor_fraction=0.05,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
+    def test_member_deficit_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=107,
+            optimized_d2d_access_mode="member_deficit_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.15,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_member_refresh_floor_fraction=0.0,
+            optimized_d2d_member_deficit_decay=0.85,
+            optimized_d2d_member_deficit_weight=0.25,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
     def test_member_fair_utility_prioritizes_zero_participation_members(self):
         probability = jax_models._member_fair_utility_access_probability(
             aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
@@ -1845,6 +1910,116 @@ class JaxModelTests(unittest.TestCase):
             fairness_weight=0.5,
             fairness_exponent=1.0,
             fairness_threshold_fraction=0.5,
+            load_target_factor=1.0,
+            load_allocation_mode="proportional_clip",
+            redistribution_fraction=0.0,
+            redistribution_trigger_ratio=0.95,
+            density_trigger_threshold=1.0,
+            dense_trigger_ratio=0.90,
+            clusterized_devices_fraction=0.0,
+            optimized_success_ewma=jax_models.jnp.asarray(0.0),
+            fixed_success_target=jax_models.jnp.asarray(1.0),
+        )
+        probability = np.asarray(probability)
+
+        self.assertGreater(probability[1], probability[0])
+        self.assertGreater(probability[1], probability[2])
+        self.assertTrue(np.all(probability <= 0.9))
+
+    def test_member_deficit_utility_prioritizes_accumulated_refresh_debt(self):
+        probability = jax_models._member_deficit_utility_access_probability(
+            aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            cluster_sizes=jax_models.jnp.asarray([2, 2, 2]),
+            freshness=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            member_aoi_by_cluster=jax_models.jnp.asarray(
+                [
+                    [10.0, 10.0],
+                    [10.0, 10.0],
+                    [10.0, 10.0],
+                ]
+            ),
+            member_participation_by_cluster=jax_models.jnp.asarray(
+                [
+                    [1, 1],
+                    [1, 1],
+                    [1, 1],
+                ]
+            ),
+            active_member_mask=jax_models.jnp.asarray(
+                [
+                    [True, True],
+                    [True, True],
+                    [True, True],
+                ]
+            ),
+            member_refresh_deficit=jax_models.jnp.asarray([0.0, 5.0, 1.0]),
+            cluster_mask=jax_models.jnp.asarray([True, True, True]),
+            n_channels=2,
+            pcomp=jax_models.jnp.asarray(0.9),
+            fixed_access_probability=jax_models.jnp.asarray(0.2),
+            floor_fraction=0.0,
+            norm_exponent=0.0,
+            cluster_size_exponent=0.0,
+            freshness_exponent=0.0,
+            quota_weight=0.5,
+            quota_exponent=1.0,
+            quota_threshold_fraction=0.0,
+            refresh_floor_fraction=0.0,
+            deficit_weight=0.5,
+            load_target_factor=1.0,
+            load_allocation_mode="proportional_clip",
+            redistribution_fraction=0.0,
+            redistribution_trigger_ratio=0.95,
+            density_trigger_threshold=1.0,
+            dense_trigger_ratio=0.90,
+            clusterized_devices_fraction=0.0,
+            optimized_success_ewma=jax_models.jnp.asarray(0.0),
+            fixed_success_target=jax_models.jnp.asarray(1.0),
+        )
+        probability = np.asarray(probability)
+
+        self.assertGreater(probability[1], probability[2])
+        self.assertGreater(probability[2], probability[0])
+        self.assertTrue(np.all(probability <= 0.9))
+
+    def test_member_quota_utility_reserves_budget_for_zero_participation_members(self):
+        probability = jax_models._member_quota_utility_access_probability(
+            aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            cluster_sizes=jax_models.jnp.asarray([2, 2, 2]),
+            freshness=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            member_aoi_by_cluster=jax_models.jnp.asarray(
+                [
+                    [2.0, 2.0],
+                    [2.0, 20.0],
+                    [2.0, 3.0],
+                ]
+            ),
+            member_participation_by_cluster=jax_models.jnp.asarray(
+                [
+                    [1, 1],
+                    [0, 0],
+                    [1, 1],
+                ]
+            ),
+            active_member_mask=jax_models.jnp.asarray(
+                [
+                    [True, True],
+                    [True, True],
+                    [True, True],
+                ]
+            ),
+            cluster_mask=jax_models.jnp.asarray([True, True, True]),
+            n_channels=2,
+            pcomp=jax_models.jnp.asarray(0.9),
+            fixed_access_probability=jax_models.jnp.asarray(0.2),
+            floor_fraction=0.0,
+            norm_exponent=0.0,
+            cluster_size_exponent=0.0,
+            freshness_exponent=0.0,
+            quota_weight=0.5,
+            quota_exponent=1.0,
+            quota_threshold_fraction=0.5,
+            refresh_floor_fraction=0.0,
             load_target_factor=1.0,
             load_allocation_mode="proportional_clip",
             redistribution_fraction=0.0,
@@ -1948,6 +2123,10 @@ class JaxModelTests(unittest.TestCase):
             {"optimized_d2d_aoi_battery_exponent": -0.1},
             {"optimized_d2d_member_refresh_floor_fraction": -0.1},
             {"optimized_d2d_member_refresh_floor_fraction": 1.1},
+            {"optimized_d2d_member_deficit_decay": -0.1},
+            {"optimized_d2d_member_deficit_decay": 1.1},
+            {"optimized_d2d_member_deficit_weight": -0.1},
+            {"optimized_d2d_member_deficit_weight": 1.1},
         )
         for kwargs in invalid_kwargs:
             with self.subTest(kwargs=kwargs):

@@ -646,6 +646,24 @@ Policy differences:
   failure attribution showed `CH no attempt` dominates stale samples. It keeps
   utility load control but gives refresh-eligible clusters a local minimum
   access probability via `--optimized-d2d-member-refresh-floor-fraction`.
+- `member_quota_utility` makes that test more explicit. It treats
+  `--optimized-d2d-aoi-weight` as a reserved stale-member quota, reduces the
+  base utility contender target by that fraction, and adds a separate
+  refresh-eligible overlay. This gives the experiment a cleaner answer to
+  whether member freshness improves when part of the optimized-D2D access budget
+  is reserved for stale or never-delivered active members.
+- `member_deficit_utility` keeps the quota split but ranks the refresh overlay
+  with a persistent missed-refresh deficit. This is intended for cases where
+  many member AoIs saturate at the same value, making instantaneous stale-tail
+  pressure almost tied across many clusters. The deficit is damped by
+  `--optimized-d2d-member-deficit-weight`; the undamped v2 experiment showed
+  that overly strong deficit ranking can reduce `CH no attempt` but create too
+  many ALOHA collisions.
+
+The detailed physical/Rayleigh member-level comparison is recorded in
+`docs/member_level_d2d_freshness_experiments.md`. Current guidance is to use
+`member_quota_utility` as the member-freshness candidate and keep
+`member_deficit_utility` only as a negative ablation.
 
 The utility Pareto tuning runner is:
 

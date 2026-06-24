@@ -184,6 +184,27 @@ This document records the simulation defaults after the code cleanup.
   probability for refresh-eligible clusters. It remains distributed ALOHA:
   clusters draw locally from a probability, and the floor can increase collision
   risk when many stale clusters become eligible at once.
+- `member_quota_utility` is the explicit quota version of the same hypothesis.
+  When active stale or zero-participation members exist, it splits the optimized
+  D2D CH contender target into a base utility budget and a member-refresh
+  overlay. `--optimized-d2d-aoi-weight` is the reserved refresh quota fraction,
+  and `--optimized-d2d-member-refresh-floor-fraction` remains an optional local
+  floor on the overlay. This tests whether the dominant member-stale cause is
+  truly lack of CH access opportunity rather than the smoother probability
+  blending used by `member_fair_utility`/`member_refresh_utility`.
+- `member_deficit_utility` adds one piece of memory to the explicit quota
+  policy. The optimized-D2D scenario keeps a per-cluster missed-refresh deficit
+  that increases when active stale or zero-participation members are available
+  but the aggregate is not delivered, resets on successful delivery, and decays
+  by `--optimized-d2d-member-deficit-decay`. The deficit is damped by
+  `--optimized-d2d-member-deficit-weight` so it acts as a tie-breaker rather
+  than a hard scheduler; excessive weight can simply trade no-attempt failures
+  for ALOHA collisions. The deficit only ranks the local ALOHA probability
+  overlay; it is not centralized scheduling.
+  See `docs/member_level_d2d_freshness_experiments.md` for the current
+  physical/Rayleigh conclusion: `member_quota_utility` is the useful
+  member-freshness candidate, while `member_deficit_utility` is a negative
+  collision-dominated ablation.
 - AoI is tracked as an output metric for all six scenarios. Non-D2D scenarios
   track per-device AoI and reset a device to `1` after its successful upload.
   D2D scenarios track per-cluster AoI and reset a cluster to `1` after its CH

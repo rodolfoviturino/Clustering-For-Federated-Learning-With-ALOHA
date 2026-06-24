@@ -109,6 +109,9 @@ This document records the simulation defaults after the code cleanup.
 - First-tier HFL aggregation at the CH is a sum of member updates.
 - The thesis figure code applies the BS update as an unscaled SGD step:
   `w <- w - u1 * gradient`.
+- Polling without D2D schedules direct device IDs. Polling with D2D schedules
+  cluster rows and evaluates compute/energy feasibility on the scheduled CH,
+  not on the direct polling user from the non-D2D curve.
 - D2D member availability is ideal by default:
   - `d2d_member_compute_probability=1.0`;
   - `d2d_member_link_success_probability=1.0`.
@@ -163,18 +166,36 @@ This document records the simulation defaults after the code cleanup.
   probability and only raises stale clusters to a bounded minimum probability.
   In both cases, the CH can maintain this age from ACK/no-ACK feedback, and the
   BS only needs to broadcast scalar normalizers.
+- `member_fair_utility` is a member-level ablation. It keeps the base utility
+  allocator and reserves a configurable quota for multi-member clusters whose
+  currently active aggregate contains stale or zero-participation devices.
+  This tests whether member starvation is caused by CH access allocation rather
+  than by clustering alone. It is disabled by default and does not introduce
+  non-IID/FedAvg semantics.
 - AoI is tracked as an output metric for all six scenarios. Non-D2D scenarios
   track per-device AoI and reset a device to `1` after its successful upload.
   D2D scenarios track per-cluster AoI and reset a cluster to `1` after its CH
   aggregate reaches the BS. Otherwise AoI increments by one. The CSV includes
   `<scenario>_aoi_*`, `<scenario>_peak_aoi_*`, `<scenario>_p75_aoi_*`,
   `<scenario>_p90_aoi_*`, `<scenario>_p95_aoi_*`, and stale-fraction columns.
-  The plotter emits the corresponding figures when those columns exist. AoI
-  affects scheduling only when an explicit AoI-enhanced policy is selected.
+  The plotter emits the corresponding figures when those columns exist.
+  The proportional stale-tail fractions use `AoI > 1 + fraction * elapsed_t`
+  so a freshly updated device or cluster with AoI `1` is not stale at early
+  checkpoints. The fixed long-stale diagnostic remains `AoI > 100`.
+- D2D scenarios also report member-level AoI diagnostics over devices in
+  non-singleton D2D clusters. A member-level AoI sample resets only when that
+  device's update is active inside a CH aggregate that reaches the BS;
+  otherwise it increments. These columns expose cases where cluster-level AoI
+  looks fresh because the CH uploads often, while non-CH members are stale
+  because compute, D2D link, or energy feasibility kept them out of delivered
+  aggregates. The CSV uses the
+  `<scenario>_member_*` prefix for these D2D-only diagnostics.
+- AoI affects scheduling only when an explicit AoI-enhanced policy is selected.
 
 These defaults are intended to preserve the thesis figure behavior while fixing
-code bugs such as angle units, unsafe cluster merging, and fragile cluster-array
-inputs.
+code bugs such as angle units, unsafe cluster merging, fragile cluster-array
+inputs, and polling+D2D attempts that were incorrectly coupled to direct
+polling users.
 
 ## Realism Knobs
 
@@ -358,6 +379,30 @@ enabled, and pass the member-to-current-CH decoding draw.
   the aggregate. The deployment interpretation is still distributed: the CH can
   know or estimate its own BS-channel success and battery, while the BS only
   needs to broadcast scalar exponents and normalizers.
+- `--optimized-d2d-access-mode member_fair_utility` reuses the same
+  load-controlled utility allocator, but reserves
+  `optimized_d2d_aoi_weight` of the CH access budget for active aggregates that
+  can refresh stale or zero-participation members:
+
+  ```text
+  base_probability_h = load_control(base_utility_h)
+  member_pressure_h =
+    max(
+      stale_tail(mean_active_member_aoi_h),
+      zero_participation_fraction_h
+    )
+  member_probability_h = load_control(member_pressure_h)
+  p_h = (1 - quota) * base_probability_h + quota * member_probability_h
+  ```
+
+  The pressure is evaluated only for active members inside non-singleton
+  aggregates, because extra CH access cannot refresh a member that failed local
+  compute, D2D link, or energy feasibility in the current round. Current
+  ideal-link runs show this policy can strongly reduce member starvation. In the
+  refreshed physical energy/Rayleigh comparison, the lightest tested weight
+  (`w=0.05 / threshold=0.70`) is the current Pareto candidate, while larger
+  weights show substantial error and energy-efficiency cost. Treat it as a
+  fairness ablation, not as the physical default.
 - `conditional_selective_water_filling` is the default allocator for enhanced
   load-controlled policies. It is intentionally not a centralized scheduler:
   the BS can broadcast only the target load, trigger ratio, redistribution

@@ -32,6 +32,15 @@ SCENARIO_LABELS = {
 ALL_SCENARIOS = tuple(SCENARIO_LABELS)
 D2D_SCENARIOS = ("polling_d2d", "fixed_aloha_d2d", "optimized_aloha_d2d")
 
+SCENARIO_PLOT_STYLES = {
+    "polling": ("#d62728", "-", "o"),
+    "fixed_aloha": ("#2ca02c", "--", "s"),
+    "optimized_aloha": ("#1f77b4", "-.", "^"),
+    "polling_d2d": ("#1f77b4", "-", "o"),
+    "fixed_aloha_d2d": ("#ff7f0e", "--", "s"),
+    "optimized_aloha_d2d": ("#2ca02c", "-.", "^"),
+}
+
 THESIS_FIGURE_15_STYLES = (
     ("polling", "Polling", "red", "-", "o"),
     ("polling_d2d", "Polling with D2D", "red", "--", "o"),
@@ -80,16 +89,29 @@ def _plot_metric(frame, metric_name, scenarios, ylabel, title, output_stem, form
         return []
 
     fig, axis = plt.subplots(figsize=(9.0, 5.0))
+    marker_stride = 1 if len(x_values) <= 20 else max(1, len(x_values) // 10)
 
-    for scenario in available_scenarios:
+    for scenario_index, scenario in enumerate(available_scenarios):
         mean_column = f"{scenario}_{metric_name}_mean"
         ci_column = f"{scenario}_{metric_name}_ci95"
         y_values = frame[mean_column].to_numpy(dtype=float)
+        color, linestyle, marker = SCENARIO_PLOT_STYLES.get(
+            scenario,
+            (None, "-", None),
+        )
+        markevery = None
+        if marker is not None:
+            markevery = (scenario_index % marker_stride, marker_stride)
 
         line = axis.plot(
             x_values,
             y_values,
+            color=color,
+            linestyle=linestyle,
+            marker=marker,
+            markevery=markevery,
             linewidth=2.0,
+            markersize=4.5,
             label=SCENARIO_LABELS.get(scenario, scenario),
         )[0]
 
@@ -415,7 +437,7 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
             frame,
             metric_name="stale_fraction_50",
             scenarios=ALL_SCENARIOS,
-            ylabel="Fraction with AoI > 50% of elapsed t",
+            ylabel="Fraction with AoI > 1 + 50% of elapsed t",
             title="Stale-tail fraction over FL iterations",
             output_stem=base_stem.with_name(
                 f"{base_stem.name}_stale_fraction_50"
@@ -428,7 +450,7 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
             frame,
             metric_name="stale_fraction_75",
             scenarios=ALL_SCENARIOS,
-            ylabel="Fraction with AoI > 75% of elapsed t",
+            ylabel="Fraction with AoI > 1 + 75% of elapsed t",
             title="Severe stale-tail fraction over FL iterations",
             output_stem=base_stem.with_name(
                 f"{base_stem.name}_stale_fraction_75"
@@ -445,6 +467,54 @@ def plot_sweep_csv(csv_path, output_dir=None, formats=("png", "pdf")):
             title="Long-stale fraction over FL iterations",
             output_stem=base_stem.with_name(
                 f"{base_stem.name}_stale_fraction_100"
+            ),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="member_aoi",
+            scenarios=D2D_SCENARIOS,
+            ylabel="Mean AoI for D2D-clustered devices",
+            title="D2D-Clustered Device Age of Information",
+            output_stem=base_stem.with_name(f"{base_stem.name}_member_aoi"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="member_p95_aoi",
+            scenarios=D2D_SCENARIOS,
+            ylabel="95th percentile AoI for D2D-clustered devices",
+            title="D2D-Clustered Device 95th Percentile AoI",
+            output_stem=base_stem.with_name(f"{base_stem.name}_member_p95_aoi"),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="member_stale_fraction_75",
+            scenarios=D2D_SCENARIOS,
+            ylabel="Fraction of D2D-clustered devices with AoI > 1 + 75% of elapsed t",
+            title="D2D-Clustered Device Stale Fraction",
+            output_stem=base_stem.with_name(
+                f"{base_stem.name}_member_stale_fraction_75"
+            ),
+            formats=formats,
+        )
+    )
+    generated_paths.extend(
+        _plot_metric(
+            frame,
+            metric_name="member_zero_participation_fraction",
+            scenarios=D2D_SCENARIOS,
+            ylabel="Fraction of D2D-clustered devices with zero delivered updates",
+            title="D2D-Clustered Device Zero-Participation Fraction",
+            output_stem=base_stem.with_name(
+                f"{base_stem.name}_member_zero_participation_fraction"
             ),
             formats=formats,
         )

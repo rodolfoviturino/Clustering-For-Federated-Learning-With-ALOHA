@@ -627,6 +627,21 @@ Policy differences:
   weighting the tail by CH-BS success probability and current CH battery, so it
   is the next test when plain AoI quota lowers freshness metrics but damages
   convergence or energy efficiency.
+- `member_fair_utility` reserves part of the optimized-D2D load budget for
+  multi-member active aggregates containing stale or zero-participation D2D
+  members. It is the current ablation for testing whether optimized D2D improves
+  aggregate quality while starving some member devices. Ideal-link `K=1000`,
+  `rounds=100` runs support `w=0.15 / threshold=0.70` as the cleaner Pareto
+  point (`member_aoi=46.451`, `member_zero=0.163`,
+  `final_error=4.018e-07`) and `w=0.25 / threshold=0.70` as the stronger
+  fairness ablation (`member_aoi=45.010`, `member_zero=0.134`,
+  `final_error=8.758e-07`). Physical energy/Rayleigh runs now have a refreshed
+  `utility` baseline with member columns. In that path, `w=0.05 /
+  threshold=0.70` is the only current member-fair Pareto candidate
+  (`member_aoi=60.541` versus `62.043`, `member_zero=0.393` versus `0.431`,
+  `final_error=3.066e-07` versus `1.603e-07`, `energy_efficiency=817.898`
+  versus `877.028`). Larger weights reduce freshness metrics more but are not
+  physical defaults because convergence and energy efficiency degrade quickly.
 
 The utility Pareto tuning runner is:
 
@@ -699,12 +714,23 @@ The returned `JaxTraceResult` contains:
 - `p90_aoi`: `float[checkpoints, 6]`.
 - `p95_aoi`: `float[checkpoints, 6]`.
 - `stale_fraction_50`: `float[checkpoints, 6]`, fraction with AoI greater
-  than 50 percent of the elapsed iteration count.
+  than `1 + 50%` of the elapsed iteration count.
 - `stale_fraction_75`: `float[checkpoints, 6]`, fraction with AoI greater
-  than 75 percent of the elapsed iteration count.
+  than `1 + 75%` of the elapsed iteration count.
 - `stale_fraction_100`: `float[checkpoints, 6]`, fraction with AoI greater
   than 100 rounds.
 - `checkpoints`: `int32[checkpoints]`.
+- `d2d_member_mean_aoi`, `d2d_member_peak_aoi`, `d2d_member_p75_aoi`,
+  `d2d_member_p90_aoi`, `d2d_member_p95_aoi`: `float[checkpoints, 3]`,
+  member-level AoI over devices in non-singleton D2D clusters.
+- `d2d_member_stale_fraction_50`, `d2d_member_stale_fraction_75`,
+  `d2d_member_stale_fraction_100`: `float[checkpoints, 3]`, member-level
+  stale-tail fractions using the same thresholds as the cluster/device AoI
+  metrics.
+- `d2d_member_participation_p05`,
+  `d2d_member_zero_participation_fraction`: `float[checkpoints, 3]`,
+  lower-tail and zero-count delivered-update participation diagnostics for
+  devices in non-singleton D2D clusters.
 
 Cluster quality scalars such as CH row count, singleton count,
 non-singleton D2D cluster count, clustered-device count, mean cluster size, and
@@ -792,6 +818,10 @@ That command writes:
 - `Runs/gpu_smoke/results_peak_aoi.png` and `.pdf` when peak-AoI columns exist.
 - `Runs/gpu_smoke/results_p75_aoi.png`, `results_p90_aoi.png`,
   `results_p95_aoi.png`, and stale-fraction plots when those columns exist.
+- `Runs/gpu_smoke/results_member_aoi.png`, `results_member_p95_aoi.png`,
+  `results_member_stale_fraction_75.png`, and
+  `results_member_zero_participation_fraction.png` when D2D member-level
+  columns exist.
 
 The thesis-style figure plots every checkpoint saved in the CSV. Omit
 `--checkpoints` to save and plot the full curve for every iteration

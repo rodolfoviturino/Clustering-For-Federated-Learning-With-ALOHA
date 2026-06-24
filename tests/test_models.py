@@ -53,6 +53,26 @@ class JaxModelTests(unittest.TestCase):
         stale_fraction_50 = np.asarray(result.stale_fraction_50)
         stale_fraction_75 = np.asarray(result.stale_fraction_75)
         stale_fraction_100 = np.asarray(result.stale_fraction_100)
+        d2d_member_mean_aoi = np.asarray(result.d2d_member_mean_aoi)
+        d2d_member_peak_aoi = np.asarray(result.d2d_member_peak_aoi)
+        d2d_member_p75_aoi = np.asarray(result.d2d_member_p75_aoi)
+        d2d_member_p90_aoi = np.asarray(result.d2d_member_p90_aoi)
+        d2d_member_p95_aoi = np.asarray(result.d2d_member_p95_aoi)
+        d2d_member_stale_fraction_50 = np.asarray(
+            result.d2d_member_stale_fraction_50
+        )
+        d2d_member_stale_fraction_75 = np.asarray(
+            result.d2d_member_stale_fraction_75
+        )
+        d2d_member_stale_fraction_100 = np.asarray(
+            result.d2d_member_stale_fraction_100
+        )
+        d2d_member_participation_p05 = np.asarray(
+            result.d2d_member_participation_p05
+        )
+        d2d_member_zero_participation_fraction = np.asarray(
+            result.d2d_member_zero_participation_fraction
+        )
 
         self.assertEqual(error_norms.shape, (2, 6))
         self.assertEqual(uploads.shape, (2, 6))
@@ -64,6 +84,16 @@ class JaxModelTests(unittest.TestCase):
         self.assertEqual(stale_fraction_50.shape, (2, 6))
         self.assertEqual(stale_fraction_75.shape, (2, 6))
         self.assertEqual(stale_fraction_100.shape, (2, 6))
+        self.assertEqual(d2d_member_mean_aoi.shape, (2, 3))
+        self.assertEqual(d2d_member_peak_aoi.shape, (2, 3))
+        self.assertEqual(d2d_member_p75_aoi.shape, (2, 3))
+        self.assertEqual(d2d_member_p90_aoi.shape, (2, 3))
+        self.assertEqual(d2d_member_p95_aoi.shape, (2, 3))
+        self.assertEqual(d2d_member_stale_fraction_50.shape, (2, 3))
+        self.assertEqual(d2d_member_stale_fraction_75.shape, (2, 3))
+        self.assertEqual(d2d_member_stale_fraction_100.shape, (2, 3))
+        self.assertEqual(d2d_member_participation_p05.shape, (2, 3))
+        self.assertEqual(d2d_member_zero_participation_fraction.shape, (2, 3))
         self.assertTrue(np.all(np.isfinite(error_norms)))
         self.assertTrue(np.all(uploads >= 0))
         self.assertTrue(np.all(np.isfinite(mean_aoi)))
@@ -74,17 +104,40 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(stale_fraction_50)))
         self.assertTrue(np.all(np.isfinite(stale_fraction_75)))
         self.assertTrue(np.all(np.isfinite(stale_fraction_100)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_mean_aoi)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_peak_aoi)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_p75_aoi)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_p90_aoi)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_p95_aoi)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_stale_fraction_50)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_stale_fraction_75)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_stale_fraction_100)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_participation_p05)))
+        self.assertTrue(np.all(np.isfinite(d2d_member_zero_participation_fraction)))
         self.assertTrue(np.all(mean_aoi >= 1.0))
         self.assertTrue(np.all(peak_aoi >= 1.0))
         self.assertTrue(np.all(p75_aoi >= 1.0))
         self.assertTrue(np.all(p90_aoi >= 1.0))
         self.assertTrue(np.all(p95_aoi >= 1.0))
+        self.assertTrue(np.all(d2d_member_mean_aoi >= 1.0))
+        self.assertTrue(np.all(d2d_member_peak_aoi >= 1.0))
+        self.assertTrue(np.all(d2d_member_p75_aoi >= 1.0))
+        self.assertTrue(np.all(d2d_member_p90_aoi >= 1.0))
+        self.assertTrue(np.all(d2d_member_p95_aoi >= 1.0))
         self.assertTrue(np.all(stale_fraction_50 >= 0.0))
         self.assertTrue(np.all(stale_fraction_75 >= 0.0))
         self.assertTrue(np.all(stale_fraction_100 >= 0.0))
+        self.assertTrue(np.all(d2d_member_stale_fraction_50 >= 0.0))
+        self.assertTrue(np.all(d2d_member_stale_fraction_75 >= 0.0))
+        self.assertTrue(np.all(d2d_member_stale_fraction_100 >= 0.0))
+        self.assertTrue(np.all(d2d_member_zero_participation_fraction >= 0.0))
         self.assertTrue(np.all(stale_fraction_50 <= 1.0))
         self.assertTrue(np.all(stale_fraction_75 <= 1.0))
         self.assertTrue(np.all(stale_fraction_100 <= 1.0))
+        self.assertTrue(np.all(d2d_member_stale_fraction_50 <= 1.0))
+        self.assertTrue(np.all(d2d_member_stale_fraction_75 <= 1.0))
+        self.assertTrue(np.all(d2d_member_stale_fraction_100 <= 1.0))
+        self.assertTrue(np.all(d2d_member_zero_participation_fraction <= 1.0))
 
     def test_legacy_error_calculator_tuple_shape(self):
         result = error_calculator(
@@ -124,6 +177,61 @@ class JaxModelTests(unittest.TestCase):
 
         self.assertEqual(thesis_default[10], 4)
         self.assertEqual(no_member_links[10], 2)
+
+    def test_polling_d2d_attempt_uses_scheduled_cluster_head(self):
+        clusters = prepare_clusters_for_jax([[1, 2], [0, 3]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=1,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=1,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=7,
+            device_battery=jax_models.jnp.asarray([0.0, 100.0, 100.0, 100.0]),
+            energy_drain_mode="dynamic",
+            battery_feasibility_mode="required_energy",
+            energy_model="constant",
+            energy_direct_bs_cost=0.01,
+            energy_ch_bs_cost=0.01,
+            energy_d2d_member_cost=0.0,
+            checkpoints=[1],
+        )
+
+        uploads = np.asarray(result.successful_uploads)[0]
+        clusterhead_uploads = np.asarray(result.successful_clusterhead_uploads)[0]
+
+        self.assertEqual(uploads[0], 0)
+        self.assertEqual(uploads[3], 2)
+        self.assertEqual(clusterhead_uploads[0], 1)
+
+    def test_d2d_member_aoi_exposes_inactive_members(self):
+        clusters = prepare_clusters_for_jax([[0, 1, 2]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=3,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=1,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=2,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=11,
+            d2d_member_link_success_probability=0.0,
+            checkpoints=[2],
+        )
+
+        cluster_peak_aoi = np.asarray(result.peak_aoi)[0, 3]
+        member_peak_aoi = np.asarray(result.d2d_member_peak_aoi)[0, 0]
+        member_zero_fraction = np.asarray(
+            result.d2d_member_zero_participation_fraction
+        )[0, 0]
+
+        self.assertEqual(cluster_peak_aoi, 1.0)
+        self.assertGreater(member_peak_aoi, cluster_peak_aoi)
+        self.assertGreater(member_zero_fraction, 0.0)
 
     def test_ch_bs_success_probability_uses_channel_and_battery(self):
         jnp = jax_models.jnp
@@ -1568,6 +1676,88 @@ class JaxModelTests(unittest.TestCase):
         self.assertEqual(np.asarray(result.p90_aoi).shape, (2, 6))
         self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
         self.assertTrue(np.all(np.isfinite(np.asarray(result.p90_aoi))))
+
+    def test_member_fair_utility_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=97,
+            optimized_d2d_access_mode="member_fair_utility",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.25,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
+    def test_member_fair_utility_prioritizes_zero_participation_members(self):
+        probability = jax_models._member_fair_utility_access_probability(
+            aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            cluster_sizes=jax_models.jnp.asarray([2, 2, 2]),
+            freshness=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            member_aoi_by_cluster=jax_models.jnp.asarray(
+                [
+                    [2.0, 2.0],
+                    [2.0, 20.0],
+                    [2.0, 3.0],
+                ]
+            ),
+            member_participation_by_cluster=jax_models.jnp.asarray(
+                [
+                    [1, 1],
+                    [0, 0],
+                    [1, 1],
+                ]
+            ),
+            active_member_mask=jax_models.jnp.asarray(
+                [
+                    [True, True],
+                    [True, True],
+                    [True, True],
+                ]
+            ),
+            cluster_mask=jax_models.jnp.asarray([True, True, True]),
+            n_channels=2,
+            pcomp=jax_models.jnp.asarray(0.9),
+            fixed_access_probability=jax_models.jnp.asarray(0.2),
+            floor_fraction=0.0,
+            norm_exponent=0.0,
+            cluster_size_exponent=0.0,
+            freshness_exponent=0.0,
+            fairness_weight=0.5,
+            fairness_exponent=1.0,
+            fairness_threshold_fraction=0.5,
+            load_target_factor=1.0,
+            load_allocation_mode="proportional_clip",
+            redistribution_fraction=0.0,
+            redistribution_trigger_ratio=0.95,
+            density_trigger_threshold=1.0,
+            dense_trigger_ratio=0.90,
+            clusterized_devices_fraction=0.0,
+            optimized_success_ewma=jax_models.jnp.asarray(0.0),
+            fixed_success_target=jax_models.jnp.asarray(1.0),
+        )
+        probability = np.asarray(probability)
+
+        self.assertGreater(probability[1], probability[0])
+        self.assertGreater(probability[1], probability[2])
+        self.assertTrue(np.all(probability <= 0.9))
 
     def test_aoi_quality_tail_utility_prefers_feasible_high_quality_tail(self):
         probability = jax_models._aoi_tail_utility_access_probability(

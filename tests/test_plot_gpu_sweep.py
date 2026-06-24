@@ -1,5 +1,5 @@
 import csv
-import tempfile
+import shutil
 import unittest
 from pathlib import Path
 
@@ -15,8 +15,11 @@ class PlotGpuSweepTests(unittest.TestCase):
         `<scenario>_aoi_*` and `<scenario>_peak_aoi_*` columns, it should emit
         the corresponding figures when regenerating plots from an existing run.
         """
-        with tempfile.TemporaryDirectory() as tmpdir:
-            output_dir = Path(tmpdir)
+        output_dir = Path.cwd() / "Runs" / "_test_plot_gpu_sweep"
+        if output_dir.exists():
+            shutil.rmtree(output_dir)
+        output_dir.mkdir(parents=True)
+        try:
             csv_path = output_dir / "results.csv"
             rows = [
                 {
@@ -42,6 +45,14 @@ class PlotGpuSweepTests(unittest.TestCase):
                     "polling_stale_fraction_75_ci95": 0.0,
                     "polling_stale_fraction_100_mean": 0.0,
                     "polling_stale_fraction_100_ci95": 0.0,
+                    "polling_d2d_member_aoi_mean": 1.4,
+                    "polling_d2d_member_aoi_ci95": 0.0,
+                    "polling_d2d_member_p95_aoi_mean": 2.0,
+                    "polling_d2d_member_p95_aoi_ci95": 0.0,
+                    "polling_d2d_member_stale_fraction_75_mean": 0.20,
+                    "polling_d2d_member_stale_fraction_75_ci95": 0.0,
+                    "polling_d2d_member_zero_participation_fraction_mean": 0.30,
+                    "polling_d2d_member_zero_participation_fraction_ci95": 0.0,
                 },
                 {
                     "t": 2,
@@ -66,6 +77,14 @@ class PlotGpuSweepTests(unittest.TestCase):
                     "polling_stale_fraction_75_ci95": 0.0,
                     "polling_stale_fraction_100_mean": 0.0,
                     "polling_stale_fraction_100_ci95": 0.0,
+                    "polling_d2d_member_aoi_mean": 1.8,
+                    "polling_d2d_member_aoi_ci95": 0.0,
+                    "polling_d2d_member_p95_aoi_mean": 3.0,
+                    "polling_d2d_member_p95_aoi_ci95": 0.0,
+                    "polling_d2d_member_stale_fraction_75_mean": 0.25,
+                    "polling_d2d_member_stale_fraction_75_ci95": 0.0,
+                    "polling_d2d_member_zero_participation_fraction_mean": 0.35,
+                    "polling_d2d_member_zero_participation_fraction_ci95": 0.0,
                 },
             ]
             with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -84,6 +103,15 @@ class PlotGpuSweepTests(unittest.TestCase):
             self.assertIn("results_stale_fraction_50.png", generated_names)
             self.assertIn("results_stale_fraction_75.png", generated_names)
             self.assertIn("results_stale_fraction_100.png", generated_names)
+            self.assertIn("results_member_aoi.png", generated_names)
+            self.assertIn("results_member_p95_aoi.png", generated_names)
+            self.assertIn("results_member_stale_fraction_75.png", generated_names)
+            self.assertIn(
+                "results_member_zero_participation_fraction.png",
+                generated_names,
+            )
+        finally:
+            shutil.rmtree(output_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

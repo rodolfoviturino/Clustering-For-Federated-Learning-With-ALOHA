@@ -289,6 +289,16 @@ def run_gpu_sweep(args):
             trace.stale_fraction_50,
             trace.stale_fraction_75,
             trace.stale_fraction_100,
+            trace.d2d_member_mean_aoi,
+            trace.d2d_member_peak_aoi,
+            trace.d2d_member_p75_aoi,
+            trace.d2d_member_p90_aoi,
+            trace.d2d_member_p95_aoi,
+            trace.d2d_member_stale_fraction_50,
+            trace.d2d_member_stale_fraction_75,
+            trace.d2d_member_stale_fraction_100,
+            trace.d2d_member_participation_p05,
+            trace.d2d_member_zero_participation_fraction,
             trace.clusterized_devices_rate,
             cluster_quality,
         )
@@ -313,6 +323,16 @@ def run_gpu_sweep(args):
         stale_fraction_50,
         stale_fraction_75,
         stale_fraction_100,
+        d2d_member_mean_aoi,
+        d2d_member_peak_aoi,
+        d2d_member_p75_aoi,
+        d2d_member_p90_aoi,
+        d2d_member_p95_aoi,
+        d2d_member_stale_fraction_50,
+        d2d_member_stale_fraction_75,
+        d2d_member_stale_fraction_100,
+        d2d_member_participation_p05,
+        d2d_member_zero_participation_fraction,
         cluster_rates,
         cluster_quality,
     ) = batched_runner(seeds)
@@ -335,6 +355,18 @@ def run_gpu_sweep(args):
     stale_fraction_50 = np.asarray(stale_fraction_50)
     stale_fraction_75 = np.asarray(stale_fraction_75)
     stale_fraction_100 = np.asarray(stale_fraction_100)
+    d2d_member_mean_aoi = np.asarray(d2d_member_mean_aoi)
+    d2d_member_peak_aoi = np.asarray(d2d_member_peak_aoi)
+    d2d_member_p75_aoi = np.asarray(d2d_member_p75_aoi)
+    d2d_member_p90_aoi = np.asarray(d2d_member_p90_aoi)
+    d2d_member_p95_aoi = np.asarray(d2d_member_p95_aoi)
+    d2d_member_stale_fraction_50 = np.asarray(d2d_member_stale_fraction_50)
+    d2d_member_stale_fraction_75 = np.asarray(d2d_member_stale_fraction_75)
+    d2d_member_stale_fraction_100 = np.asarray(d2d_member_stale_fraction_100)
+    d2d_member_participation_p05 = np.asarray(d2d_member_participation_p05)
+    d2d_member_zero_participation_fraction = np.asarray(
+        d2d_member_zero_participation_fraction
+    )
     cluster_rates = np.asarray(cluster_rates)
     cluster_quality = np.asarray(cluster_quality)
 
@@ -453,6 +485,28 @@ def run_gpu_sweep(args):
             )
             row[f"{scenario_name}_clusterhead_energy_used_mean"] = mean
             row[f"{scenario_name}_clusterhead_energy_used_ci95"] = ci95
+
+            d2d_member_metrics = (
+                ("member_aoi", d2d_member_mean_aoi),
+                ("member_peak_aoi", d2d_member_peak_aoi),
+                ("member_p75_aoi", d2d_member_p75_aoi),
+                ("member_p90_aoi", d2d_member_p90_aoi),
+                ("member_p95_aoi", d2d_member_p95_aoi),
+                ("member_stale_fraction_50", d2d_member_stale_fraction_50),
+                ("member_stale_fraction_75", d2d_member_stale_fraction_75),
+                ("member_stale_fraction_100", d2d_member_stale_fraction_100),
+                ("member_participation_p05", d2d_member_participation_p05),
+                (
+                    "member_zero_participation_fraction",
+                    d2d_member_zero_participation_fraction,
+                ),
+            )
+            for metric_name, metric_values in d2d_member_metrics:
+                mean, ci95 = _confidence_interval_95(
+                    metric_values[:, checkpoint_index, d2d_index]
+                )
+                row[f"{scenario_name}_{metric_name}_mean"] = mean
+                row[f"{scenario_name}_{metric_name}_ci95"] = ci95
 
         rows.append(row)
 
@@ -1145,6 +1199,7 @@ def build_parser():
             "aoi_floor_utility",
             "aoi_tail_utility",
             "aoi_quality_tail_utility",
+            "member_fair_utility",
         ),
         default="norm",
         help=(
@@ -1159,7 +1214,9 @@ def build_parser():
             "reserves part of the load budget for stale-tail clusters; "
             "aoi_quality_tail_utility spends that reserved tail budget on "
             "stale clusters whose CH also has good BS-channel success and "
-            "remaining battery."
+            "remaining battery; member_fair_utility reserves part of the load "
+            "budget for clusters whose active aggregate can refresh stale or "
+            "zero-participation D2D members."
         ),
     )
     parser.add_argument(
@@ -1342,7 +1399,9 @@ def build_parser():
             "maximum stale floor as a fraction of fixed-D2D access probability; "
             "for aoi_tail_utility it is a reserved load-budget fraction clipped "
             "to [0, 1]; for aoi_quality_tail_utility it is the same reserved "
-            "fraction, but assigned by AoI, CH-BS channel quality, and CH battery."
+            "fraction, but assigned by AoI, CH-BS channel quality, and CH battery; "
+            "for member_fair_utility it is the reserved load-budget fraction for "
+            "active aggregates containing stale or zero-participation members."
         ),
     )
     parser.add_argument(

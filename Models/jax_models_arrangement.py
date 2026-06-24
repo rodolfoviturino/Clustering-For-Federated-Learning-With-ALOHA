@@ -102,6 +102,16 @@ class JaxTraceResult(NamedTuple):
     stale_fraction_75: Any
     stale_fraction_100: Any
     checkpoints: Any
+    d2d_member_mean_aoi: Any
+    d2d_member_peak_aoi: Any
+    d2d_member_p75_aoi: Any
+    d2d_member_p90_aoi: Any
+    d2d_member_p95_aoi: Any
+    d2d_member_stale_fraction_50: Any
+    d2d_member_stale_fraction_75: Any
+    d2d_member_stale_fraction_100: Any
+    d2d_member_participation_p05: Any
+    d2d_member_zero_participation_fraction: Any
 
 
 D2D_ENERGY_EFFICIENCY_PROFILES = {
@@ -974,6 +984,160 @@ def _aoi_tail_utility_access_probability(
     return jnp.where(tail_active, bounded_probability, base_probability)
 
 
+def _member_fair_utility_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    member_aoi_by_cluster,
+    member_participation_by_cluster,
+    active_member_mask,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    fairness_weight,
+    fairness_exponent,
+    fairness_threshold_fraction,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Reserve access load for clusters that can refresh stale D2D members.
+
+    Cluster-level AoI resets whenever the CH aggregate reaches the BS, which can
+    hide members that rarely enter delivered aggregates.  This policy keeps the
+    normal utility allocator as the base decision, then reserves a configurable
+    probability quota for multi-member clusters whose currently active aggregate
+    contains stale or never-delivered members.
+
+    Deployment interpretation:
+    - The CH can maintain member ACK age and delivered-update counts from local
+      aggregate membership and BS ACK feedback.
+    - The policy still outputs a local ALOHA access probability; it does not
+      centrally schedule CHs or require per-member BS scheduling.
+    - Only active members are scored.  If a member cannot compute, has no D2D
+      link, or lacks energy this round, extra CH access cannot refresh it.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    fairness_quota = jnp.clip(jnp.asarray(fairness_weight, dtype=dtype), 0.0, 1.0)
+    fairness_exponent = jnp.asarray(fairness_exponent, dtype=dtype)
+    fairness_threshold_fraction = jnp.asarray(
+        fairness_threshold_fraction,
+        dtype=dtype,
+    )
+
+    base_utility = _cluster_utility_scores(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        cluster_mask=cluster_mask,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+    )
+    base_probability = _load_controlled_access_from_utility(
+        utility=base_utility,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+    active_mask = active_member_mask & cluster_mask[:, None]
+    active_counts = jnp.sum(active_mask, axis=1).astype(dtype)
+    eligible_mask = cluster_mask & (active_counts > 1.0)
+    safe_counts = jnp.maximum(active_counts, jnp.asarray(1.0, dtype=dtype))
+
+    member_aoi = member_aoi_by_cluster.astype(dtype)
+    active_member_aoi = jnp.where(active_mask, member_aoi, 0.0)
+    mean_member_aoi = jnp.sum(active_member_aoi, axis=1) / safe_counts
+    active_mean_member_aoi = jnp.where(eligible_mask, mean_member_aoi, 0.0)
+    normalized_member_aoi = (
+        (active_mean_member_aoi + eps)
+        / (jnp.max(active_mean_member_aoi) + eps)
+    )
+    remaining_tail_width = jnp.maximum(1.0 - fairness_threshold_fraction, eps)
+    member_aoi_tail_pressure = jnp.clip(
+        (normalized_member_aoi - fairness_threshold_fraction)
+        / remaining_tail_width,
+        0.0,
+        1.0,
+    )
+
+    zero_participation = (
+        member_participation_by_cluster.astype(dtype)
+        <= jnp.asarray(0.0, dtype=dtype)
+    )
+    zero_participation_fraction = (
+        jnp.sum((zero_participation & active_mask).astype(dtype), axis=1)
+        / safe_counts
+    )
+    fairness_pressure = jnp.maximum(
+        member_aoi_tail_pressure,
+        zero_participation_fraction,
+    )
+    fairness_priority = jnp.where(
+        eligible_mask,
+        fairness_pressure**fairness_exponent,
+        0.0,
+    )
+    max_priority = jnp.max(fairness_priority)
+    min_priority = jnp.min(jnp.where(eligible_mask, fairness_priority, max_priority))
+    has_differentiated_fairness = (max_priority - min_priority) > eps
+    has_positive_fairness = (
+        jnp.sum(jnp.where(eligible_mask, fairness_priority, 0.0)) > eps
+    )
+    fairness_active = has_differentiated_fairness & has_positive_fairness
+
+    fairness_probability = _load_controlled_access_from_utility(
+        utility=jnp.where(fairness_active, fairness_priority, base_utility),
+        cluster_mask=jnp.where(fairness_active, eligible_mask, cluster_mask),
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=jnp.asarray(0.0, dtype=dtype),
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+    mixed_probability = (1.0 - fairness_quota) * base_probability + (
+        fairness_quota * fairness_probability
+    )
+    bounded_probability = jnp.where(
+        cluster_mask,
+        jnp.clip(mixed_probability, 0.0, pcomp),
+        0.0,
+    )
+    return jnp.where(fairness_active, bounded_probability, base_probability)
+
+
 def _load_controlled_access_from_utility(
     utility,
     cluster_mask,
@@ -1711,12 +1875,13 @@ def error_calculator_trace_jax(
         "aoi_floor_utility",
         "aoi_tail_utility",
         "aoi_quality_tail_utility",
+        "member_fair_utility",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
             "'max_weight', 'hybrid', 'adaptive_diversity', or "
             "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'/"
-            "'aoi_quality_tail_utility'"
+            "'aoi_quality_tail_utility'/'member_fair_utility'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -1990,6 +2155,18 @@ def error_calculator_trace_jax(
 
     member_positions = jnp.arange(max_cluster_size, dtype=jnp.int32)[None, :]
     member_mask = member_positions < cluster_sizes[:, None]
+    d2d_member_device_counts = jnp.zeros(k_devices, dtype=jnp.int32).at[
+        safe_members.reshape(-1)
+    ].add(
+        (
+            member_mask
+            & cluster_mask[:, None]
+            & (cluster_sizes[:, None] > 1)
+        )
+        .reshape(-1)
+        .astype(jnp.int32)
+    )
+    d2d_member_device_mask = d2d_member_device_counts > 0
     cluster_heads = jnp.where(cluster_mask, cluster_members[:, 0], 0)
     coords = None if device_coords is None else jnp.asarray(device_coords, dtype=dtype)
     if coords is None or device_radius is None:
@@ -2223,6 +2400,54 @@ def error_calculator_trace_jax(
         required = ch_required_energy_for_heads(heads, active_member_mask)
         return cluster_mask & (scenario_battery[heads] >= required)
 
+    def masked_percentile(values, mask, percentile):
+        # values: float[scenario_count, item_count], integer-valued samples.
+        # mask: bool[scenario_count, item_count], true for real samples.
+        # AoI and participation counts are bounded by max_iterations_t + 1.  A
+        # histogram avoids sorting thousands of devices/clusters inside every
+        # scan step, which matters for large-K GPU sweeps.
+        histogram_length = max_iterations_t + 2
+
+        def one_row_percentile(row_values, row_mask):
+            ages = jnp.clip(
+                row_values.astype(jnp.int32),
+                0,
+                histogram_length - 1,
+            )
+            weights = row_mask.astype(jnp.int32)
+            histogram = jnp.bincount(
+                ages,
+                weights=weights,
+                length=histogram_length,
+            )
+            sample_count = jnp.sum(weights)
+            target_count = jnp.ceil(
+                percentile * sample_count.astype(values.dtype)
+            ).astype(jnp.int32)
+            cumulative = jnp.cumsum(histogram)
+            value = jnp.argmax(cumulative >= target_count).astype(values.dtype)
+            return jnp.where(sample_count > 0, value, 0.0)
+
+        return jax.vmap(one_row_percentile)(values, mask)
+
+    def masked_fraction_above(values, mask, threshold):
+        # values: float[scenario_count, item_count], AoI samples.
+        # threshold: scalar AoI age.  The output is a fraction in [0, 1].
+        sample_count = jnp.sum(mask.astype(values.dtype), axis=1)
+        stale_count = jnp.sum(
+            (values > threshold).astype(values.dtype) * mask.astype(values.dtype),
+            axis=1,
+        )
+        return jnp.where(sample_count > 0.0, stale_count / sample_count, 0.0)
+
+    def masked_zero_fraction(values, mask):
+        sample_count = jnp.sum(mask.astype(values.dtype), axis=1)
+        zero_count = jnp.sum(
+            (values == 0).astype(values.dtype) * mask.astype(values.dtype),
+            axis=1,
+        )
+        return jnp.where(sample_count > 0.0, zero_count / sample_count, 0.0)
+
     def scenario_aoi_summary(non_d2d_aoi, d2d_aoi, current_iteration):
         d2d_denominator = jnp.maximum(
             active_clusterhead_count,
@@ -2236,46 +2461,6 @@ def error_calculator_trace_jax(
         non_d2d_mask = jnp.ones(non_d2d_aoi.shape, dtype=jnp.bool_)
         d2d_mask = jnp.broadcast_to(cluster_mask[None, :], d2d_aoi.shape)
 
-        def masked_percentile(values, mask, percentile):
-            # values: float[scenario_count, item_count], AoI samples.
-            # mask: bool[scenario_count, item_count], true for real samples.
-            # AoI is integer-valued and bounded by max_iterations_t + 1.  A
-            # histogram avoids sorting thousands of devices/clusters inside
-            # every scan step, which matters for large-K GPU sweeps.
-            histogram_length = max_iterations_t + 2
-
-            def one_row_percentile(row_values, row_mask):
-                ages = jnp.clip(
-                    row_values.astype(jnp.int32),
-                    0,
-                    histogram_length - 1,
-                )
-                weights = row_mask.astype(jnp.int32)
-                histogram = jnp.bincount(
-                    ages,
-                    weights=weights,
-                    length=histogram_length,
-                )
-                sample_count = jnp.sum(weights)
-                target_count = jnp.ceil(
-                    percentile * sample_count.astype(values.dtype)
-                ).astype(jnp.int32)
-                cumulative = jnp.cumsum(histogram)
-                value = jnp.argmax(cumulative >= target_count).astype(values.dtype)
-                return jnp.where(sample_count > 0, value, 0.0)
-
-            return jax.vmap(one_row_percentile)(values, mask)
-
-        def masked_fraction_above(values, mask, threshold):
-            # values: float[scenario_count, item_count], AoI samples.
-            # threshold: scalar AoI age.  The output is a fraction in [0, 1].
-            sample_count = jnp.sum(mask.astype(values.dtype), axis=1)
-            stale_count = jnp.sum(
-                (values > threshold).astype(values.dtype) * mask.astype(values.dtype),
-                axis=1,
-            )
-            return jnp.where(sample_count > 0.0, stale_count / sample_count, 0.0)
-
         p75_non_d2d = masked_percentile(non_d2d_aoi, non_d2d_mask, 0.75)
         p75_d2d = masked_percentile(d2d_aoi, d2d_mask, 0.75)
         p90_non_d2d = masked_percentile(non_d2d_aoi, non_d2d_mask, 0.90)
@@ -2286,8 +2471,8 @@ def error_calculator_trace_jax(
         # Stale-tail fractions are normalized by elapsed time, not final max_t,
         # so the curves are meaningful at early checkpoints as well as t=200.
         current_t = current_iteration.astype(users_input__x.dtype)
-        stale_50_threshold = 0.50 * current_t
-        stale_75_threshold = 0.75 * current_t
+        stale_50_threshold = 1.0 + 0.50 * current_t
+        stale_75_threshold = 1.0 + 0.75 * current_t
         stale_100_threshold = jnp.asarray(100.0, dtype=users_input__x.dtype)
         stale_50_non_d2d = masked_fraction_above(
             non_d2d_aoi,
@@ -2330,6 +2515,61 @@ def error_calculator_trace_jax(
             jnp.concatenate([stale_100_non_d2d, stale_100_d2d], axis=0),
         )
 
+    def d2d_member_summary(member_aoi, participation_counts, current_iteration):
+        member_mask_by_scenario = jnp.broadcast_to(
+            d2d_member_device_mask[None, :],
+            member_aoi.shape,
+        )
+        masked_member_aoi = jnp.where(member_mask_by_scenario, member_aoi, 0.0)
+        member_count = jnp.maximum(
+            jnp.sum(member_mask_by_scenario.astype(users_input__x.dtype), axis=1),
+            jnp.asarray(1.0, dtype=users_input__x.dtype),
+        )
+        mean_aoi = jnp.sum(masked_member_aoi, axis=1) / member_count
+        peak_aoi = jnp.max(masked_member_aoi, axis=1)
+        p75_aoi = masked_percentile(member_aoi, member_mask_by_scenario, 0.75)
+        p90_aoi = masked_percentile(member_aoi, member_mask_by_scenario, 0.90)
+        p95_aoi = masked_percentile(member_aoi, member_mask_by_scenario, 0.95)
+
+        current_t = current_iteration.astype(users_input__x.dtype)
+        stale_50 = masked_fraction_above(
+            member_aoi,
+            member_mask_by_scenario,
+            1.0 + 0.50 * current_t,
+        )
+        stale_75 = masked_fraction_above(
+            member_aoi,
+            member_mask_by_scenario,
+            1.0 + 0.75 * current_t,
+        )
+        stale_100 = masked_fraction_above(
+            member_aoi,
+            member_mask_by_scenario,
+            jnp.asarray(100.0, dtype=users_input__x.dtype),
+        )
+        participation = participation_counts.astype(users_input__x.dtype)
+        participation_p05 = masked_percentile(
+            participation,
+            member_mask_by_scenario,
+            0.05,
+        )
+        zero_participation_fraction = masked_zero_fraction(
+            participation,
+            member_mask_by_scenario,
+        )
+        return (
+            mean_aoi,
+            peak_aoi,
+            p75_aoi,
+            p90_aoi,
+            p95_aoi,
+            stale_50,
+            stale_75,
+            stale_100,
+            participation_p05,
+            zero_participation_fraction,
+        )
+
     def scan_iteration(state, iteration_index):
         (
             key,
@@ -2349,6 +2589,8 @@ def error_calculator_trace_jax(
             optimized_d2d_success_ewma,
             non_d2d_aoi,
             d2d_aoi,
+            d2d_member_aoi,
+            d2d_member_participation_counts,
         ) = state
         (
             key,
@@ -2671,12 +2913,14 @@ def error_calculator_trace_jax(
         scheduled_clusters = (
             iteration_index * n_channels + jnp.arange(n_channels, dtype=jnp.int32)
         ) % number_of_clusterheads
+        scheduled_cluster_heads = polling_d2d_heads[scheduled_clusters]
         polling_d2d_link_draws = jax.random.uniform(
             polling_d2d_link_key,
             (n_channels,),
             dtype=dtype,
         )
-        polling_d2d_attempt = polling_compute_success & ch_can_attempt_1[
+        polling_d2d_compute_success = device_draws[scheduled_cluster_heads] < pcomp
+        polling_d2d_attempt = polling_d2d_compute_success & ch_can_attempt_1[
             scheduled_clusters
         ]
         polling_success_d2d = polling_d2d_attempt & (
@@ -2923,6 +3167,37 @@ def error_calculator_trace_jax(
                 tail_battery_quality=optimized_ch_battery_quality,
                 aoi_channel_exponent=d2d_aoi_channel_exponent,
                 aoi_battery_exponent=d2d_aoi_battery_exponent,
+            )
+        elif optimized_d2d_access_mode == "member_fair_utility":
+            optimized_probability_d2d = _member_fair_utility_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                fairness_weight=d2d_aoi_weight,
+                fairness_exponent=d2d_aoi_exponent,
+                fairness_threshold_fraction=d2d_aoi_threshold_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
         elif optimized_d2d_access_mode == "max_weight":
             optimized_probability_d2d = _max_weight_threshold_access_probability(
@@ -3292,6 +3567,34 @@ def error_calculator_trace_jax(
             ],
             axis=0,
         )
+
+        def delivered_device_mask(delivered_member_mask):
+            delivered_counts = jnp.zeros(k_devices, dtype=jnp.int32).at[
+                safe_members.reshape(-1)
+            ].add(delivered_member_mask.reshape(-1).astype(jnp.int32))
+            return delivered_counts > 0
+
+        delivered_member_mask_1 = active_member_mask_1 & polling_cluster_success[:, None]
+        delivered_member_mask_2 = active_member_mask_2 & success_2_d2d[:, None]
+        delivered_member_mask_3 = active_member_mask_3 & success_3_d2d[:, None]
+        d2d_member_success = jnp.stack(
+            [
+                delivered_device_mask(delivered_member_mask_1),
+                delivered_device_mask(delivered_member_mask_2),
+                delivered_device_mask(delivered_member_mask_3),
+            ],
+            axis=0,
+        )
+        d2d_member_active_mask = d2d_member_device_mask[None, :]
+        next_d2d_member_aoi = jnp.where(
+            d2d_member_active_mask,
+            jnp.where(d2d_member_success, 1.0, d2d_member_aoi + 1.0),
+            0.0,
+        )
+        next_d2d_member_participation_counts = (
+            d2d_member_participation_counts
+            + d2d_member_success.astype(d2d_member_participation_counts.dtype)
+        )
         (
             mean_aoi,
             peak_aoi,
@@ -3304,6 +3607,22 @@ def error_calculator_trace_jax(
         ) = scenario_aoi_summary(
             next_non_d2d_aoi,
             next_d2d_aoi,
+            iteration_index + jnp.asarray(1, dtype=jnp.int32),
+        )
+        (
+            d2d_member_mean_aoi,
+            d2d_member_peak_aoi,
+            d2d_member_p75_aoi,
+            d2d_member_p90_aoi,
+            d2d_member_p95_aoi,
+            d2d_member_stale_fraction_50,
+            d2d_member_stale_fraction_75,
+            d2d_member_stale_fraction_100,
+            d2d_member_participation_p05,
+            d2d_member_zero_participation_fraction,
+        ) = d2d_member_summary(
+            next_d2d_member_aoi,
+            next_d2d_member_participation_counts,
             iteration_index + jnp.asarray(1, dtype=jnp.int32),
         )
 
@@ -3323,6 +3642,8 @@ def error_calculator_trace_jax(
             next_optimized_d2d_success_ewma,
             next_non_d2d_aoi,
             next_d2d_aoi,
+            next_d2d_member_aoi,
+            next_d2d_member_participation_counts,
         )
         mean_battery = jnp.mean(next_batteries, axis=1)
         # Gather the currently elected CH battery for each D2D scenario.
@@ -3389,6 +3710,16 @@ def error_calculator_trace_jax(
             stale_fraction_50,
             stale_fraction_75,
             stale_fraction_100,
+            d2d_member_mean_aoi,
+            d2d_member_peak_aoi,
+            d2d_member_p75_aoi,
+            d2d_member_p90_aoi,
+            d2d_member_p95_aoi,
+            d2d_member_stale_fraction_50,
+            d2d_member_stale_fraction_75,
+            d2d_member_stale_fraction_100,
+            d2d_member_participation_p05,
+            d2d_member_zero_participation_fraction,
         )
         return next_state, trace_row
 
@@ -3423,6 +3754,12 @@ def error_calculator_trace_jax(
             jnp.ones((3, cluster_mask.shape[0]), dtype=users_input__x.dtype),
             0.0,
         ),
+        jnp.where(
+            d2d_member_device_mask[None, :],
+            jnp.ones((3, k_devices), dtype=users_input__x.dtype),
+            0.0,
+        ),
+        jnp.zeros((3, k_devices), dtype=jnp.int32),
     )
 
     (
@@ -3444,6 +3781,16 @@ def error_calculator_trace_jax(
             stale_fraction_50,
             stale_fraction_75,
             stale_fraction_100,
+            d2d_member_mean_aoi,
+            d2d_member_peak_aoi,
+            d2d_member_p75_aoi,
+            d2d_member_p90_aoi,
+            d2d_member_p95_aoi,
+            d2d_member_stale_fraction_50,
+            d2d_member_stale_fraction_75,
+            d2d_member_stale_fraction_100,
+            d2d_member_participation_p05,
+            d2d_member_zero_participation_fraction,
         ),
     ) = jax.lax.scan(
         scan_iteration,
@@ -3476,6 +3823,26 @@ def error_calculator_trace_jax(
         stale_fraction_75=stale_fraction_75[checkpoint_indices],
         stale_fraction_100=stale_fraction_100[checkpoint_indices],
         checkpoints=checkpoint_indices + 1,
+        d2d_member_mean_aoi=d2d_member_mean_aoi[checkpoint_indices],
+        d2d_member_peak_aoi=d2d_member_peak_aoi[checkpoint_indices],
+        d2d_member_p75_aoi=d2d_member_p75_aoi[checkpoint_indices],
+        d2d_member_p90_aoi=d2d_member_p90_aoi[checkpoint_indices],
+        d2d_member_p95_aoi=d2d_member_p95_aoi[checkpoint_indices],
+        d2d_member_stale_fraction_50=(
+            d2d_member_stale_fraction_50[checkpoint_indices]
+        ),
+        d2d_member_stale_fraction_75=(
+            d2d_member_stale_fraction_75[checkpoint_indices]
+        ),
+        d2d_member_stale_fraction_100=(
+            d2d_member_stale_fraction_100[checkpoint_indices]
+        ),
+        d2d_member_participation_p05=(
+            d2d_member_participation_p05[checkpoint_indices]
+        ),
+        d2d_member_zero_participation_fraction=(
+            d2d_member_zero_participation_fraction[checkpoint_indices]
+        ),
     )
 
 

@@ -1,5 +1,5 @@
 import csv
-import tempfile
+import shutil
 import unittest
 from pathlib import Path
 
@@ -7,6 +7,13 @@ from experiments.compare_runs import summarize_run, write_comparison
 
 
 class CompareRunsTests(unittest.TestCase):
+    def _clean_test_root(self, name):
+        root = Path.cwd() / "Runs" / name
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True)
+        return root
+
     def _write_run(self, root, name, final_error):
         run_dir = Path(root) / name
         run_dir.mkdir()
@@ -18,6 +25,9 @@ class CompareRunsTests(unittest.TestCase):
                 "optimized_aloha_d2d_uploads_mean": 2.0,
                 "optimized_aloha_d2d_aoi_mean": 1.0,
                 "optimized_aloha_d2d_p90_aoi_mean": 1.0,
+                "optimized_aloha_d2d_member_aoi_mean": 1.2,
+                "optimized_aloha_d2d_member_stale_fraction_75_mean": 0.3,
+                "optimized_aloha_d2d_member_zero_participation_fraction_mean": 0.4,
                 "optimized_aloha_d2d_energy_efficiency_mean": 10.0,
             },
             {
@@ -26,6 +36,9 @@ class CompareRunsTests(unittest.TestCase):
                 "optimized_aloha_d2d_uploads_mean": 4.0,
                 "optimized_aloha_d2d_aoi_mean": 1.5,
                 "optimized_aloha_d2d_p90_aoi_mean": 2.0,
+                "optimized_aloha_d2d_member_aoi_mean": 1.7,
+                "optimized_aloha_d2d_member_stale_fraction_75_mean": 0.2,
+                "optimized_aloha_d2d_member_zero_participation_fraction_mean": 0.1,
                 "optimized_aloha_d2d_energy_efficiency_mean": 12.0,
             },
         ]
@@ -36,7 +49,8 @@ class CompareRunsTests(unittest.TestCase):
         return run_dir
 
     def test_summarize_run_extracts_threshold_and_final_metrics(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = self._clean_test_root("_test_compare_runs_summary")
+        try:
             run_dir = self._write_run(tmpdir, "candidate", 1e-12)
 
             summary = summarize_run(run_dir)
@@ -46,10 +60,18 @@ class CompareRunsTests(unittest.TestCase):
             self.assertEqual(summary["t_to_1e-12"], 2)
             self.assertEqual(summary["final_error_norm"], 1e-12)
             self.assertEqual(summary["final_aoi"], 1.5)
+            self.assertEqual(summary["final_member_aoi"], 1.7)
+            self.assertEqual(
+                summary["final_member_zero_participation_fraction"],
+                0.1,
+            )
             self.assertIn("log_error_auc", summary)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_write_comparison_creates_csv_and_markdown(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = self._clean_test_root("_test_compare_runs_write")
+        try:
             run_a = self._write_run(tmpdir, "baseline", 1e-9)
             run_b = self._write_run(tmpdir, "candidate", 1e-12)
             summaries = [summarize_run(run_a), summarize_run(run_b)]
@@ -62,6 +84,9 @@ class CompareRunsTests(unittest.TestCase):
             text = markdown_path.read_text(encoding="utf-8")
             self.assertIn("baseline", text)
             self.assertIn("candidate", text)
+            self.assertIn("member zero", text)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -158,6 +158,12 @@ error_calculator_trace_jax(
 This keeps the same one-hop clusters but makes each non-CH member's short-range
 D2D packet succeed according to its distance to the currently elected CH.
 
+Polling+D2D schedules cluster rows, not direct device IDs. Its compute/access
+attempt is therefore evaluated on the scheduled cluster head. This keeps the
+D2D polling curve independent of the direct polling user scheduled on the same
+iteration and avoids coupling a CH aggregate to an unrelated direct-device
+energy or compute draw.
+
 Run the complete `.py` workflow from local CPU, Colab, or a CUDA-enabled Linux
 environment. The root entry point writes CSV results, metadata JSON, and
 standard figures:
@@ -229,7 +235,16 @@ collision-free decoding to `exp(-snr_threshold / average_snr)`. Use
 should use the same outage metric instead of normalized inverse pathloss. The
 runner writes mean battery, mean D2D-CH battery, energy-used,
 energy-efficiency, mean AoI, peak AoI, p75/p90/p95 AoI, and stale-tail AoI
-fractions, and plots them when present.
+fractions. For D2D scenarios it also writes AoI and participation metrics for
+devices in non-singleton D2D clusters: `<scenario>_member_aoi_*`,
+`<scenario>_member_peak_aoi_*`,
+`<scenario>_member_p75_aoi_*`, `<scenario>_member_p90_aoi_*`,
+`<scenario>_member_p95_aoi_*`, `<scenario>_member_stale_fraction_50_*`,
+`<scenario>_member_stale_fraction_75_*`,
+`<scenario>_member_stale_fraction_100_*`,
+`<scenario>_member_participation_p05_*`, and
+`<scenario>_member_zero_participation_fraction_*`. The plotter emits these
+families when the columns are present.
 
 AoI can also be used as an explicit optimized-D2D scheduling objective with
 `--optimized-d2d-access-mode aoi_aware_utility`. This mode keeps the same
@@ -275,15 +290,32 @@ the attempt worthwhile. The extra weights are controlled by
 the BS may broadcast scalar normalizers and exponents, while each CH computes
 its own probability and draws its own access trial.
 
-Initial `K=1000`, `rounds=100` tests show that this policy can make the AoI
-quota less wasteful: it improved the matching pure AoI-tail run at the stronger
-`w=0.10 / threshold=0.90` point. At the lighter `w=0.05 / threshold=0.85`
-point, it slightly reduced mean AoI and `stale75` but slightly worsened
-log-error AUC. In both cases p75/p90/p95 AoI still reached the run horizon, so
-this policy is currently documented as an ablation rather than the main
-optimized-D2D strategy. The next recommended validation is rerunning the
-physical `utility` baseline with the current AoI percentile/stale-fraction
-columns.
+The member-fairness experiment is
+`--optimized-d2d-access-mode member_fair_utility`. It keeps the same base
+utility allocator, then reserves `--optimized-d2d-aoi-weight` of the CH access
+budget for multi-member clusters whose currently active aggregate contains
+stale or zero-participation D2D members. This targets the case where
+cluster-level AoI looks acceptable because the CH uploads, but member-level
+AoI/participation shows that non-CH devices are rarely refreshed. It is a
+diagnostic research mode and is disabled by default.
+
+Current `K=1000`, `rounds=100` ideal-link tests show that this policy directly
+reduces member starvation. Against the default optimized-D2D `norm` run
+(`member_aoi=63.409`, `member_stale75=0.509`, `member_zero=0.451`,
+`final_error=1.295e-07`), `member_fair_utility` with
+`w=0.15 / threshold=0.70` reached `member_aoi=46.451`,
+`member_stale75=0.241`, `member_zero=0.163`, and `final_error=4.018e-07`.
+The stronger `w=0.25 / threshold=0.70` improved fairness further
+(`member_aoi=45.010`, `member_zero=0.134`) but raised final error to
+`8.758e-07`. Under the physical energy/Rayleigh path, the refreshed `utility`
+baseline reached `member_aoi=62.043`, `member_zero=0.431`,
+`final_error=1.603e-07`, and `energy_efficiency=877.028`. A light
+member-fair weight (`w=0.05 / threshold=0.70`) is the current physical Pareto
+candidate (`member_aoi=60.541`, `member_zero=0.393`,
+`final_error=3.066e-07`, `energy_efficiency=817.898`), while `w>=0.10`
+increasingly trades convergence and energy efficiency for freshness. This mode
+therefore remains a diagnostic ablation rather than the main optimized-D2D
+strategy.
 
 Energy-aware D2D CH rotation is another enhanced ablation. It is disabled by
 default with `--d2d-ch-rotation-mode static`. Enable it with
@@ -896,6 +928,12 @@ skip cleanly when JAX is not installed in the local interpreter.
 - AoI is tracked as an output metric. It alters scheduling only when an
   enhanced policy such as `aoi_aware_utility`, `aoi_floor_utility`, or
   `aoi_tail_utility`/`aoi_quality_tail_utility` is explicitly selected.
+  D2D cluster-level AoI resets when the CH aggregate reaches the BS; D2D
+  member-level AoI is computed only over devices in non-singleton D2D clusters
+  and resets only for devices whose update was active inside that delivered
+  aggregate. The member-level columns are diagnostics and do not change
+  scheduling by default. The optional `member_fair_utility` ablation is the
+  only current access policy that consumes those member-level diagnostics.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation
   candidate, not the default implementation.

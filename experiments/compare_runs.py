@@ -9,7 +9,8 @@ iteration:
 * log-error AUC over the saved checkpoints, which is less fragile than only
   reading the final point;
 * final uploads, CH uploads, energy, energy efficiency, and AoI summaries;
-* stale-tail fractions when the source CSV contains the newer AoI columns.
+* stale-tail and member-level freshness fractions when the source CSV contains
+  the newer AoI columns.
 
 It intentionally does not import JAX.  The comparison is post-processing only,
 so it is cheap to run locally after CPU or Colab experiments.
@@ -41,6 +42,16 @@ FINAL_METRICS = (
     "stale_fraction_50",
     "stale_fraction_75",
     "stale_fraction_100",
+    "member_aoi",
+    "member_peak_aoi",
+    "member_p75_aoi",
+    "member_p90_aoi",
+    "member_p95_aoi",
+    "member_stale_fraction_50",
+    "member_stale_fraction_75",
+    "member_stale_fraction_100",
+    "member_participation_p05",
+    "member_zero_participation_fraction",
 )
 
 
@@ -209,6 +220,13 @@ def _fieldnames(rows):
         "final_stale_fraction_50",
         "final_stale_fraction_75",
         "final_stale_fraction_100",
+        "final_member_aoi",
+        "final_member_p75_aoi",
+        "final_member_p90_aoi",
+        "final_member_p95_aoi",
+        "final_member_stale_fraction_75",
+        "final_member_zero_participation_fraction",
+        "final_member_participation_p05",
         "csv_path",
     ]
     seen = set()
@@ -244,18 +262,33 @@ def write_comparison(summaries, output_dir):
             "over the saved checkpoints. Lower AoI/stale metrics are better; "
             "higher uploads and energy efficiency are usually better.\n\n"
         )
-        handle.write("| Run | Mode | log-error AUC | t<=1e-12 | final error | final AoI | final p90 AoI | final energy efficiency |\n")
-        handle.write("|---|---:|---:|---:|---:|---:|---:|---:|\n")
+        handle.write(
+            "| Run | Mode | log-error AUC | t<=1e-12 | final error | "
+            "final AoI | member AoI | member stale75 | member zero | "
+            "final energy efficiency |\n"
+        )
+        handle.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
         for row in summaries:
             handle.write(
-                "| {run} | {mode} | {auc} | {t12} | {error} | {aoi} | {p90} | {eff} |\n".format(
+                (
+                    "| {run} | {mode} | {auc} | {t12} | {error} | {aoi} | "
+                    "{member_aoi} | {member_stale75} | {member_zero} | {eff} |\n"
+                ).format(
                     run=row.get("run", ""),
                     mode=row.get("optimized_d2d_access_mode", ""),
                     auc=_format_markdown_number(row.get("log_error_auc")),
                     t12=row.get("t_to_1e-12", ""),
                     error=_format_markdown_number(row.get("final_error_norm")),
                     aoi=_format_markdown_number(row.get("final_aoi")),
-                    p90=_format_markdown_number(row.get("final_p90_aoi")),
+                    member_aoi=_format_markdown_number(
+                        row.get("final_member_aoi")
+                    ),
+                    member_stale75=_format_markdown_number(
+                        row.get("final_member_stale_fraction_75")
+                    ),
+                    member_zero=_format_markdown_number(
+                        row.get("final_member_zero_participation_fraction")
+                    ),
                     eff=_format_markdown_number(row.get("final_energy_efficiency")),
                 )
             )

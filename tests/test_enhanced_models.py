@@ -209,6 +209,19 @@ class GpuSweepTests(unittest.TestCase):
         self.assertIn("optimized_aloha_d2d_stale_fraction_50_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_stale_fraction_75_mean", rows[0])
         self.assertIn("optimized_aloha_d2d_stale_fraction_100_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_peak_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_p75_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_p90_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_p95_aoi_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_stale_fraction_50_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_stale_fraction_75_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_stale_fraction_100_mean", rows[0])
+        self.assertIn("optimized_aloha_d2d_member_participation_p05_mean", rows[0])
+        self.assertIn(
+            "optimized_aloha_d2d_member_zero_participation_fraction_mean",
+            rows[0],
+        )
 
     def test_gpu_sweep_records_adaptive_diversity_parameters(self):
         rows, metadata = run_gpu_sweep(

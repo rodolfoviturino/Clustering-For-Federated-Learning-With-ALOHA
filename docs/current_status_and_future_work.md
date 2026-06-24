@@ -72,6 +72,7 @@ Invariants:
 every member is within R_D2D of the elected CH
 cluster size <= Cmax
 singleton fallback is preserved
+polling+D2D compute/energy feasibility is evaluated on the scheduled CH
 ```
 
 Real-world interpretation:
@@ -88,10 +89,13 @@ Current result:
 - For `K=3000`, clusterized-device rate has been around `99.319%` in the
   tested enhanced runs.
 
-Remaining limitation:
+Current physical-link status:
 
-- Member-to-CH link success is still global when enabled; it does not yet depend
-  on D2D distance, D2D fading, or local D2D SINR.
+- Member-to-CH link success can be the thesis-compatible global scalar or the
+  enhanced per-link Rayleigh outage probability based on distance to the
+  current CH.
+- It still does not model local D2D SINR, explicit interference powers,
+  retransmissions, coding, or MAC timing.
 
 ### Channel-Aware CH Election
 
@@ -420,9 +424,11 @@ peak AoI
 p75 AoI
 p90 AoI
 p95 AoI
-stale fraction above 50 percent of elapsed t
-stale fraction above 75 percent of elapsed t
+stale fraction above 1 + 50 percent of elapsed t
+stale fraction above 1 + 75 percent of elapsed t
 stale fraction above 100 rounds
+member-level mean/p75/p90/p95/peak AoI for non-singleton D2D clusters
+member zero-participation fraction for non-singleton D2D clusters
 AoI distribution over clusters
 AoI versus error norm
 AoI versus energy efficiency
@@ -465,9 +471,13 @@ following points should be explicitly disclosed:
   MAC timing;
 - utility exponents and allocator thresholds are hyperparameters;
 - AoI is now measured explicitly and can drive `aoi_aware_utility`,
-  `aoi_floor_utility`, `aoi_tail_utility`, or `aoi_quality_tail_utility`, but
-  the weight, exponent, stale-tail threshold, quota, and quality exponents are
-  policy hyperparameters that need sensitivity analysis;
+  `aoi_floor_utility`, `aoi_tail_utility`, `aoi_quality_tail_utility`, or
+  `member_fair_utility`, but the weight, exponent, stale-tail threshold,
+  quota, quality exponents, and member-fairness pressure are policy
+  hyperparameters that need sensitivity analysis;
+- D2D member-level AoI and zero-participation metrics are now diagnostics over
+  devices in non-singleton D2D clusters only; they do not alter scheduling
+  unless `member_fair_utility` or a future policy explicitly consumes them;
 - data are synthetic linear-regression data, not non-IID task data.
 
 ## Current Empirical Findings
@@ -560,6 +570,114 @@ The most important current results are:
   `201`, so severe stale-tail AoI remains unresolved by access-probability
   reweighting alone.
 
+- The first `member_fair_utility` smoke run directly attacked the new
+  member-level diagnosis. In `p0_member_fair_v1-02` (`K=1000`, `rounds=20`,
+  `t=100`, ideal D2D member links), compared with the default optimized-D2D
+  `norm` run `p0_member_aoi_curve_v3`:
+
+  ```text
+  final optimized-D2D error:
+    norm                1.295e-07
+    member_fair_utility 5.192e-07
+
+  member mean AoI:
+    norm                63.409
+    member_fair_utility 44.706
+
+  member stale75:
+    norm                0.509
+    member_fair_utility 0.205
+
+  member zero-participation fraction:
+    norm                0.451
+    member_fair_utility 0.132
+  ```
+
+  This is the strongest current evidence that the optimized-D2D issue is not
+  merely aggregate AoI: CH-level utility can converge well while starving
+  non-CH members. The caveat is that `member_p95_aoi` still reached the horizon
+  value in the smoke run, so the next step is a small sensitivity sweep over
+  `optimized_d2d_aoi_weight`, threshold, and exponent rather than claiming the
+  tail is solved.
+
+- The `rounds=100` sensitivity runs confirm the same ideal-link trend. Against
+  `p0_member_aoi_curve_v3` (`norm`, `final_error=1.295e-07`,
+  `member_aoi=63.409`, `member_stale75=0.509`, `member_zero=0.451`):
+
+  ```text
+  member_fair_w015_thr070_r100:
+    final_error  = 4.018e-07
+    member_aoi   = 46.451
+    member_stale75 = 0.241
+    member_zero  = 0.163
+
+  member_fair_w025_thr070_r100:
+    final_error  = 8.758e-07
+    member_aoi   = 45.010
+    member_stale75 = 0.211
+    member_zero  = 0.134
+  ```
+
+  The current Pareto reading is therefore conservative: `w=0.15` is the better
+  default candidate for papers because it keeps the final error below `5e-7`
+  while removing most zero-participation starvation; `w=0.25` is a stronger
+  fairness ablation with a larger convergence cost.
+
+- The refreshed physical energy/Rayleigh comparison now includes member-level
+  columns for the `utility` baseline. It confirms a smooth freshness/cost
+  tradeoff at low weights and a sharp convergence penalty at higher weights:
+
+  ```text
+  utility_physical_member_metrics_r100:
+    final_error       = 1.603e-07
+    cluster_aoi       = 80.655
+    member_aoi        = 62.043
+    member_stale75    = 0.483
+    member_zero       = 0.431
+    energy_efficiency = 877.028
+
+  member_fair_w005_thr070_physical_r100:
+    final_error       = 3.066e-07
+    cluster_aoi       = 78.927
+    member_aoi        = 60.541
+    member_stale75    = 0.453
+    member_zero       = 0.393
+    energy_efficiency = 817.898
+
+  member_fair_w010_thr070_physical_r100:
+    final_error       = 7.179e-07
+    cluster_aoi       = 77.462
+    member_aoi        = 59.300
+    member_stale75    = 0.430
+    member_zero       = 0.359
+    energy_efficiency = 776.244
+
+  member_fair_w015_thr070_physical_r100:
+    final_error       = 8.319e-06
+    cluster_aoi       = 71.728
+    member_aoi        = 54.328
+    member_stale75    = 0.344
+    member_zero       = 0.266
+    energy_efficiency = 556.080
+
+  member_fair_w025_thr070_physical_r100:
+    final_error       = 1.710e-05
+    cluster_aoi       = 70.934
+    member_aoi        = 53.786
+    member_stale75    = 0.327
+    member_zero       = 0.244
+    energy_efficiency = 528.478
+  ```
+
+  This is a real freshness/convergence tradeoff, not a plotting bug. For the
+  physical/Rayleigh path, `w=0.05` is the only member-fair candidate that looks
+  paper-defensible without more tuning: it gives moderate member freshness gains
+  with about a 2x final-error increase and about 7% lower energy efficiency. The
+  `w=0.10` point is still useful as an ablation; `w=0.15` and `w=0.25` are too
+  aggressive for a main physical result. Cluster p75/p90/p95 and member
+  p90/p95 still hit the horizon value `101`, so severe stale-tail AoI is not
+  solved by access reweighting alone.
+
 - The next structural model upgrade is now available as
   `--d2d-member-link-success-mode rayleigh_outage`. It makes aggregate
   completeness depend on the distance from each active member to the current
@@ -569,17 +687,20 @@ The most important current results are:
 
 ## Recommended Future Work Order
 
-### Step 1: Rerun The Physical Utility Baseline With Current AoI Metrics
+### Step 1: Replicate The Physical Member-Fair Pareto Point
 
-The immediate validation step is not a new formula. Rerun the current physical
-`utility` baseline after the AoI percentile/stale-fraction instrumentation is
-in place, then run the same baseline with per-link D2D member Rayleigh outage
-enabled. This gives a fair comparator for:
+The immediate validation step is not a new formula. The refreshed physical
+`utility` baseline with member metrics is now available, and the current
+member-fair Pareto candidate is `w=0.05 / threshold=0.70`. Before promoting it
+in a paper, repeat or extend that point with more seeds/iterations and keep the
+same physical-link options used by the baseline. Compare:
 
 ```text
 mean AoI
 p75/p90/p95 AoI
 stale_fraction_50/75/100
+member_mean/member_p95 AoI
+member_zero_participation_fraction
 error norm
 energy efficiency
 CH uploads
@@ -587,14 +708,14 @@ CH uploads
 
 Expected benefit:
 
-- avoids comparing new AoI modes against an older baseline with missing tail
-  columns;
-- shows whether the severe p75/p90/p95 tail is specific to AoI-enhanced modes
-  or already present in the tuned utility baseline;
-- shows whether distance-aware member-to-CH delivery changes the stale AoI
-  tail, error curve, and energy use;
-- provides a clean reference before implementing deeper structural changes
-  such as AoI/channel-aware CH rotation or re-clustering.
+- confirms whether the moderate freshness gain at `w=0.05` survives higher
+  Monte Carlo precision;
+- checks whether the roughly 2x final-error cost is stable or just seed noise;
+- documents that the severe p90/p95 AoI tail already exists in the tuned
+  physical utility baseline and is not solved by light member-fair access
+  reweighting;
+- provides a clean reference before implementing deeper structural changes such
+  as AoI/channel-aware CH rotation, re-clustering, or data-aware D2D discovery.
 
 ### Step 2: Calibrate The First-Order Energy Model
 
@@ -686,7 +807,8 @@ AoI is now tracked for all six scenarios:
 
 ```text
 non-D2D: per-device AoI
-D2D:     per-cluster AoI
+D2D:     per-cluster AoI for delivered aggregates
+D2D:     per-member AoI for devices in non-singleton D2D clusters
 ```
 
 The first AoI policy experiments are informative ablations rather than a
@@ -699,6 +821,8 @@ p90 AoI
 p95 AoI
 stale_fraction_75
 peak AoI
+member_p95 AoI
+member_zero_participation_fraction
 error norm
 energy efficiency
 CH upload ratio
@@ -739,12 +863,36 @@ energy used
 energy efficiency
 CH battery
 mean/p95/peak AoI
+member p95 AoI
+member zero-participation fraction
 ```
 
 Expected benefit:
 
 - separates real algorithmic gains from parameter luck;
 - provides defensible ranges rather than one-off tuned constants.
+
+### Step 7: Add Data-Aware FL Realism As A Separate Research Phase
+
+The current simulator is still a wireless HFL/ALOHA simulator with synthetic
+linear-regression updates. The next research phase should be implemented as a
+separate capability, not mixed into the P0 correctness and metric patch:
+
+```text
+non-IID data generation
+FedAvg weighted by local sample count
+FedProx or SCAFFOLD-style drift control
+data-aware or update-similarity-aware clustering
+GNN/RL graph discovery baselines
+distributed control-plane message simulation
+OTA-FL or hybrid D2D + OTA aggregation baselines
+```
+
+Expected benefit:
+
+- separates communication-layer gains from FL statistical-heterogeneity gains;
+- gives a defensible path toward innovation beyond engineering acceleration;
+- avoids overclaiming the current synthetic model as a full non-IID FL study.
 
 ## Suggested References
 
@@ -754,3 +902,9 @@ Expected benefit:
 - Guided FL participant selection motivation: [Oort](https://arxiv.org/abs/2010.06081).
 - Freshness/AoI motivation: [WiFresh](https://arxiv.org/abs/2012.14337) and
   [Age of Information: An Introduction and Survey](https://arxiv.org/abs/2007.08564).
+- Data-aware clustered FL motivation:
+  [FedAC](https://arxiv.org/abs/2403.16460) and
+  [FedDAG](https://arxiv.org/abs/2602.23504).
+- D2D graph discovery motivation:
+  [Multi-Agent Reinforcement Learning for Graph Discovery in D2D-Enabled
+  Federated Learning](https://arxiv.org/abs/2503.23218).

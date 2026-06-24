@@ -1,5 +1,5 @@
 import csv
-import tempfile
+import shutil
 import unittest
 from pathlib import Path
 
@@ -43,10 +43,18 @@ def _write_summary(path, rows):
 
 
 class MergeUtilityParetoSummariesTests(unittest.TestCase):
+    def _clean_test_root(self, name):
+        root = Path.cwd() / "Runs" / name
+        if root.exists():
+            shutil.rmtree(root)
+        root.mkdir(parents=True)
+        return root
+
     def test_merge_summary_files_reranks_combined_rows(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            first = Path(tmpdir) / "part1.csv"
-            second = Path(tmpdir) / "part2.csv"
+        tmpdir = self._clean_test_root("_test_merge_utility_pareto_rerank")
+        try:
+            first = tmpdir / "part1.csv"
+            second = tmpdir / "part2.csv"
             _write_summary(first, [_summary_row("candidate_a", True, -6.0)])
             _write_summary(second, [_summary_row("candidate_b", True, -8.0)])
 
@@ -54,16 +62,21 @@ class MergeUtilityParetoSummariesTests(unittest.TestCase):
 
             self.assertEqual([row["candidate_id"] for row in merged], ["candidate_b", "candidate_a"])
             self.assertEqual([row["rank"] for row in merged], [1, 2])
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_merge_summary_files_rejects_duplicate_candidates(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            first = Path(tmpdir) / "part1.csv"
-            second = Path(tmpdir) / "part2.csv"
+        tmpdir = self._clean_test_root("_test_merge_utility_pareto_duplicates")
+        try:
+            first = tmpdir / "part1.csv"
+            second = tmpdir / "part2.csv"
             _write_summary(first, [_summary_row("candidate_a", True, -6.0)])
             _write_summary(second, [_summary_row("candidate_a", True, -8.0)])
 
             with self.assertRaises(ValueError):
                 merge_summary_files([first, second])
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":

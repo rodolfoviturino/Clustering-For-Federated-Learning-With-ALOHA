@@ -1631,6 +1631,101 @@ def _member_deficit_utility_access_probability(
     return jnp.where(quota_active, bounded_probability, base_probability)
 
 
+def _member_collision_aware_quota_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    member_aoi_by_cluster,
+    member_participation_by_cluster,
+    active_member_mask,
+    collision_ewma,
+    collision_target_fraction,
+    collision_gain,
+    min_quota_scale,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    quota_weight,
+    quota_exponent,
+    quota_threshold_fraction,
+    refresh_floor_fraction,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Member-refresh quota with feedback from observed CH collisions.
+
+    The policy starts from ``member_quota_utility`` but makes the reserved
+    member-refresh quota collision aware.  When the optimized-D2D collision EWMA
+    is at or below the configured target, the full member quota is used.  When
+    collisions rise above target, the quota is smoothly reduced toward a
+    configured minimum scale.  The base utility budget remains active, so this
+    is not a hard scheduler and does not disable optimized D2D.
+    """
+    dtype = aggregate_norms.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    one = jnp.asarray(1.0, dtype=dtype)
+    collision_target = jnp.maximum(
+        jnp.asarray(collision_target_fraction, dtype=dtype),
+        eps,
+    )
+    collision_gain = jnp.asarray(collision_gain, dtype=dtype)
+    min_quota_scale = jnp.clip(
+        jnp.asarray(min_quota_scale, dtype=dtype),
+        0.0,
+        1.0,
+    )
+    collision_excess_ratio = jnp.maximum(
+        (jnp.asarray(collision_ewma, dtype=dtype) - collision_target)
+        / collision_target,
+        0.0,
+    )
+    quota_scale = min_quota_scale + (one - min_quota_scale) / (
+        one + collision_gain * collision_excess_ratio
+    )
+    effective_quota_weight = jnp.asarray(quota_weight, dtype=dtype) * quota_scale
+    return _member_quota_utility_access_probability(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        member_aoi_by_cluster=member_aoi_by_cluster,
+        member_participation_by_cluster=member_participation_by_cluster,
+        active_member_mask=active_member_mask,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+        quota_weight=effective_quota_weight,
+        quota_exponent=quota_exponent,
+        quota_threshold_fraction=quota_threshold_fraction,
+        refresh_floor_fraction=refresh_floor_fraction,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+
 def _load_controlled_access_from_utility(
     utility,
     cluster_mask,
@@ -2233,6 +2328,9 @@ def error_calculator_trace_jax(
     optimized_d2d_member_refresh_floor_fraction: float = 0.05,
     optimized_d2d_member_deficit_decay: float = 0.90,
     optimized_d2d_member_deficit_weight: float = 0.25,
+    optimized_d2d_member_collision_target_fraction: float = 0.02,
+    optimized_d2d_member_collision_gain: float = 4.0,
+    optimized_d2d_member_collision_min_quota_scale: float = 0.25,
     checkpoints=None,
     dtype=None,
 ) -> JaxTraceResult:
@@ -2394,6 +2492,7 @@ def error_calculator_trace_jax(
         "member_refresh_utility",
         "member_quota_utility",
         "member_deficit_utility",
+        "member_collision_aware_quota",
     }:
         raise ValueError(
             "optimized_d2d_access_mode must be 'norm', 'utility', "
@@ -2401,7 +2500,7 @@ def error_calculator_trace_jax(
             "'aoi_aware_utility'/'aoi_floor_utility'/'aoi_tail_utility'/"
             "'aoi_quality_tail_utility'/'member_fair_utility'/"
             "'member_refresh_utility'/'member_quota_utility'/"
-            "'member_deficit_utility'"
+            "'member_deficit_utility'/'member_collision_aware_quota'"
         )
     if optimized_d2d_norm_exponent < 0.0:
         raise ValueError("optimized_d2d_norm_exponent must be non-negative")
@@ -2473,6 +2572,18 @@ def error_calculator_trace_jax(
     if not 0.0 <= optimized_d2d_member_deficit_weight <= 1.0:
         raise ValueError(
             "optimized_d2d_member_deficit_weight must be in [0, 1]"
+        )
+    if not 0.0 <= optimized_d2d_member_collision_target_fraction <= 1.0:
+        raise ValueError(
+            "optimized_d2d_member_collision_target_fraction must be in [0, 1]"
+        )
+    if optimized_d2d_member_collision_gain < 0.0:
+        raise ValueError(
+            "optimized_d2d_member_collision_gain must be non-negative"
+        )
+    if not 0.0 <= optimized_d2d_member_collision_min_quota_scale <= 1.0:
+        raise ValueError(
+            "optimized_d2d_member_collision_min_quota_scale must be in [0, 1]"
         )
 
     dtype = jnp.float32 if dtype is None else dtype
@@ -2636,6 +2747,18 @@ def error_calculator_trace_jax(
     )
     d2d_member_deficit_weight = jnp.asarray(
         optimized_d2d_member_deficit_weight,
+        dtype=dtype,
+    )
+    d2d_member_collision_target_fraction = jnp.asarray(
+        optimized_d2d_member_collision_target_fraction,
+        dtype=dtype,
+    )
+    d2d_member_collision_gain = jnp.asarray(
+        optimized_d2d_member_collision_gain,
+        dtype=dtype,
+    )
+    d2d_member_collision_min_quota_scale = jnp.asarray(
+        optimized_d2d_member_collision_min_quota_scale,
         dtype=dtype,
     )
 
@@ -3201,6 +3324,7 @@ def error_calculator_trace_jax(
             optimized_d2d_reference_direction,
             optimized_d2d_success_ewma,
             optimized_d2d_member_deficit,
+            optimized_d2d_collision_ewma,
             non_d2d_aoi,
             d2d_aoi,
             d2d_member_aoi,
@@ -3923,6 +4047,42 @@ def error_calculator_trace_jax(
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
+        elif optimized_d2d_access_mode == "member_collision_aware_quota":
+            optimized_probability_d2d = _member_collision_aware_quota_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                collision_ewma=optimized_d2d_collision_ewma,
+                collision_target_fraction=d2d_member_collision_target_fraction,
+                collision_gain=d2d_member_collision_gain,
+                min_quota_scale=d2d_member_collision_min_quota_scale,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                quota_weight=d2d_aoi_weight,
+                quota_exponent=d2d_aoi_exponent,
+                quota_threshold_fraction=d2d_aoi_threshold_fraction,
+                refresh_floor_fraction=d2d_member_refresh_floor_fraction,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
         elif optimized_d2d_access_mode == "member_deficit_utility":
             optimized_probability_d2d = _member_deficit_utility_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -4115,6 +4275,21 @@ def error_calculator_trace_jax(
             d2d_throughput_ewma_decay * optimized_d2d_success_ewma
             + (1.0 - d2d_throughput_ewma_decay)
             * ch_upload_3_d2d.astype(users_input__x.dtype)
+        )
+        optimized_d2d_collision_count = jnp.sum(
+            candidates_3_d2d_detail & (~collision_free_3_d2d)
+        ).astype(users_input__x.dtype)
+        optimized_d2d_candidate_count = jnp.maximum(
+            candidates_3_d2d.astype(users_input__x.dtype),
+            jnp.asarray(1.0, dtype=users_input__x.dtype),
+        )
+        current_optimized_d2d_collision_fraction = (
+            optimized_d2d_collision_count / optimized_d2d_candidate_count
+        )
+        next_optimized_d2d_collision_ewma = (
+            d2d_throughput_ewma_decay * optimized_d2d_collision_ewma
+            + (1.0 - d2d_throughput_ewma_decay)
+            * current_optimized_d2d_collision_fraction
         )
         active_optimized_member_mask = active_member_mask_3 & cluster_mask[:, None]
         optimized_active_member_counts = jnp.sum(
@@ -4641,6 +4816,7 @@ def error_calculator_trace_jax(
             next_optimized_d2d_reference_direction,
             next_optimized_d2d_success_ewma,
             next_optimized_d2d_member_deficit,
+            next_optimized_d2d_collision_ewma,
             next_non_d2d_aoi,
             next_d2d_aoi,
             next_d2d_member_aoi,
@@ -4757,6 +4933,7 @@ def error_calculator_trace_jax(
         # cold-start burst of redistribution before any ACK history exists.
         initial_expected_fixed_d2d_ch_successes,
         jnp.zeros(cluster_mask.shape, dtype=users_input__x.dtype),
+        jnp.asarray(0.0, dtype=users_input__x.dtype),
         jnp.ones((3, k_devices), dtype=users_input__x.dtype),
         jnp.where(
             cluster_mask[None, :],
@@ -4967,6 +5144,9 @@ def error_calculator(
     optimized_d2d_member_refresh_floor_fraction: float = 0.05,
     optimized_d2d_member_deficit_decay: float = 0.90,
     optimized_d2d_member_deficit_weight: float = 0.25,
+    optimized_d2d_member_collision_target_fraction: float = 0.02,
+    optimized_d2d_member_collision_gain: float = 4.0,
+    optimized_d2d_member_collision_min_quota_scale: float = 0.25,
     dtype=None,
 ):
     """Compatibility wrapper returning the legacy 16-value final tuple."""
@@ -5065,6 +5245,13 @@ def error_calculator(
         ),
         optimized_d2d_member_deficit_decay=optimized_d2d_member_deficit_decay,
         optimized_d2d_member_deficit_weight=optimized_d2d_member_deficit_weight,
+        optimized_d2d_member_collision_target_fraction=(
+            optimized_d2d_member_collision_target_fraction
+        ),
+        optimized_d2d_member_collision_gain=optimized_d2d_member_collision_gain,
+        optimized_d2d_member_collision_min_quota_scale=(
+            optimized_d2d_member_collision_min_quota_scale
+        ),
         checkpoints=[number_of_iterations__t],
         dtype=dtype,
     )

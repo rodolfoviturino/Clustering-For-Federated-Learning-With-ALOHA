@@ -812,6 +812,22 @@ The full member-level D2D freshness experiment record is in
 `docs/member_level_d2d_freshness_experiments.md`, including the final table,
 negative-deficit interpretation, and recommended next research directions.
 
+Implemented collision-control follow-up: `--optimized-d2d-access-mode
+member_collision_aware_quota`. It keeps the useful `member_quota_utility`
+structure but tracks an EWMA of optimized-D2D CH collision fraction. When that
+EWMA exceeds `--optimized-d2d-member-collision-target-fraction`, the reserved
+member-refresh quota is reduced according to
+`--optimized-d2d-member-collision-gain` and bounded below by
+`--optimized-d2d-member-collision-min-quota-scale`. This is the next candidate
+tested against `member_quota_w015_floor000_physical_r100`. The result is mixed:
+it avoids the `~0.06` collision regime observed in `member_deficit_utility` and
+improves convergence/energy relative to `member_quota_w015`, but it worsens the
+member-freshness objective. Member stale75 rose from `0.413` to about
+`0.461-0.462`, and zero-participation fraction rose from `0.337` to about
+`0.401-0.403`. Keep it as a conservative ablation, not as the main
+member-freshness policy. The next access-control step should be per-cluster or
+semi-scheduled rather than another global damping scalar.
+
 ### Step 2: Calibrate The First-Order Energy Model
 
 The code now implements opt-in first-order radio accounting:

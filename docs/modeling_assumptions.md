@@ -192,6 +192,12 @@ This document records the simulation defaults after the code cleanup.
   floor on the overlay. This tests whether the dominant member-stale cause is
   truly lack of CH access opportunity rather than the smoother probability
   blending used by `member_fair_utility`/`member_refresh_utility`.
+- `member_collision_aware_quota` keeps that explicit member-refresh quota but
+  dampens it using an EWMA of optimized-D2D CH collisions. The quota is
+  unchanged below `--optimized-d2d-member-collision-target-fraction` and is
+  smoothly reduced by `--optimized-d2d-member-collision-gain` toward
+  `--optimized-d2d-member-collision-min-quota-scale` above the target. This is
+  the collision-control response to the `member_deficit_utility` result.
 - `member_deficit_utility` adds one piece of memory to the explicit quota
   policy. The optimized-D2D scenario keeps a per-cluster missed-refresh deficit
   that increases when active stale or zero-participation members are available

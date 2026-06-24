@@ -652,6 +652,12 @@ Policy differences:
   refresh-eligible overlay. This gives the experiment a cleaner answer to
   whether member freshness improves when part of the optimized-D2D access budget
   is reserved for stale or never-delivered active members.
+- `member_collision_aware_quota` keeps the member quota but dampens it when an
+  EWMA of optimized-D2D CH collisions exceeds
+  `--optimized-d2d-member-collision-target-fraction`. The damping strength is
+  controlled by `--optimized-d2d-member-collision-gain`, with a lower bound set
+  by `--optimized-d2d-member-collision-min-quota-scale`. This is the first
+  collision-control candidate after the negative deficit result.
 - `member_deficit_utility` keeps the quota split but ranks the refresh overlay
   with a persistent missed-refresh deficit. This is intended for cases where
   many member AoIs saturate at the same value, making instantaneous stale-tail

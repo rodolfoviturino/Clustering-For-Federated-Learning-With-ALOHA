@@ -1873,6 +1873,39 @@ class JaxModelTests(unittest.TestCase):
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
         )
 
+    def test_member_collision_aware_quota_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=109,
+            optimized_d2d_access_mode="member_collision_aware_quota",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.15,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_member_refresh_floor_fraction=0.0,
+            optimized_d2d_member_collision_target_fraction=0.02,
+            optimized_d2d_member_collision_gain=3.0,
+            optimized_d2d_member_collision_min_quota_scale=0.25,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
     def test_member_fair_utility_prioritizes_zero_participation_members(self):
         probability = jax_models._member_fair_utility_access_probability(
             aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
@@ -1981,6 +2014,78 @@ class JaxModelTests(unittest.TestCase):
         self.assertGreater(probability[1], probability[2])
         self.assertGreater(probability[2], probability[0])
         self.assertTrue(np.all(probability <= 0.9))
+
+    def test_member_collision_aware_quota_damps_refresh_quota_when_collisions_are_high(self):
+        common_kwargs = dict(
+            aggregate_norms=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            cluster_sizes=jax_models.jnp.asarray([2, 2, 2]),
+            freshness=jax_models.jnp.asarray([1.0, 1.0, 1.0]),
+            member_aoi_by_cluster=jax_models.jnp.asarray(
+                [
+                    [2.0, 2.0],
+                    [2.0, 20.0],
+                    [2.0, 3.0],
+                ]
+            ),
+            member_participation_by_cluster=jax_models.jnp.asarray(
+                [
+                    [1, 1],
+                    [0, 0],
+                    [1, 1],
+                ]
+            ),
+            active_member_mask=jax_models.jnp.asarray(
+                [
+                    [True, True],
+                    [True, True],
+                    [True, True],
+                ]
+            ),
+            cluster_mask=jax_models.jnp.asarray([True, True, True]),
+            n_channels=2,
+            pcomp=jax_models.jnp.asarray(0.9),
+            fixed_access_probability=jax_models.jnp.asarray(0.2),
+            floor_fraction=0.0,
+            norm_exponent=0.0,
+            cluster_size_exponent=0.0,
+            freshness_exponent=0.0,
+            quota_weight=0.5,
+            quota_exponent=1.0,
+            quota_threshold_fraction=0.5,
+            refresh_floor_fraction=0.0,
+            load_target_factor=1.0,
+            load_allocation_mode="proportional_clip",
+            redistribution_fraction=0.0,
+            redistribution_trigger_ratio=0.95,
+            density_trigger_threshold=1.0,
+            dense_trigger_ratio=0.90,
+            clusterized_devices_fraction=0.0,
+            optimized_success_ewma=jax_models.jnp.asarray(0.0),
+            fixed_success_target=jax_models.jnp.asarray(1.0),
+        )
+        low_collision_probability = (
+            jax_models._member_collision_aware_quota_access_probability(
+                **common_kwargs,
+                collision_ewma=jax_models.jnp.asarray(0.0),
+                collision_target_fraction=0.02,
+                collision_gain=4.0,
+                min_quota_scale=0.25,
+            )
+        )
+        high_collision_probability = (
+            jax_models._member_collision_aware_quota_access_probability(
+                **common_kwargs,
+                collision_ewma=jax_models.jnp.asarray(0.20),
+                collision_target_fraction=0.02,
+                collision_gain=4.0,
+                min_quota_scale=0.25,
+            )
+        )
+
+        low_collision_probability = np.asarray(low_collision_probability)
+        high_collision_probability = np.asarray(high_collision_probability)
+        self.assertGreater(low_collision_probability[1], high_collision_probability[1])
+        self.assertTrue(np.all(high_collision_probability <= 0.9))
 
     def test_member_quota_utility_reserves_budget_for_zero_participation_members(self):
         probability = jax_models._member_quota_utility_access_probability(
@@ -2127,6 +2232,11 @@ class JaxModelTests(unittest.TestCase):
             {"optimized_d2d_member_deficit_decay": 1.1},
             {"optimized_d2d_member_deficit_weight": -0.1},
             {"optimized_d2d_member_deficit_weight": 1.1},
+            {"optimized_d2d_member_collision_target_fraction": -0.1},
+            {"optimized_d2d_member_collision_target_fraction": 1.1},
+            {"optimized_d2d_member_collision_gain": -0.1},
+            {"optimized_d2d_member_collision_min_quota_scale": -0.1},
+            {"optimized_d2d_member_collision_min_quota_scale": 1.1},
         )
         for kwargs in invalid_kwargs:
             with self.subTest(kwargs=kwargs):

@@ -38,6 +38,13 @@ Splits the optimized-D2D CH contender target into a base utility budget and an
 explicit member-refresh overlay. `--optimized-d2d-aoi-weight` is the reserved
 refresh quota. This is the current best member-freshness candidate.
 
+`member_collision_aware_quota`
+
+Keeps the quota structure but reduces the reserved member-refresh overlay when
+an EWMA of optimized-D2D CH collisions exceeds a configured target. This is the
+first follow-up after the negative deficit result and should be compared against
+`member_quota_w015_floor000_physical_r100`.
+
 `member_deficit_utility`
 
 Adds persistent per-cluster missed-refresh debt to the quota overlay. The goal
@@ -86,6 +93,9 @@ Final checkpoint values for the optimized ALOHA + D2D curve:
 | `member_quota_w010_floor000_physical_r100` | `member_quota_utility` | `4.323e-07` | `59.405` | `0.434` | `0.364` | `797.3` | `0.988` | `0.0088` |
 | `member_quota_w015_floor000_physical_r100` | `member_quota_utility` | `6.109e-07` | `58.319` | `0.413` | `0.337` | `762.7` | `0.984` | `0.0119` |
 | `member_deficit_v3_w015_dw005_decay095_physical_r100` | `member_deficit_utility` | `3.111e-03` | `63.341` | `0.462` | `0.373` | `242.2` | `0.935` | `0.0600` |
+| `member_collision_quota_w015_t002_g2_min025_physical_r100` | `member_collision_aware_quota` | `2.663e-07` | `60.872` | `0.461` | `0.401` | `839.4` | `0.991` | `0.0064` |
+| `member_collision_quota_w015_t002_g4_min025_physical_r100` | `member_collision_aware_quota` | `2.683e-07` | `60.901` | `0.462` | `0.403` | `839.6` | `0.990` | `0.0072` |
+| `member_collision_quota_w015_t003_g4_min025_physical_r100` | `member_collision_aware_quota` | `2.608e-07` | `61.016` | `0.462` | `0.402` | `837.6` | `0.990` | `0.0072` |
 
 `member_deficit_v3` with deficit weights `0.05`, `0.10`, and `0.25` all stayed
 near the same poor regime: final error around `3.1e-3`, member stale75 around
@@ -104,6 +114,16 @@ diagnosed failure mode can be moved: `CH no attempt` falls from about `0.984`
 to about `0.935`. However, that simply creates an ALOHA collision regime:
 collision attribution rises from about `0.012` to about `0.060`, CH uploads
 drop, error stagnates near `3e-3`, and energy efficiency collapses.
+
+`member_collision_aware_quota` is a mixed ablation. It successfully avoids the
+deficit policy's collision regime: collision attribution stays around
+`0.006-0.007`, below the `member_quota_w015` value of about `0.012`. It also
+improves final error and energy efficiency relative to `member_quota_w015`.
+However, the collision feedback dampens the refresh overlay enough that
+member-level freshness regresses: member stale75 rises from `0.413` to about
+`0.461-0.462`, and zero-participation fraction rises from `0.337` to about
+`0.401-0.403`. This makes it useful as a conservative convergence/energy
+ablation, but not as the main member-freshness policy.
 
 This means the current dense physical/Rayleigh regime is not limited only by
 "which stale cluster should get more probability". It is also collision limited.
@@ -125,13 +145,19 @@ Do not present `member_deficit_utility` as a main policy. Keep it as an
 implemented negative ablation showing that stale-member opportunity pressure can
 be over-concentrated and collision dominated.
 
+Do not replace `member_quota_utility` with `member_collision_aware_quota` as the
+main member-freshness result. Keep `member_collision_aware_quota` as a documented
+ablation showing that feedback can protect convergence/energy, but that simple
+global collision damping gives back too much member freshness.
+
 ## Next Research Direction
 
-The next implementation should not be another smooth probability-only tweak.
-The results point to one of these directions:
+The next implementation should not be another global smooth probability-only
+tweak. The results point to one of these directions:
 
-1. Collision-aware refresh overlay: reserve member-refresh quota only while
-   keeping an explicit cap on expected refresh contenders.
+1. Per-cluster or per-refresh-class collision control: keep the member quota
+   for the most starved clusters, but cap the base/overlay load locally instead
+   of damping the entire refresh overlay from one global EWMA.
 2. Scheduled or semi-scheduled refresh: use a small deterministic refresh budget
    for the oldest member-starved clusters instead of pure ALOHA.
 3. Re-clustering or cluster splitting: reduce the number of stale members
@@ -145,4 +171,3 @@ reveals starvation hidden by cluster-level AoI, and a quota-based refresh overla
 improves that member freshness under physical energy/Rayleigh assumptions. The
 deficit experiments show the boundary where access opportunity becomes collision
 limited.
-

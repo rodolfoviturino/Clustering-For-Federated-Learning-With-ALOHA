@@ -284,6 +284,15 @@ def run_gpu_sweep(args):
             optimized_d2d_member_deficit_weight=(
                 args.optimized_d2d_member_deficit_weight
             ),
+            optimized_d2d_member_collision_target_fraction=(
+                args.optimized_d2d_member_collision_target_fraction
+            ),
+            optimized_d2d_member_collision_gain=(
+                args.optimized_d2d_member_collision_gain
+            ),
+            optimized_d2d_member_collision_min_quota_scale=(
+                args.optimized_d2d_member_collision_min_quota_scale
+            ),
             checkpoints=checkpoints,
             dtype=compute_dtype,
         )
@@ -751,6 +760,15 @@ def run_gpu_sweep(args):
         ),
         "optimized_d2d_member_deficit_weight": float(
             args.optimized_d2d_member_deficit_weight
+        ),
+        "optimized_d2d_member_collision_target_fraction": float(
+            args.optimized_d2d_member_collision_target_fraction
+        ),
+        "optimized_d2d_member_collision_gain": float(
+            args.optimized_d2d_member_collision_gain
+        ),
+        "optimized_d2d_member_collision_min_quota_scale": float(
+            args.optimized_d2d_member_collision_min_quota_scale
         ),
         "clustering_strategy_note": (
             dense_strategy_note
@@ -1327,6 +1345,7 @@ def build_parser():
             "member_refresh_utility",
             "member_quota_utility",
             "member_deficit_utility",
+            "member_collision_aware_quota",
         ),
         default="norm",
         help=(
@@ -1348,7 +1367,9 @@ def build_parser():
             "member_quota_utility splits the CH contender target into a base "
             "utility budget and an explicit stale-member refresh quota; "
             "member_deficit_utility ranks that quota by persistent missed "
-            "refresh opportunity deficit."
+            "refresh opportunity deficit; member_collision_aware_quota keeps "
+            "the quota but dampens it when optimized-D2D collisions exceed a "
+            "target."
         ),
     )
     parser.add_argument(
@@ -1537,7 +1558,9 @@ def build_parser():
             "zero-participation members; for member_quota_utility it is the "
             "explicit stale-member quota fraction subtracted from the base "
             "utility contender target; for member_deficit_utility it is the "
-            "same quota, ranked by current member pressure plus deficit."
+            "same quota, ranked by current member pressure plus deficit; for "
+            "member_collision_aware_quota it is the maximum quota before "
+            "collision feedback damping."
         ),
     )
     parser.add_argument(
@@ -1610,6 +1633,36 @@ def build_parser():
             "values make old missed opportunities a stronger tie-breaker. "
             "Keep this small in dense regimes because excessive concentration "
             "can trade CH no-attempt failures for ALOHA collisions."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-collision-target-fraction",
+        type=float,
+        default=0.02,
+        help=(
+            "member_collision_aware_quota target optimized-D2D CH collision "
+            "fraction. The member-refresh quota is unchanged while the EWMA is "
+            "at or below this value and is damped when the EWMA rises above it."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-collision-gain",
+        type=float,
+        default=4.0,
+        help=(
+            "member_collision_aware_quota damping gain. Larger values reduce "
+            "the refresh quota more aggressively once the observed collision "
+            "EWMA exceeds --optimized-d2d-member-collision-target-fraction."
+        ),
+    )
+    parser.add_argument(
+        "--optimized-d2d-member-collision-min-quota-scale",
+        type=float,
+        default=0.25,
+        help=(
+            "member_collision_aware_quota minimum scale applied to the member "
+            "refresh quota under high collision EWMA. 0 can fully disable the "
+            "overlay; 1 disables collision-aware damping."
         ),
     )
     parser.add_argument(

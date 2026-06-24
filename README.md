@@ -329,6 +329,16 @@ probabilistic ALOHA, not centralized scheduling. The optional
 on refresh-eligible clusters, but it should be swept carefully because floors
 can increase collisions.
 
+The collision-aware quota variant is
+`--optimized-d2d-access-mode member_collision_aware_quota`. It keeps the
+member-refresh quota structure, but monitors an EWMA of optimized-D2D CH
+collisions. When that EWMA exceeds
+`--optimized-d2d-member-collision-target-fraction`, the reserved member-refresh
+quota is damped by `--optimized-d2d-member-collision-gain` down to the optional
+floor `--optimized-d2d-member-collision-min-quota-scale`. This is the direct
+response to the deficit experiments: keep stale-member refresh pressure, but
+avoid moving the bottleneck from `CH no attempt` into ALOHA collisions.
+
 The stateful deficit variant is
 `--optimized-d2d-access-mode member_deficit_utility`. It keeps the explicit
 quota split, but ranks the refresh overlay with a persistent per-cluster missed
@@ -999,9 +1009,9 @@ skip cleanly when JAX is not installed in the local interpreter.
   and resets only for devices whose update was active inside that delivered
   aggregate. The member-level columns are diagnostics and do not change
   scheduling by default. Optional member-aware access policies such as
-  `member_fair_utility`, `member_refresh_utility`, `member_quota_utility`, and
-  `member_deficit_utility` consume those diagnostics only when explicitly
-  selected.
+`member_fair_utility`, `member_refresh_utility`, `member_quota_utility`, and
+  `member_collision_aware_quota`/`member_deficit_utility` consume those
+  diagnostics only when explicitly selected.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching
   the thesis model. Mean-normalized or utility-weighted CH access is an ablation
   candidate, not the default implementation.

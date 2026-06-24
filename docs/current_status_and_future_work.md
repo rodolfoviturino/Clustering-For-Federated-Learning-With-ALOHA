@@ -876,6 +876,20 @@ efficiency while strongly improving member freshness. The next robustness check
 should therefore rerun the two-channel and three-channel points at larger
 `K`/round counts.
 
+That first larger-`K` check has now been run for `K=3000`, `rounds=100`,
+`iterations=100`, and `control_cost=0.0010`. Both semi-scheduled points
+converged strongly: the two-channel point reached final error `2.37e-16` and
+`t<=1e-12` at round `66`; the three-channel point reached `2.09e-16` and
+`t<=1e-12` at round `59`. Within `K=3000`, the three-channel point is the
+better candidate so far (`member_aoi=63.863`, `member_stale75=0.437`,
+`member_zero=0.312`, `energy_efficiency=825.7`) than the two-channel point
+(`member_aoi=66.287`, `member_stale75=0.482`, `member_zero=0.387`,
+`energy_efficiency=809.4`). Do not overclaim this yet: the available comparison
+still mixes `K=3000` semi-scheduled runs with `K=1000` member-quota baselines.
+The next fair experiment is a same-`K=3000` `member_quota_utility` baseline and
+then a larger scheduled-budget sweep (`0.40`/`0.50`) or larger `M`, because the
+remaining stale-member breakdown is still dominated by `CH no attempt`.
+
 ### Step 2: Calibrate The First-Order Energy Model
 
 The code now implements opt-in first-order radio accounting:

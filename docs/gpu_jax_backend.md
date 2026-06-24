@@ -686,8 +686,10 @@ The detailed physical/Rayleigh member-level comparison is recorded in
 member-freshness candidate, keep `member_deficit_utility` only as a negative
 collision-dominated ablation, and use `semi_scheduled_member_refresh` as the
 strongest enhanced candidate when coordinated refresh slots are acceptable.
-The best tested semi-scheduled point is schedule fraction `0.20` with deficit
-tie-breaker weight `0.0`.
+The best tested `K=1000` balanced semi-scheduled point is schedule fraction
+`0.20` with deficit tie-breaker weight `0.0`; the first `K=3000` robustness
+check favored `0.30` over `0.20`, but still needs same-`K` member-quota
+baselines before being used as a scale claim.
 
 The utility Pareto tuning runner is:
 

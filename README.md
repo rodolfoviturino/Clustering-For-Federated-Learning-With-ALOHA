@@ -373,8 +373,10 @@ The current physical/Rayleigh member-level conclusion is documented in
 member-freshness policy, with `w=0.15`, `floor=0` as its strongest tested
 point. `semi_scheduled_member_refresh` is now the strongest enhanced policy
 when a small coordinated refresh-slot control plane is acceptable; the best
-tested point is `--optimized-d2d-member-schedule-fraction 0.20` with no deficit
-tie-breaker. `member_deficit_utility` is retained as a negative ablation: it
+tested `K=1000` balanced point is `--optimized-d2d-member-schedule-fraction
+0.20` with no deficit tie-breaker, while the first `K=3000` robustness check
+favored `0.30` over `0.20` among the two tested settings.
+`member_deficit_utility` is retained as a negative ablation: it
 reduces `CH no attempt`, but it moves the bottleneck into ALOHA collisions and
 badly degrades convergence and energy efficiency.
 

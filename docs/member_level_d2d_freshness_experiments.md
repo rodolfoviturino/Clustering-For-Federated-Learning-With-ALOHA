@@ -178,6 +178,29 @@ freshness/error point (`final_error=3.36e-9`, `member_stale75=0.183`,
 energy/freshness tradeoff, two channels for the balanced point, and three
 channels for the strongest member-freshness point.
 
+The first `K=3000`, `rounds=100`, `iterations=100` robustness check reran the
+two-channel and three-channel semi-scheduled points with the same physical
+Rayleigh settings and `control_cost=0.0010`. It validates the convergence side
+of the policy, but it should not yet be used as a final scale claim for member
+freshness because the current comparison table mixes these `K=3000` runs with
+`K=1000` baselines.
+
+| Run | Reserved Channels | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency | CH No Attempt | Collision |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `member_semischedule_k3000_s020_cc0010_physical_r100` | 2 | `2.366e-16` | `66` | `66.287` | `0.482` | `0.387` | `809.4` | `0.984` | `0.0128` |
+| `member_semischedule_k3000_s030_cc0010_physical_r100` | 3 | `2.093e-16` | `59` | `63.863` | `0.437` | `0.312` | `825.7` | `0.983` | `0.0117` |
+
+Within `K=3000`, the three-channel point dominates the two-channel point on the
+tested metrics: faster convergence to `1e-12`, lower final error, lower member
+AoI/stale/zero fractions, slightly lower collision attribution, and higher
+energy efficiency. The important caveat is that absolute member freshness is
+worse than in the `K=1000` semi-scheduled runs. That is plausible rather than
+surprising: with the default `M=10`, the policy still reserves only two or
+three scheduled refresh slots per round while the clustered population is about
+three times larger. The member-failure breakdown remains dominated by
+`CH no attempt`, so the dense-scale bottleneck is still refresh opportunity
+budget, not member compute, member link, member energy, or CH-BS decoding.
+
 This means the current dense physical/Rayleigh regime is not limited only by
 "which stale cluster should get more probability". It is also collision limited.
 Persistent probability shaping is therefore not enough once the access overlay
@@ -221,18 +244,23 @@ member policy on member freshness and energy efficiency.
 The next experiments should validate whether the semi-scheduled gain is robust
 outside the current `K=1000`, `M=10`, `rounds=100` setting:
 
-1. Re-run the best two-channel and three-channel points at larger `K` and/or
-   more rounds to verify that the dominance is not a `K=1000`, `rounds=100`
-   artifact.
-2. Sweep larger nonzero `--optimized-d2d-member-schedule-control-cost` values
+1. Add fair `K=3000` baselines for `member_quota_utility` and, if time allows,
+   the best non-member utility configuration. The first `K=3000`
+   semi-scheduled check is positive for convergence, but it is not enough for a
+   member-freshness claim without same-`K` baselines.
+2. Sweep larger scheduled budgets at `K=3000` (`0.40` and `0.50`, i.e. four and
+   five reserved channels when `M=10`) or increase `M` proportionally. The
+   current failure attribution says the remaining stale tail is still dominated
+   by missing CH attempts.
+3. Sweep larger nonzero `--optimized-d2d-member-schedule-control-cost` values
    above `0.0010` if a break-even overhead is needed; the tested range up to
    `0.0010` still keeps energy efficiency above `member_quota_w015`.
-3. Per-cluster or per-refresh-class collision control: keep the member quota
+4. Per-cluster or per-refresh-class collision control: keep the member quota
    for the most starved clusters, but cap the base/overlay load locally instead
    of damping the entire refresh overlay from one global EWMA.
-4. Re-clustering or cluster splitting: reduce the number of stale members
+5. Re-clustering or cluster splitting: reduce the number of stale members
    competing behind the same sparse CH access opportunities.
-5. Virtual queues with collision feedback: update the queue only when added
+6. Virtual queues with collision feedback: update the queue only when added
    access did not collide, so debt does not push too many CHs into the same
    contention interval.
 

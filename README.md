@@ -893,6 +893,27 @@ energy-efficiency tradeoff figure. The plots draw CI95 error bars when those
 columns are present. Colors separate the pure-ALOHA baseline, pure-ALOHA
 ablations, structural/negative ablations, and the coordinated upper-bound.
 
+For a minimal robustness check outside K=3000, the same runner exposes
+`k1000_minimal`, `k5000_minimal`, and the combined launch matrix
+`k1000_k5000_minimal`. To execute missing K=1000/K=5000 runs intentionally:
+
+```bash
+python -m experiments.run_research_matrix --matrix k1000_k5000_minimal --execute-missing
+```
+
+After the runs exist, compare and export each density separately so
+baseline-relative deltas stay within the same device count:
+
+```bash
+python -m experiments.run_research_matrix --matrix k1000_minimal --compare-only
+python -m experiments.export_paper_tables --comparison-csv Runs/comparison_k1000_minimal/run_comparison_summary.csv
+python -m experiments.plot_research_matrix --comparison-csv Runs/comparison_k1000_minimal/run_comparison_summary.csv
+
+python -m experiments.run_research_matrix --matrix k5000_minimal --compare-only
+python -m experiments.export_paper_tables --comparison-csv Runs/comparison_k5000_minimal/run_comparison_summary.csv
+python -m experiments.plot_research_matrix --comparison-csv Runs/comparison_k5000_minimal/run_comparison_summary.csv
+```
+
 To compare all CH-rotation energy profiles with the same controlled setup, use
 the dedicated sweep runner:
 

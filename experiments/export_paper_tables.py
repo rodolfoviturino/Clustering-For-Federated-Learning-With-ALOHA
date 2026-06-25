@@ -17,7 +17,7 @@ DEFAULT_COMPARISON_CSV = (
     Path("Runs") / "comparison_k3000_core" / "run_comparison_summary.csv"
 )
 DEFAULT_CAPTION = (
-    "Canonical K=3000 physical/Rayleigh comparison for optimized D2D ALOHA."
+    "Research-matrix physical/Rayleigh comparison for optimized D2D ALOHA."
 )
 DEFAULT_LABEL = "tab:k3000-core"
 
@@ -145,7 +145,7 @@ def write_markdown_table(export_rows, baseline, output_path):
     with Path(output_path).open("w", encoding="utf-8") as handle:
         handle.write("# Paper Results Table\n\n")
         handle.write(
-            "Canonical K=3000 physical/Rayleigh comparison. Deltas are relative "
+            "Research-matrix physical/Rayleigh comparison. Deltas are relative "
             f"to `{baseline.get('run', '')}`. Lower member AoI, stale75, and "
             "zero-participation are better; higher energy efficiency is better. "
             "Metric cells use `mean +/- ci95` when the comparison CSV contains "
@@ -316,9 +316,9 @@ def short_label(row):
         return "Size-only safe split"
     if run.startswith("member_pressure_split"):
         return "Pressure-guided split"
-    if run.startswith("member_split_k3000_s8"):
+    if run.startswith("member_split_") and "_s8_" in run:
         return "Global split max 8"
-    if run.startswith("member_split_k3000_s5"):
+    if run.startswith("member_split_") and "_s5_" in run:
         return "Global split max 5"
     if run.startswith("member_semischedule"):
         return "Semi-scheduled upper bound"

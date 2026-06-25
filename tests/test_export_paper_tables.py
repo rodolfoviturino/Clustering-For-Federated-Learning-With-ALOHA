@@ -116,6 +116,8 @@ class ExportPaperTablesTests(unittest.TestCase):
             self.assertIn("Quota baseline", markdown_text)
             self.assertIn("Collision-aware quota", markdown_text)
             self.assertIn("Semi-scheduled upper bound", markdown_text)
+            self.assertIn("Research-matrix physical/Rayleigh", markdown_text)
+            self.assertNotIn("Canonical K=3000", markdown_text)
             self.assertIn("mean +/- ci95", markdown_text)
             self.assertIn("74.230 +/- 0.120", markdown_text)
             self.assertIn("+5.3%", markdown_text)

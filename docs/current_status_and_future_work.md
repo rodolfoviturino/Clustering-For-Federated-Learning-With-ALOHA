@@ -838,6 +838,13 @@ work using the current canonical comparison numbers.
 The wider writing plan is in `docs/paper_manuscript_outline.md`, and the
 artifact/claim audit is in `docs/reproducibility_checklist.md`. Use those files
 before launching new simulations so the current paper package stays coherent.
+Minimal robustness matrices are now defined in the same runner:
+`k1000_minimal`, `k5000_minimal`, and combined `k1000_k5000_minimal`. These
+reuse the K=3000 physical/Rayleigh setup with only the device count changed and
+four roles per density: member-quota baseline, capped-quota pure-ALOHA
+ablation, global split negative ablation, and semi-scheduled upper-bound.
+Compare/export K=1000 and K=5000 separately so baseline-relative deltas are not
+mixed across densities.
 
 Implemented collision-control follow-up: `--optimized-d2d-access-mode
 member_collision_aware_quota`. It keeps the useful `member_quota_utility`

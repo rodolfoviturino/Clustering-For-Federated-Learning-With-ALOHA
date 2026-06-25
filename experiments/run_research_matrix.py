@@ -66,6 +66,66 @@ K3000_PHYSICAL_BASE = {
 }
 
 
+def _minimal_robustness_runs(devices):
+    """Return the minimal pure-ALOHA robustness matrix for one density."""
+    density = f"k{devices}"
+    device_overrides = {"devices": devices}
+    return [
+        MatrixRun(
+            run_name=f"member_quota_{density}_w015_floor000_physical_r100",
+            claim_role="robustness pure-ALOHA baseline",
+            claim_summary=(
+                "Member-quota pure-ALOHA reference for the "
+                f"K={devices} robustness check."
+            ),
+            overrides=device_overrides,
+        ),
+        MatrixRun(
+            run_name=f"member_capped_quota_{density}_w015_cap010_physical_r100",
+            claim_role="robustness pure-ALOHA convergence/energy ablation",
+            claim_summary=(
+                "Low capped-quota point tests whether the K=3000 "
+                "convergence/energy ablation persists at this density."
+            ),
+            overrides={
+                **device_overrides,
+                "optimized_d2d_access_mode": "member_capped_quota_utility",
+                "optimized_d2d_member_quota_cap_fraction": 0.10,
+            },
+        ),
+        MatrixRun(
+            run_name=f"member_split_{density}_s8_w015_physical_r100",
+            claim_role="robustness negative structural ablation",
+            claim_summary=(
+                "Global max-size split checks whether naive cluster splitting "
+                "remains harmful outside K=3000."
+            ),
+            overrides={
+                **device_overrides,
+                "cluster_split_mode": "max_size",
+                "cluster_split_max_size": 8,
+            },
+        ),
+        MatrixRun(
+            run_name=f"member_semischedule_{density}_s030_cc0010_physical_r100",
+            claim_role="robustness coordinated upper-bound / future work",
+            claim_summary=(
+                "Semi-scheduled refresh is kept as a coordinated upper-bound, "
+                "not as a pure-ALOHA contribution."
+            ),
+            overrides={
+                **device_overrides,
+                "optimized_d2d_access_mode": "semi_scheduled_member_refresh",
+                "optimized_d2d_member_schedule_fraction": 0.30,
+                "optimized_d2d_member_schedule_deficit_weight": 0.0,
+                "optimized_d2d_member_schedule_control_cost": 0.001,
+                "optimized_d2d_aoi_weight": 0.5,
+                "optimized_d2d_member_refresh_floor_fraction": 0.05,
+            },
+        ),
+    ]
+
+
 MATRICES = {
     "k3000_core": [
         MatrixRun(
@@ -176,6 +236,31 @@ MATRICES = {
             },
         ),
     ],
+    "k1000_minimal": _minimal_robustness_runs(1000),
+    "k5000_minimal": _minimal_robustness_runs(5000),
+    "k1000_k5000_minimal": (
+        _minimal_robustness_runs(1000) + _minimal_robustness_runs(5000)
+    ),
+}
+
+
+MATRIX_SUMMARY_TEXT = {
+    "k3000_core": (
+        "This summary classifies canonical K=3000 physical/Rayleigh runs "
+        "for paper writing."
+    ),
+    "k1000_minimal": (
+        "This summary classifies the minimal K=1000 physical/Rayleigh "
+        "robustness matrix."
+    ),
+    "k5000_minimal": (
+        "This summary classifies the minimal K=5000 physical/Rayleigh "
+        "robustness matrix."
+    ),
+    "k1000_k5000_minimal": (
+        "This summary classifies the combined K=1000/K=5000 minimal "
+        "physical/Rayleigh robustness matrix."
+    ),
 }
 
 
@@ -256,7 +341,13 @@ def execute_missing(matrix, runs_dir, matrix_name="k3000_core"):
     return generated
 
 
-def compare_matrix(matrix, runs_dir, output_dir, scenario=DEFAULT_SCENARIO):
+def compare_matrix(
+    matrix,
+    runs_dir,
+    output_dir,
+    scenario=DEFAULT_SCENARIO,
+    matrix_name=None,
+):
     """Write comparison and paper-claim summaries for a matrix."""
     summaries = []
     by_name = {entry.run_name: entry for entry in matrix}
@@ -272,22 +363,36 @@ def compare_matrix(matrix, runs_dir, output_dir, scenario=DEFAULT_SCENARIO):
         summaries.append(summary)
 
     csv_path, markdown_path = write_comparison(summaries, output_dir)
-    paper_path = write_paper_claim_summary(summaries, by_name, output_dir)
+    paper_path = write_paper_claim_summary(
+        summaries,
+        by_name,
+        output_dir,
+        matrix_name=matrix_name,
+    )
     return csv_path, markdown_path, paper_path
 
 
-def write_paper_claim_summary(summaries, matrix_by_name, output_dir):
+def write_paper_claim_summary(summaries, matrix_by_name, output_dir, matrix_name=None):
     """Write a compact Markdown summary oriented toward paper claims."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     paper_path = output_dir / "paper_claim_summary.md"
-    baseline = summaries[0] if summaries else {}
+    baselines = [
+        row
+        for row in summaries
+        if "baseline" in str(row.get("claim_role", "")).lower()
+    ]
+    if not baselines and summaries:
+        baselines = [summaries[0]]
+    summary_text = MATRIX_SUMMARY_TEXT.get(
+        matrix_name,
+        "This summary classifies physical/Rayleigh research-matrix runs.",
+    )
 
     with paper_path.open("w", encoding="utf-8") as handle:
         handle.write("# Paper Claim Summary\n\n")
         handle.write(
-            "This summary classifies canonical K=3000 physical/Rayleigh runs "
-            "for paper writing. Lower member AoI/stale/zero is better; "
+            f"{summary_text} Lower member AoI/stale/zero is better; "
             "`semi_scheduled_member_refresh` is an upper-bound reference, not "
             "a pure-ALOHA contribution. Metric cells use `mean +/- ci95` when "
             "the comparison CSV contains CI95 columns.\n\n"
@@ -320,14 +425,24 @@ def write_paper_claim_summary(summaries, matrix_by_name, output_dir):
                 )
             )
 
-        if baseline:
+        if baselines:
             handle.write("\n## Main Baseline\n\n")
-            handle.write(
-                f"`{baseline['run']}` remains the pure-ALOHA baseline for "
-                "member-level D2D freshness. Other pure-ALOHA points should be "
-                "described as ablations unless they improve member freshness "
-                "without damaging convergence/energy.\n"
-            )
+            if len(baselines) == 1:
+                handle.write(
+                    f"`{baselines[0]['run']}` remains the pure-ALOHA baseline "
+                    "for member-level D2D freshness. Other pure-ALOHA points "
+                    "should be described as ablations unless they improve "
+                    "member freshness without damaging convergence/energy.\n"
+                )
+            else:
+                handle.write(
+                    "Rows marked as robustness baselines are the pure-ALOHA "
+                    "references for their respective densities. Ablations "
+                    "should be interpreted against the baseline with the same "
+                    "device count.\n\n"
+                )
+                for baseline in baselines:
+                    handle.write(f"- `{baseline['run']}`\n")
     return paper_path
 
 
@@ -402,6 +517,7 @@ def main(argv=None):
         runs_dir=args.runs_dir,
         output_dir=output_dir,
         scenario=args.scenario,
+        matrix_name=args.matrix,
     )
     print(f"wrote {csv_path}")
     print(f"wrote {markdown_path}")

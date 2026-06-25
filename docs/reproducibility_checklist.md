@@ -224,14 +224,42 @@ Before submitting or sharing a draft, check each claim:
 
 ## Minimal Robustness Extension
 
-Do not start this until the manuscript package is internally consistent. If
-extra evidence is required, prefer a small robustness matrix instead of a new
-strategy:
+Minimal robustness matrices are available in `experiments.run_research_matrix`.
+They should be used before adding another strategy if the paper needs evidence
+outside the canonical K=3000 setting.
 
-- one smaller density, e.g. `K=1000`;
-- one larger density, e.g. `K=5000`;
-- or one channel-count sensitivity study;
-- include only baseline, best pure-ALOHA ablation, negative split, and
-  upper-bound.
+Available matrices:
 
-The goal of this extension would be external validity, not a new contribution.
+```text
+k1000_minimal
+k5000_minimal
+k1000_k5000_minimal
+```
+
+The combined matrix is convenient for launching missing runs:
+
+```powershell
+python -m experiments.run_research_matrix --matrix k1000_k5000_minimal --execute-missing
+```
+
+For analysis, compare/export each density separately so deltas are relative to
+the baseline with the same device count:
+
+```powershell
+python -m experiments.run_research_matrix --matrix k1000_minimal --compare-only
+python -m experiments.export_paper_tables --comparison-csv Runs/comparison_k1000_minimal/run_comparison_summary.csv
+python -m experiments.plot_research_matrix --comparison-csv Runs/comparison_k1000_minimal/run_comparison_summary.csv
+
+python -m experiments.run_research_matrix --matrix k5000_minimal --compare-only
+python -m experiments.export_paper_tables --comparison-csv Runs/comparison_k5000_minimal/run_comparison_summary.csv
+python -m experiments.plot_research_matrix --comparison-csv Runs/comparison_k5000_minimal/run_comparison_summary.csv
+```
+
+Each density uses four roles:
+
+- member-quota pure-ALOHA baseline;
+- capped-quota pure-ALOHA convergence/energy ablation;
+- global split negative structural ablation;
+- semi-scheduled coordinated upper-bound.
+
+The goal is external validity of the current story, not a new contribution.

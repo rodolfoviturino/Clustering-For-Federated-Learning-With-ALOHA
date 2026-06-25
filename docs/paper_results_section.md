@@ -163,7 +163,8 @@ table and PDF figures, and align the text with the introduction and related
 work. Future technical work can then be organized around two separate tracks:
 
 - pure-ALOHA robustness across more densities, channel counts, and physical
-  regimes;
+  regimes, starting from the implemented `k1000_minimal` and `k5000_minimal`
+  research matrices;
 - non-ALOHA future work, where semi-scheduled refresh motivates coordinated
   access, graph/data-aware clustering, and eventually learning-aware
   comparisons with non-IID FL objectives.

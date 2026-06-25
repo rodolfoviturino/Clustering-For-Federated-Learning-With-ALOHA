@@ -178,6 +178,15 @@ Setup:
 - quality CH selection using Rayleigh channel score;
 - optimized D2D load allocation with conditional selective water filling.
 
+Minimal robustness extension:
+
+- `k1000_minimal`: same physical/Rayleigh setup at `K=1000`;
+- `k5000_minimal`: same physical/Rayleigh setup at `K=5000`;
+- `k1000_k5000_minimal`: combined launch matrix for missing runs.
+
+Analyze K=1000 and K=5000 separately when exporting tables or figures so the
+baseline-relative deltas remain within one device count.
+
 Artifacts:
 
 - Table: `Runs/comparison_k3000_core/paper_results_table.tex`.
@@ -217,7 +226,8 @@ Keep claims scientifically defensible.
 
 State explicitly:
 
-- Results are for the canonical K=3000 physical/Rayleigh setup.
+- The main results are for the canonical K=3000 physical/Rayleigh setup;
+  K=1000/K=5000 minimal matrices are robustness checks, not new strategies.
 - The learning task is synthetic and not yet a non-IID FL benchmark.
 - No FedAvg/FedProx/SCAFFOLD comparison is implemented in this phase.
 - No GNN/GCN clustering, data-aware clustering, OTA-FL, NOMA, IRSA, SIC, MPR,

@@ -218,6 +218,11 @@ Main interpretation:
 - Naive cluster splitting worsens the dense ALOHA operating point.
 - Semi-scheduled refresh demonstrates the upper-bound value of coordination but
   is outside the pure-ALOHA contribution.
+- The K=1000/K=5000 robustness checks preserve the qualitative story: capped
+  quota is an energy/convergence ablation, global splitting remains negative,
+  and semi-scheduled refresh remains a coordinated upper bound. At K=5000,
+  capped quota becomes more attractive but its member-freshness gains are still
+  small relative to the upper-bound gap.
 
 ### 8. Limitations
 

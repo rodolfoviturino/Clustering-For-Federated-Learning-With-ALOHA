@@ -380,7 +380,36 @@ freshness-balanced capped point is `cap025`, which slightly improves member AoI,
 stale75, and zero-participation, but the gains are all below `0.15%` and it does
 not improve the time to `1e-12`. Increasing the quota to `w=0.20` with caps
 `0.10`/`0.12` worsens member freshness and, for `cap010`, fails to reach
-`1e-12`.
+`1e-12`. These capped runs do not change the main claim.
+
+## Minimal K=1000/K=5000 Robustness Check
+
+After the canonical K=3000 package was consolidated, a minimal density
+robustness matrix was run with four roles per density: member-quota baseline,
+capped-quota pure-ALOHA ablation, global split negative ablation, and
+semi-scheduled coordinated upper-bound. These are external-validity checks, not
+new strategies.
+
+| Density | Variant | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency | Interpretation |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| K=1000 | `member_quota` | `6.109e-07 +/- 1.978e-07` | n/a | `58.319 +/- 0.415` | `0.413 +/- 0.005` | `0.337 +/- 0.006` | `762.7 +/- 16.6` | Baseline remains the pure-ALOHA freshness reference. |
+| K=1000 | `capped_quota cap010` | `2.725e-07 +/- 9.890e-08` | n/a | `61.269 +/- 0.338` | `0.466 +/- 0.005` | `0.407 +/- 0.004` | `851.5 +/- 21.6` | Energy improves, but freshness worsens. |
+| K=1000 | `split max8` | `1.559e-06 +/- 7.042e-07` | n/a | `59.046 +/- 0.412` | `0.420 +/- 0.006` | `0.341 +/- 0.006` | `699.4 +/- 18.2` | Negative structural ablation. |
+| K=1000 | `semi_scheduled` | `3.360e-09 +/- 8.904e-10` | n/a | `44.194 +/- 0.471` | `0.183 +/- 0.006` | `0.026 +/- 0.003` | `870.3 +/- 9.9` | Strong coordinated upper-bound. |
+| K=5000 | `member_quota` | `3.543e-12 +/- 6.942e-12` | n/a | `80.832 +/- 0.237` | `0.701 +/- 0.004` | `0.638 +/- 0.004` | `567.7 +/- 12.0` | Baseline remains the density reference. |
+| K=5000 | `capped_quota cap010` | `1.434e-15 +/- 1.817e-15` | `83` | `80.609 +/- 0.252` | `0.699 +/- 0.004` | `0.637 +/- 0.004` | `613.0 +/- 13.4` | Best high-density pure-ALOHA ablation; small freshness gain, larger energy gain. |
+| K=5000 | `split max8` | `9.625e-03 +/- 8.486e-03` | n/a | `91.683 +/- 1.237` | `0.860 +/- 0.019` | `0.800 +/- 0.020` | `232.8 +/- 46.9` | Strongly negative structural ablation. |
+| K=5000 | `semi_scheduled` | `1.103e-16 +/- 1.236e-17` | `45` | `70.430 +/- 0.216` | `0.533 +/- 0.003` | `0.405 +/- 0.002` | `852.6 +/- 6.1` | Strong coordinated upper-bound. |
+
+The density check strengthens the paper narrative. At K=1000, capped quota is
+clearly an energy/convergence ablation because it worsens member freshness. At
+K=5000, capped quota becomes more attractive: it improves energy efficiency by
+`8.0%` and slightly improves member AoI, stale75, and zero participation, but
+the freshness gains are very small compared with the coordinated upper-bound.
+The split ablation remains negative at both densities, especially at K=5000.
+The semi-scheduled upper-bound remains much stronger than pure ALOHA at both
+densities, so it continues to motivate future coordinated MAC work rather than
+the current pure-ALOHA claim.
 
 The collision-aware queue follow-up is a clear negative ablation. The tested
 point, `member_queue_quota_k3000_w015_qw005_decay095_physical_r100`, lowers

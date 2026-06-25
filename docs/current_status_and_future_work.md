@@ -845,6 +845,12 @@ four roles per density: member-quota baseline, capped-quota pure-ALOHA
 ablation, global split negative ablation, and semi-scheduled upper-bound.
 Compare/export K=1000 and K=5000 separately so baseline-relative deltas are not
 mixed across densities.
+The first robustness results are now documented in
+`docs/paper_results_section.md` and
+`docs/member_level_d2d_freshness_experiments.md`: at K=1000, capped quota
+improves energy but worsens member freshness; at K=5000, capped quota improves
+energy and only slightly improves member freshness; global split remains
+negative; and semi-scheduled refresh remains the coordinated upper-bound.
 
 Implemented collision-control follow-up: `--optimized-d2d-access-mode
 member_collision_aware_quota`. It keeps the useful `member_quota_utility`

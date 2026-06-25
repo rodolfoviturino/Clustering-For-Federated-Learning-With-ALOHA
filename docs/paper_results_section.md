@@ -127,6 +127,54 @@ that coordinated access can substantially improve the member-freshness tail,
 but it should be framed as future work or an upper-bound reference, not as the
 main contribution of the ALOHA-focused study.
 
+## Robustness Across Device Density
+
+The minimal robustness matrices test whether the K=3000 interpretation
+survives at smaller and larger densities without introducing new strategies.
+Each density uses four roles: member-quota pure-ALOHA baseline, capped-quota
+pure-ALOHA ablation, global max-size split as a negative structural ablation,
+and semi-scheduled refresh as the coordinated upper bound. These runs should be
+reported as external-validity evidence, not as a separate contribution.
+
+At K=1000, the result reinforces the conservative interpretation. The
+member-quota baseline obtains final error `6.109e-07 +/- 1.978e-07`, member AoI
+`58.319 +/- 0.415`, member stale75 `0.413 +/- 0.005`, zero participation
+`0.337 +/- 0.006`, and energy efficiency `762.7 +/- 16.6`. Capped quota
+improves final error and raises energy efficiency to `851.5 +/- 21.6`
+(`+11.6%`), but it worsens all member-freshness metrics: member AoI increases
+by `5.1%`, stale75 increases by `12.9%`, and zero participation increases by
+`20.7%`. Thus, at K=1000, capped quota is clearly an energy/convergence
+ablation rather than a member-freshness winner.
+
+The K=1000 split ablation remains negative, though less catastrophic than at
+higher density. It increases stale75 by `1.8%`, increases zero participation by
+`1.3%`, and reduces energy efficiency by `8.3%`. The semi-scheduled upper bound
+is very strong at this density: it reduces member AoI by `24.2%`, stale75 by
+`55.6%`, zero participation by `92.2%`, and improves energy efficiency by
+`14.1%`. This confirms that coordinated access can close a large part of the
+member-participation tail in the lower-density regime.
+
+At K=5000, capped quota becomes more favorable while still fitting the
+ablation framing. The member-quota baseline obtains final error
+`3.543e-12 +/- 6.942e-12`, member AoI `80.832 +/- 0.237`, member stale75
+`0.701 +/- 0.004`, zero participation `0.638 +/- 0.004`, and energy efficiency
+`567.7 +/- 12.0`. Capped quota reaches the `1e-12` target by round `83`,
+improves energy efficiency by `8.0%`, and slightly improves member AoI
+(`-0.3%`), stale75 (`-0.3%`), and zero participation (`-0.1%`). The freshness
+improvements are small relative to the main coordinated upper-bound gap, so the
+claim remains that capped quota is a useful high-density pure-ALOHA
+energy/convergence ablation, not a decisive new freshness policy.
+
+The K=5000 split ablation strongly confirms the negative structural result:
+member AoI worsens by `13.4%`, stale75 by `22.7%`, zero participation by
+`25.4%`, and energy efficiency drops by `59.0%`. The semi-scheduled upper bound
+again remains much stronger than pure ALOHA, reducing stale75 by `23.9%` and
+zero participation by `36.6%` while improving energy efficiency by `50.2%`.
+Together, the K=1000 and K=5000 robustness checks support the paper's main
+story: pure-ALOHA probability shaping yields useful operating-point tradeoffs,
+naive splitting is not a remedy, and the remaining member-freshness gap points
+toward coordinated MAC designs as future work.
+
 ## Interpretation
 
 The results support a narrow and defensible story. Within pure multichannel

@@ -262,4 +262,17 @@ Each density uses four roles:
 - global split negative structural ablation;
 - semi-scheduled coordinated upper-bound.
 
+Observed outcome after the first K=1000/K=5000 run:
+
+- K=1000: capped quota improves energy efficiency but worsens member AoI,
+  stale75, and zero participation, so it remains an energy/convergence
+  ablation.
+- K=5000: capped quota improves energy efficiency and slightly improves member
+  freshness, but the freshness gains are small relative to the semi-scheduled
+  upper-bound gap.
+- Global max-size split remains negative at both densities, especially at
+  K=5000.
+- Semi-scheduled refresh remains a strong coordinated upper-bound at both
+  densities.
+
 The goal is external validity of the current story, not a new contribution.

@@ -21,13 +21,23 @@ This document records the simulation defaults after the code cleanup.
   rotation repair. A source D2D cluster can merge into a target D2D cluster
   only when the target CH can directly cover every source member and the union
   still fits within `Cmax`.
-- Enhanced runs can enable local cluster splitting with
-  `--cluster-split-mode max_size`. This is a pre-FL structural ablation, not a
-  scheduling policy: clusters larger than `--cluster-split-max-size` are
-  re-clustered internally into valid one-hop subclusters. Devices that cannot
-  safely join a subcluster become singleton rows. The MAC remains pure
-  multichannel ALOHA, so the expected tradeoff is lower member hiding inside
-  large clusters versus more CH rows contending on the BS uplink.
+- Enhanced runs can enable local cluster splitting. This is a pre-FL
+  structural ablation, not a scheduling policy: D2D membership changes before
+  the FL loop, but CHs still contend through pure multichannel ALOHA.
+  `--cluster-split-mode max_size` is the aggressive global variant: every
+  cluster larger than `--cluster-split-max-size` is re-clustered internally into
+  valid one-hop subclusters, and devices that cannot safely join another
+  subcluster become singleton rows. `--cluster-split-mode safe_max_size` is the
+  selective variant: it considers only the largest oversized rows inside
+  `--cluster-split-budget-fraction` and rejects a proposed split if any emitted
+  row is smaller than `--cluster-split-min-subcluster-size`.
+  `--cluster-split-mode pressure_safe_max_size` uses the same safe split guard
+  but ranks oversized rows by a pre-FL participation-risk proxy: member-to-CH
+  distance pressure weighted by `--cluster-split-pressure-member-weight` plus
+  CH-to-BS channel pressure weighted by `--cluster-split-pressure-ch-weight`.
+  It does not inspect future AoI, uploads, labels, gradients, or model error.
+  The expected tradeoff remains lower member hiding inside large clusters
+  versus more CH rows contending on the BS uplink.
 - Enhanced runs can enable quality CH election with
   `--cluster-head-selection-mode quality`. This does not change cluster
   membership. It only moves the CH role to the highest-scoring member that can

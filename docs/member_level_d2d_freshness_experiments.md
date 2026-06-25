@@ -302,6 +302,8 @@ The coordinated semi-scheduled point is kept only as an upper-bound row.
 | `member_capped_quota_k3000_w020_cap010_physical_r100` | `member_capped_quota_utility` | `1.030e-11` | n/a | `74.410` | `0.623` | `0.565` | `726.6` |
 | `member_capped_quota_k3000_w020_cap012_physical_r100` | `member_capped_quota_utility` | `1.170e-13` | `93` | `74.317` | `0.621` | `0.561` | `722.7` |
 | `member_queue_quota_k3000_w015_qw005_decay095_physical_r100` | `member_collision_aware_queue_quota` | `3.126e-01` | n/a | `84.230` | `0.753` | `0.689` | `394.3` |
+| `member_safe_split_k3000_s8_min2_b005_w015_physical_r100` | `member_quota_utility` + `safe_max_size=8/min2/budget0.05` | `1.060e-11` | n/a | `74.325` | `0.620` | `0.556` | `643.4` |
+| `member_pressure_split_k3000_s8_min2_b005_mw100_ch050_w015_physical_r100` | `member_quota_utility` + `pressure_safe_max_size=8/min2/budget0.05` | `2.663e-13` | `95` | `74.369` | `0.619` | `0.556` | `651.8` |
 | `member_split_k3000_s8_w015_physical_r100` | `member_quota_utility` + `cluster_split_max_size=8` | `1.253e-07` | n/a | `78.167` | `0.670` | `0.604` | `506.3` |
 | `member_split_k3000_s5_w015_physical_r100` | `member_quota_utility` + `cluster_split_max_size=5` | `3.120e-02` | n/a | `93.788` | `0.891` | `0.835` | `103.9` |
 | `member_semischedule_k3000_s030_cc0010_physical_r100` | `semi_scheduled_member_refresh` | `2.093e-16` | `59` | `63.863` | `0.437` | `0.312` | `825.7` |
@@ -358,6 +360,47 @@ optimized+D2D uploads fall by `20.8%`, final energy efficiency falls by
 worsen from `0.618`/`0.554` to `0.670`/`0.604`. This effectively rules out
 global fixed-threshold splitting as the next main path.
 
+The selective structural follow-up is implemented as
+`--cluster-split-mode safe_max_size`. It preserves the `max_size` split
+mechanics but adds two safety guards: only the largest oversized source rows
+inside `--cluster-split-budget-fraction` are considered, and a proposed split
+is rejected if any emitted subcluster is smaller than
+`--cluster-split-min-subcluster-size`. This keeps the mode inside the pure
+ALOHA comparison frame: no reserved slots, no SIC/MPR, no scheduling, and no
+change to the multichannel collision abstraction. It should be evaluated as a
+selective structural ablation against the quota baseline and the negative
+global split points. The first evaluated point, `max_size=8`, minimum emitted
+subcluster size `2`, and budget fraction `0.05`, is much safer than global
+splitting but still not useful as a paper candidate. Relative to
+`member_quota_k3000_w015_floor000_physical_r100`, it adds only `4.02` CH rows
+on average and no extra singletons, but final error worsens to `1.06e-11`,
+optimized+D2D uploads fall from `2269.79` to `2220.63`, energy efficiency falls
+from `653.77` to `643.43`, member AoI rises from `74.230` to `74.325`, stale75
+rises from `0.618` to `0.620`, and zero-participation rises from `0.554` to
+`0.556`. The failure attribution shifts only slightly: collision attribution
+falls from `0.01436` to `0.01355`, but CH-no-attempt rises from `0.98344` to
+`0.98416`. Size-only selective splitting is therefore mostly neutral-to-negative
+and should not replace quota/collision-quota results.
+
+The next structural candidate is
+`--cluster-split-mode pressure_safe_max_size`. It keeps the same ALOHA-safe
+split mechanics and tiny-tail rejection, but changes candidate selection from
+pure size to a static participation-risk score. The score combines
+member-to-CH distance pressure and CH-to-BS channel pressure, with public
+weights `--cluster-split-pressure-member-weight` and
+`--cluster-split-pressure-ch-weight`. This is intentionally a proxy, not an
+oracle: it does not use future member AoI, zero-participation, labels, model
+error, or post-run outcomes. The first K=3000 point (`member_weight=1.0`,
+`ch_weight=0.5`, `budget=0.05`) is a useful convergence ablation but not a
+freshness win. It reaches `1e-12` at round `95`, improves final error versus
+the quota baseline (`2.66e-13` versus `4.22e-13`), and avoids the severe
+size-only safe-split stall. However, useful uploads remain `0.93%` below the
+baseline, final energy efficiency is `0.30%` lower, member AoI is `0.19%`
+higher, stale75 is `0.23%` higher, and zero-participation is `0.46%` higher.
+Pressure guidance lowers CH-no-attempt attribution slightly (`0.98344` to
+`0.98274`) but raises collision attribution (`0.01436` to `0.01513`), so the
+member-starvation bottleneck is not solved by static split selection.
+
 ## Next Research Direction
 
 The current pure-ALOHA probability-shaping branch has likely reached its useful
@@ -379,9 +422,17 @@ structural:
    The first implemented structural ablation is
    `--cluster-split-mode max_size`, which locally re-clusters large D2D rows
    into valid one-hop subclusters before FL rounds while keeping ALOHA access
-   unchanged. The first `max_size=5` and `max_size=8` runs are negative, so
-   the next structural attempt should be selective rather than globally
-   splitting every large cluster.
+   unchanged. The first `max_size=5` and `max_size=8` runs are negative. The
+   next implemented structural attempt is `safe_max_size`, which limits split
+   budget and rejects tiny-tail split proposals instead of globally splitting
+   every large cluster. Its first K=3000 point is safer but still
+   neutral-to-negative, so the next structural idea should select clusters by
+   member stale/zero pressure rather than by size alone. The current deployable
+   approximation is `pressure_safe_max_size`, which ranks candidates by
+   member-link and CH-BS risk before applying the same safe splitter. Its first
+   result helps convergence but not member freshness, so further split tuning
+   should not be the main next path unless it includes a stronger
+   participation-oriented mechanism.
 
 The immediate paper-defensible claim is now two-tiered: member-level D2D
 freshness reveals starvation hidden by cluster-level AoI; a quota-based refresh

@@ -126,7 +126,10 @@ outputs.
   CH-to-CH merge repair while preserving one-hop CH coverage and `Cmax`.
 - Optional cluster splitting re-clusters large rows locally into valid one-hop
   subclusters before the FL simulation, preserving ALOHA access while changing
-  D2D membership.
+  D2D membership. `max_size` is the global split ablation; `safe_max_size`
+  limits the split budget and rejects tiny-tail split proposals;
+  `pressure_safe_max_size` uses the same guard but ranks candidates by static
+  member-to-CH and CH-to-BS risk.
 - Optional quality CH election keeps cluster membership fixed but rotates the
   CH role to the best valid member according to D2D degree, BS channel quality,
   and battery.

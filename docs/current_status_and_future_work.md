@@ -936,8 +936,34 @@ The gentler `member_split_k3000_s8_w015_physical_r100` run is less damaging
 but still negative: uploads fall to `1797.06`, final error reaches only
 `1.25e-7`, energy efficiency falls to `506.26`, and member stale75/zero worsen
 to `0.670`/`0.604`. Naive global max-size splitting is therefore the wrong
-structural direction. Future structural work should use selective
-splitting/re-clustering instead of splitting every cluster above a fixed size.
+structural direction. The selective follow-up is now implemented as
+`--cluster-split-mode safe_max_size`. It keeps the original `max_size`
+implementation unchanged for reproducibility, but adds two guards:
+`--cluster-split-budget-fraction` limits how many oversized source rows can be
+split, and `--cluster-split-min-subcluster-size` rejects local split proposals
+that would create tiny tails. This remains a pure ALOHA-compatible structural
+ablation, not slot reservation or scheduling. The first K=3000 physical point,
+`member_safe_split_k3000_s8_min2_b005_w015_physical_r100`, is structurally
+safe but not beneficial: total CH rows rise only from `627.45` to `631.47` and
+singletons stay at `20.44`, but final error worsens from `4.22e-13` to
+`1.06e-11`, useful optimized+D2D uploads fall by `2.17%`, energy efficiency
+falls by `1.58%`, and member stale75/zero worsen from `0.618`/`0.554` to
+`0.620`/`0.556`. Size-only selective splitting is therefore not enough; any
+future re-clustering should be freshness-aware or member-participation-aware,
+not just capped by cluster size. The next opt-in implementation is now
+available as `--cluster-split-mode pressure_safe_max_size`. Because true
+member stale/zero pressure exists only after FL rounds begin, this mode uses a
+deployable pre-FL proxy: member-to-CH distance pressure and CH-to-BS channel
+pressure. It keeps the same tiny-tail rejection and split budget as
+`safe_max_size`, so it remains a structural ALOHA ablation rather than online
+scheduling. The first K=3000 point,
+`member_pressure_split_k3000_s8_min2_b005_mw100_ch050_w015_physical_r100`, is
+better than size-only safe splitting for convergence and reaches `1e-12` at
+round `95`, but it is still not a member-freshness improvement. Compared with
+the quota baseline, member AoI/stale75/zero worsen from
+`74.230`/`0.618`/`0.554` to `74.369`/`0.619`/`0.556`, useful uploads fall by
+`0.93%`, and energy efficiency falls by `0.30%`. Treat pressure-guided safe
+split as a structural convergence ablation, not as the next main contribution.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

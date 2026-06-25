@@ -749,6 +749,273 @@ def _split_large_clusters_by_local_reclustering(
     return split_members, split_sizes
 
 
+def _budgeted_cluster_split_source_mask(candidate_mask, score, budget_fraction: float):
+    """Select the highest-score candidate rows allowed by the split budget."""
+    n_rows = candidate_mask.shape[0]
+    candidate_count = jnp.sum(candidate_mask).astype(jnp.int32)
+    raw_budget = jnp.ceil(
+        candidate_count.astype(jnp.float32) * jnp.asarray(budget_fraction, dtype=jnp.float32)
+    ).astype(jnp.int32)
+    budget = jnp.where(candidate_count > 0, jnp.maximum(raw_budget, 1), 0)
+
+    ranked_score = jnp.where(
+        candidate_mask,
+        score.astype(jnp.float32),
+        jnp.asarray(-jnp.inf, dtype=jnp.float32),
+    )
+    order = jnp.argsort(-ranked_score, stable=True)
+    rank = jnp.zeros(n_rows, dtype=jnp.int32).at[order].set(
+        jnp.arange(n_rows, dtype=jnp.int32)
+    )
+    return candidate_mask & (rank < budget)
+
+
+def _safe_cluster_split_source_mask(
+    cluster_sizes,
+    split_max_size: int,
+    budget_fraction: float,
+):
+    """Select the largest oversized source rows allowed by the split budget."""
+    oversized = cluster_sizes > int(split_max_size)
+    return _budgeted_cluster_split_source_mask(
+        candidate_mask=oversized,
+        score=cluster_sizes.astype(jnp.float32),
+        budget_fraction=budget_fraction,
+    )
+
+
+def _pressure_cluster_split_source_mask(
+    cluster_members,
+    cluster_sizes,
+    coords,
+    distance_to_bs,
+    device_radius: float,
+    split_max_size: int,
+    budget_fraction: float,
+    pathloss_exponent: float,
+    channel_score_mode: str,
+    reference_snr: float,
+    snr_threshold: float,
+    member_weight: float,
+    ch_weight: float,
+):
+    """Select oversized rows by a static member-participation risk proxy.
+
+    True member stale/zero pressure is only known after FL rounds have run.
+    This pre-FL structural proxy uses two observable risk terms instead:
+    member-to-CH distance pressure inside the current one-hop row, and CH-to-BS
+    channel pressure.  It still produces only a source-row mask; the actual
+    local split is handled by the same safe splitter used by ``safe_max_size``.
+    """
+    cmax = cluster_members.shape[1]
+    positions = jnp.arange(cmax, dtype=jnp.int32)
+    safe_members = jnp.where(cluster_members >= 0, cluster_members, 0)
+    valid_member = positions[None, :] < cluster_sizes[:, None]
+    safe_heads = safe_members[:, 0]
+
+    head_coords = coords[safe_heads]
+    member_coords = coords[safe_members]
+    member_distance = jnp.sqrt(
+        jnp.sum((member_coords - head_coords[:, None, :]) ** 2, axis=2)
+    )
+    normalized_member_distance = member_distance / jnp.maximum(
+        jnp.asarray(device_radius, dtype=coords.dtype),
+        jnp.asarray(1e-12, dtype=coords.dtype),
+    )
+    member_distance_pressure = jnp.where(
+        valid_member,
+        normalized_member_distance,
+        jnp.asarray(0.0, dtype=coords.dtype),
+    )
+    mean_member_pressure = jnp.sum(member_distance_pressure, axis=1) / jnp.maximum(
+        cluster_sizes.astype(coords.dtype),
+        jnp.asarray(1.0, dtype=coords.dtype),
+    )
+    tail_member_pressure = jnp.max(member_distance_pressure, axis=1)
+    member_pressure = 0.5 * mean_member_pressure + 0.5 * tail_member_pressure
+
+    head_distance_to_bs = distance_to_bs[safe_heads]
+    if channel_score_mode == "rayleigh_outage":
+        ch_quality = _rayleigh_outage_success_probability(
+            head_distance_to_bs,
+            pathloss_exponent=pathloss_exponent,
+            reference_snr=reference_snr,
+            snr_threshold=snr_threshold,
+        )
+    else:
+        ch_quality = _normalized_inverse_pathloss(
+            head_distance_to_bs,
+            pathloss_exponent,
+        )
+    ch_pressure = 1.0 - ch_quality
+
+    pressure_score = (
+        jnp.asarray(member_weight, dtype=coords.dtype) * member_pressure
+        + jnp.asarray(ch_weight, dtype=coords.dtype) * ch_pressure
+    )
+    oversized = cluster_sizes > int(split_max_size)
+    return _budgeted_cluster_split_source_mask(
+        candidate_mask=oversized,
+        score=pressure_score,
+        budget_fraction=budget_fraction,
+    )
+
+
+def _split_large_clusters_by_safe_local_reclustering(
+    cluster_members,
+    cluster_sizes,
+    coords,
+    device_radius: float,
+    split_max_size: int,
+    min_subcluster_size: int,
+    budget_fraction: float,
+    source_split_mask=None,
+):
+    """Split only budgeted large clusters whose local split has no tiny tail.
+
+    ``max_size`` is intentionally left as the aggressive structural ablation.
+    This helper implements the conservative variant: it first builds the local
+    reclustering proposal in scratch rows, rejects it if any emitted subcluster
+    is smaller than ``min_subcluster_size``, and only then appends the split
+    rows to the output.  Rejected rows keep their original membership.
+    """
+    cmax = cluster_members.shape[1]
+    split_max_size = int(split_max_size)
+    min_subcluster_size = int(min_subcluster_size)
+    if split_max_size <= 0 or split_max_size >= cmax:
+        return cluster_members, cluster_sizes
+
+    n_rows = cluster_sizes.shape[0]
+    row_indices = jnp.arange(n_rows, dtype=jnp.int32)
+    member_positions = jnp.arange(cmax, dtype=jnp.int32)
+    radius_squared = jnp.asarray(device_radius, dtype=coords.dtype) ** 2
+    if source_split_mask is None:
+        source_split_mask = _safe_cluster_split_source_mask(
+            cluster_sizes=cluster_sizes,
+            split_max_size=split_max_size,
+            budget_fraction=budget_fraction,
+        )
+
+    def copy_or_skip_row(state, source_row):
+        out_members, out_sizes, out_row = state
+        source_size = cluster_sizes[source_row]
+        has_row = source_size > 0
+        safe_out_row = jnp.minimum(out_row, n_rows - 1)
+        out_members = out_members.at[safe_out_row].set(
+            jnp.where(has_row, cluster_members[source_row], out_members[safe_out_row])
+        )
+        out_sizes = out_sizes.at[safe_out_row].set(
+            jnp.where(has_row, source_size, out_sizes[safe_out_row])
+        )
+        out_row = out_row + has_row.astype(jnp.int32)
+        return out_members, out_sizes, out_row
+
+    def build_local_split(source_row):
+        source_members = cluster_members[source_row]
+        source_size = cluster_sizes[source_row]
+        safe_source_members = jnp.where(source_members >= 0, source_members, 0)
+        valid_source_position = member_positions < source_size
+
+        def scan_candidate(candidate_state, candidate_position):
+            local_members, local_sizes, local_row, assigned = candidate_state
+            candidate_unassigned = (
+                valid_source_position[candidate_position]
+                & (~assigned[candidate_position])
+            )
+            candidate_device = safe_source_members[candidate_position]
+            deltas = coords[safe_source_members] - coords[candidate_device]
+            distance_squared = jnp.sum(deltas * deltas, axis=1)
+            eligible = (
+                valid_source_position
+                & (~assigned)
+                & (distance_squared <= radius_squared)
+            )
+            eligible_count = jnp.sum(eligible).astype(jnp.int32)
+            selected_count = jnp.minimum(
+                eligible_count,
+                jnp.asarray(split_max_size, dtype=jnp.int32),
+            )
+            distance_key = jnp.where(eligible, distance_squared, jnp.inf)
+            selected_positions = jnp.argsort(distance_key, stable=True)
+            selected_mask = member_positions < selected_count
+            selected_devices = source_members[selected_positions]
+            split_members = jnp.where(selected_mask, selected_devices, -1)
+            selected_position_mask = jnp.zeros(cmax, dtype=jnp.bool_).at[
+                selected_positions
+            ].set(selected_mask)
+
+            create_row = candidate_unassigned & (selected_count > 0)
+            safe_local_row = jnp.minimum(local_row, cmax - 1)
+            local_members = local_members.at[safe_local_row].set(
+                jnp.where(create_row, split_members, local_members[safe_local_row])
+            )
+            local_sizes = local_sizes.at[safe_local_row].set(
+                jnp.where(create_row, selected_count, local_sizes[safe_local_row])
+            )
+            assigned = assigned | (create_row & selected_position_mask)
+            local_row = local_row + create_row.astype(jnp.int32)
+            return (local_members, local_sizes, local_row, assigned), None
+
+        (local_members, local_sizes, local_row_count, _), _ = jax.lax.scan(
+            scan_candidate,
+            (
+                jnp.full((cmax, cmax), -1, dtype=jnp.int32),
+                jnp.zeros(cmax, dtype=jnp.int32),
+                jnp.asarray(0, dtype=jnp.int32),
+                jnp.zeros(cmax, dtype=jnp.bool_),
+            ),
+            member_positions,
+        )
+        return local_members, local_sizes, local_row_count
+
+    def split_or_copy_row(state, source_row):
+        out_members, out_sizes, out_row = state
+        local_members, local_sizes, local_row_count = build_local_split(source_row)
+        emitted_mask = local_sizes > 0
+        small_tail_count = jnp.sum(
+            emitted_mask & (local_sizes < int(min_subcluster_size))
+        )
+        split_is_safe = (local_row_count > 1) & (small_tail_count == 0)
+        target_rows = out_row + member_positions
+        write_mask = emitted_mask & split_is_safe
+        scatter_rows = jnp.where(write_mask, target_rows, n_rows)
+        out_members = out_members.at[scatter_rows].set(local_members, mode="drop")
+        out_sizes = out_sizes.at[scatter_rows].set(local_sizes, mode="drop")
+        out_row = out_row + jnp.where(split_is_safe, local_row_count, 0)
+        state_after_split = (out_members, out_sizes, out_row)
+        return jax.lax.cond(
+            split_is_safe,
+            lambda current_state: current_state,
+            lambda current_state: copy_or_skip_row(current_state, source_row),
+            state_after_split,
+        )
+
+    def scan_source(state, source_row):
+        should_split = source_split_mask[source_row]
+        next_state = jax.lax.cond(
+            should_split,
+            lambda current_state: split_or_copy_row(current_state, source_row),
+            lambda current_state: copy_or_skip_row(current_state, source_row),
+            state,
+        )
+        return next_state, None
+
+    empty_members = jnp.full_like(cluster_members, -1)
+    empty_sizes = jnp.zeros_like(cluster_sizes)
+    initial_state = (
+        empty_members,
+        empty_sizes,
+        jnp.asarray(0, dtype=jnp.int32),
+    )
+    (split_members, split_sizes, _), _ = jax.lax.scan(
+        scan_source,
+        initial_state,
+        row_indices,
+    )
+    split_members, split_sizes, _ = _pack_active_clusters(split_members, split_sizes)
+    return split_members, split_sizes
+
+
 def _cluster_head_quality_scores(
     devices: JaxDeviceBatch,
     device_radius,
@@ -933,6 +1200,10 @@ def _dense_greedy_clusters(
     cluster_head_snr_threshold: float,
     cluster_split_mode: str,
     cluster_split_max_size: int,
+    cluster_split_min_subcluster_size: int,
+    cluster_split_budget_fraction: float,
+    cluster_split_pressure_member_weight: float,
+    cluster_split_pressure_ch_weight: float,
 ) -> JaxClusterResult:
     """Build one-hop clusters from the full radius graph.
 
@@ -1108,6 +1379,54 @@ def _dense_greedy_clusters(
             cluster_members,
             cluster_sizes,
         )
+    elif cluster_split_mode == "safe_max_size":
+        cluster_members, cluster_sizes = (
+            _split_large_clusters_by_safe_local_reclustering(
+                cluster_members=cluster_members,
+                cluster_sizes=cluster_sizes,
+                coords=devices.coords,
+                device_radius=device_radius,
+                split_max_size=cluster_split_max_size,
+                min_subcluster_size=cluster_split_min_subcluster_size,
+                budget_fraction=cluster_split_budget_fraction,
+            )
+        )
+        cluster_members, cluster_sizes, number_of_clusters = _pack_active_clusters(
+            cluster_members,
+            cluster_sizes,
+        )
+    elif cluster_split_mode == "pressure_safe_max_size":
+        source_split_mask = _pressure_cluster_split_source_mask(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=devices.coords,
+            distance_to_bs=devices.distance_to_bs,
+            device_radius=device_radius,
+            split_max_size=cluster_split_max_size,
+            budget_fraction=cluster_split_budget_fraction,
+            pathloss_exponent=pathloss_exponent,
+            channel_score_mode=cluster_head_channel_score_mode,
+            reference_snr=cluster_head_reference_snr,
+            snr_threshold=cluster_head_snr_threshold,
+            member_weight=cluster_split_pressure_member_weight,
+            ch_weight=cluster_split_pressure_ch_weight,
+        )
+        cluster_members, cluster_sizes = (
+            _split_large_clusters_by_safe_local_reclustering(
+                cluster_members=cluster_members,
+                cluster_sizes=cluster_sizes,
+                coords=devices.coords,
+                device_radius=device_radius,
+                split_max_size=cluster_split_max_size,
+                min_subcluster_size=cluster_split_min_subcluster_size,
+                budget_fraction=cluster_split_budget_fraction,
+                source_split_mask=source_split_mask,
+            )
+        )
+        cluster_members, cluster_sizes, number_of_clusters = _pack_active_clusters(
+            cluster_members,
+            cluster_sizes,
+        )
 
     if cluster_head_selection_mode == "quality":
         quality_score = _cluster_head_quality_scores(
@@ -1173,6 +1492,10 @@ def clusterizer_jax(
     cluster_head_snr_threshold: float = 1.0,
     cluster_split_mode: str = "none",
     cluster_split_max_size: int = 0,
+    cluster_split_min_subcluster_size: int = 2,
+    cluster_split_budget_fraction: float = 0.10,
+    cluster_split_pressure_member_weight: float = 1.0,
+    cluster_split_pressure_ch_weight: float = 0.5,
 ) -> JaxClusterResult:
     """Build padded one-hop clusters with GPU-friendly fixed-shape arrays.
 
@@ -1199,15 +1522,52 @@ def clusterizer_jax(
         raise ValueError("merge_passes must be non-negative")
     if cluster_head_selection_mode not in {"first", "quality"}:
         raise ValueError("cluster_head_selection_mode must be 'first' or 'quality'")
-    if cluster_split_mode not in {"none", "max_size"}:
-        raise ValueError("cluster_split_mode must be 'none' or 'max_size'")
-    if cluster_split_mode == "max_size":
+    if cluster_split_mode not in {
+        "none",
+        "max_size",
+        "safe_max_size",
+        "pressure_safe_max_size",
+    }:
+        raise ValueError(
+            "cluster_split_mode must be 'none', 'max_size', 'safe_max_size', "
+            "or 'pressure_safe_max_size'"
+        )
+    if cluster_split_mode in {"max_size", "safe_max_size", "pressure_safe_max_size"}:
         if cluster_split_max_size < 1:
             raise ValueError(
-                "cluster_split_max_size must be positive when cluster_split_mode=max_size"
+                "cluster_split_max_size must be positive when cluster_split_mode "
+                "is max_size, safe_max_size, or pressure_safe_max_size"
             )
         if cluster_split_max_size > max_devices_per_cluster:
             raise ValueError("cluster_split_max_size cannot exceed max_devices_per_cluster")
+    if cluster_split_mode in {"safe_max_size", "pressure_safe_max_size"}:
+        if cluster_split_min_subcluster_size < 1:
+            raise ValueError(
+                "cluster_split_min_subcluster_size must be positive when "
+                "cluster_split_mode is safe_max_size or pressure_safe_max_size"
+            )
+        if cluster_split_min_subcluster_size > cluster_split_max_size:
+            raise ValueError(
+                "cluster_split_min_subcluster_size cannot exceed cluster_split_max_size"
+            )
+        if cluster_split_budget_fraction <= 0.0 or cluster_split_budget_fraction > 1.0:
+            raise ValueError(
+                "cluster_split_budget_fraction must be in (0, 1] when "
+                "cluster_split_mode is safe_max_size or pressure_safe_max_size"
+            )
+    if cluster_split_mode == "pressure_safe_max_size":
+        if cluster_split_pressure_member_weight < 0.0:
+            raise ValueError("cluster_split_pressure_member_weight must be non-negative")
+        if cluster_split_pressure_ch_weight < 0.0:
+            raise ValueError("cluster_split_pressure_ch_weight must be non-negative")
+        if (
+            cluster_split_pressure_member_weight
+            + cluster_split_pressure_ch_weight
+            <= 0.0
+        ):
+            raise ValueError(
+                "pressure_safe_max_size requires at least one positive pressure weight"
+            )
     if cluster_head_degree_weight < 0.0:
         raise ValueError("cluster_head_degree_weight must be non-negative")
     if cluster_head_channel_weight < 0.0:
@@ -1263,6 +1623,10 @@ def clusterizer_jax(
             cluster_head_snr_threshold=cluster_head_snr_threshold,
             cluster_split_mode=cluster_split_mode,
             cluster_split_max_size=cluster_split_max_size,
+            cluster_split_min_subcluster_size=cluster_split_min_subcluster_size,
+            cluster_split_budget_fraction=cluster_split_budget_fraction,
+            cluster_split_pressure_member_weight=cluster_split_pressure_member_weight,
+            cluster_split_pressure_ch_weight=cluster_split_pressure_ch_weight,
         )
 
     # Grid cell side in meters.  Any two points inside the same cell are within
@@ -1371,6 +1735,46 @@ def clusterizer_jax(
             coords=devices.coords,
             device_radius=device_radius,
             split_max_size=cluster_split_max_size,
+        )
+    elif cluster_split_mode == "safe_max_size":
+        cluster_members, cluster_sizes = (
+            _split_large_clusters_by_safe_local_reclustering(
+                cluster_members=cluster_members,
+                cluster_sizes=cluster_sizes,
+                coords=devices.coords,
+                device_radius=device_radius,
+                split_max_size=cluster_split_max_size,
+                min_subcluster_size=cluster_split_min_subcluster_size,
+                budget_fraction=cluster_split_budget_fraction,
+            )
+        )
+    elif cluster_split_mode == "pressure_safe_max_size":
+        source_split_mask = _pressure_cluster_split_source_mask(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=devices.coords,
+            distance_to_bs=devices.distance_to_bs,
+            device_radius=device_radius,
+            split_max_size=cluster_split_max_size,
+            budget_fraction=cluster_split_budget_fraction,
+            pathloss_exponent=pathloss_exponent,
+            channel_score_mode=cluster_head_channel_score_mode,
+            reference_snr=cluster_head_reference_snr,
+            snr_threshold=cluster_head_snr_threshold,
+            member_weight=cluster_split_pressure_member_weight,
+            ch_weight=cluster_split_pressure_ch_weight,
+        )
+        cluster_members, cluster_sizes = (
+            _split_large_clusters_by_safe_local_reclustering(
+                cluster_members=cluster_members,
+                cluster_sizes=cluster_sizes,
+                coords=devices.coords,
+                device_radius=device_radius,
+                split_max_size=cluster_split_max_size,
+                min_subcluster_size=cluster_split_min_subcluster_size,
+                budget_fraction=cluster_split_budget_fraction,
+                source_split_mask=source_split_mask,
+            )
         )
     if cluster_head_selection_mode == "quality":
         quality_score = _cluster_head_quality_scores(

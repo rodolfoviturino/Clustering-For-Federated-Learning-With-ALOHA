@@ -171,6 +171,14 @@ local repairs:
   re-clusters oversized rows into valid one-hop subclusters before FL rounds.
   This changes D2D membership but keeps the CH-to-BS access mechanism as pure
   multichannel ALOHA.
+- optional selective local cluster splitting with
+  `--cluster-split-mode safe_max_size`, which limits the number of oversized
+  rows considered and rejects split proposals that would create tiny
+  subclusters. This is a structural ALOHA ablation, not a scheduled uplink.
+- optional risk-guided safe splitting with
+  `--cluster-split-mode pressure_safe_max_size`, which ranks oversized rows by
+  member-to-CH distance pressure and CH-to-BS channel pressure before applying
+  the same safe split guard.
 
 This increased cluster coverage in the tested deployments:
 

@@ -172,6 +172,12 @@ def run_gpu_sweep(args):
             cluster_head_snr_threshold=args.d2d_ch_bs_snr_threshold,
             cluster_split_mode=args.cluster_split_mode,
             cluster_split_max_size=args.cluster_split_max_size,
+            cluster_split_min_subcluster_size=args.cluster_split_min_subcluster_size,
+            cluster_split_budget_fraction=args.cluster_split_budget_fraction,
+            cluster_split_pressure_member_weight=(
+                args.cluster_split_pressure_member_weight
+            ),
+            cluster_split_pressure_ch_weight=args.cluster_split_pressure_ch_weight,
         )
         cluster_quality = _cluster_quality_vector(clusters, compute_dtype)
         trace = error_calculator_trace_jax(
@@ -642,6 +648,14 @@ def run_gpu_sweep(args):
         "cluster_head_channel_score_mode": args.cluster_head_channel_score_mode,
         "cluster_split_mode": args.cluster_split_mode,
         "cluster_split_max_size": int(args.cluster_split_max_size),
+        "cluster_split_min_subcluster_size": int(
+            args.cluster_split_min_subcluster_size
+        ),
+        "cluster_split_budget_fraction": float(args.cluster_split_budget_fraction),
+        "cluster_split_pressure_member_weight": float(
+            args.cluster_split_pressure_member_weight
+        ),
+        "cluster_split_pressure_ch_weight": float(args.cluster_split_pressure_ch_weight),
         "cluster_quality_metrics": list(CLUSTER_QUALITY_METRICS),
         "d2d_member_compute_probability": float(
             args.d2d_member_compute_probability
@@ -951,13 +965,17 @@ def build_parser():
     )
     parser.add_argument(
         "--cluster-split-mode",
-        choices=("none", "max_size"),
+        choices=("none", "max_size", "safe_max_size", "pressure_safe_max_size"),
         default="none",
         help=(
             "Optional structural D2D cluster splitting before FL rounds. none "
             "preserves previous clustering; max_size locally re-clusters any "
             "cluster larger than --cluster-split-max-size into valid one-hop "
-            "subclusters without changing the ALOHA MAC."
+            "subclusters; safe_max_size applies the same local reclustering "
+            "only to a budgeted subset and rejects splits with tiny tails; "
+            "pressure_safe_max_size ranks oversized clusters by static "
+            "member-to-CH and CH-to-BS risk before applying the same safe "
+            "split guard. All modes keep the ALOHA MAC unchanged."
         ),
     )
     parser.add_argument(
@@ -965,8 +983,47 @@ def build_parser():
         type=int,
         default=0,
         help=(
-            "Maximum subcluster size when --cluster-split-mode=max_size. "
+            "Maximum subcluster size when cluster splitting is enabled. "
             "Must be in [1, --max-cluster-size] when splitting is enabled."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-split-min-subcluster-size",
+        type=int,
+        default=2,
+        help=(
+            "Minimum emitted subcluster size for safe split modes. If a proposed "
+            "local split creates a smaller tail, the original cluster is kept."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-split-budget-fraction",
+        type=float,
+        default=0.10,
+        help=(
+            "Fraction of oversized source clusters allowed to split under "
+            "safe split modes. safe_max_size considers the largest oversized "
+            "clusters first; pressure_safe_max_size considers the highest-risk "
+            "oversized clusters first."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-split-pressure-member-weight",
+        type=float,
+        default=1.0,
+        help=(
+            "pressure_safe_max_size weight for the member-to-CH distance risk "
+            "term. This is a pre-FL proxy for likely stale/zero participation."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-split-pressure-ch-weight",
+        type=float,
+        default=0.5,
+        help=(
+            "pressure_safe_max_size weight for the CH-to-BS channel risk term. "
+            "The score uses the same CH channel mode/reference SNR configured "
+            "for quality CH election."
         ),
     )
     parser.add_argument(

@@ -124,8 +124,12 @@ class GpuSweepTests(unittest.TestCase):
                 d2d_ch_rotation_member_threshold_fraction=0.65,
                 d2d_ch_rotation_member_link_weight=0.40,
                 d2d_energy_efficiency_level="eco",
-                cluster_split_mode="max_size",
+                cluster_split_mode="pressure_safe_max_size",
                 cluster_split_max_size=3,
+                cluster_split_min_subcluster_size=2,
+                cluster_split_budget_fraction=0.25,
+                cluster_split_pressure_member_weight=1.5,
+                cluster_split_pressure_ch_weight=0.25,
                 optimized_d2d_load_allocation_mode="proportional_clip",
                 optimized_d2d_redistribution_fraction=0.0,
                 optimized_d2d_redistribution_trigger_ratio=0.90,
@@ -202,8 +206,12 @@ class GpuSweepTests(unittest.TestCase):
         )
         self.assertEqual(metadata["d2d_ch_rotation_member_link_weight"], 0.40)
         self.assertEqual(metadata["d2d_energy_efficiency_level"], "eco")
-        self.assertEqual(metadata["cluster_split_mode"], "max_size")
+        self.assertEqual(metadata["cluster_split_mode"], "pressure_safe_max_size")
         self.assertEqual(metadata["cluster_split_max_size"], 3)
+        self.assertEqual(metadata["cluster_split_min_subcluster_size"], 2)
+        self.assertEqual(metadata["cluster_split_budget_fraction"], 0.25)
+        self.assertEqual(metadata["cluster_split_pressure_member_weight"], 1.5)
+        self.assertEqual(metadata["cluster_split_pressure_ch_weight"], 0.25)
         self.assertEqual(
             metadata["d2d_energy_efficiency_profile_weights"],
             {"channel": 0.45, "battery": 0.45, "stability": 0.10},

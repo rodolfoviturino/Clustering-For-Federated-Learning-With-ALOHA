@@ -264,6 +264,148 @@ class EnhancedClusteringTests(unittest.TestCase):
         )
 
     @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_safe_cluster_split_accepts_balanced_split(self):
+        jnp = jax_clustering.jnp
+        cluster_members = jnp.asarray(
+            [
+                [0, 1, 2, 3, -1, -1],
+                [4, 5, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+            ],
+            dtype=jnp.int32,
+        )
+        cluster_sizes = jnp.asarray([4, 2, 0, 0, 0, 0], dtype=jnp.int32)
+        coords = jnp.asarray(
+            [
+                [0.0, 0.0],
+                [0.4, 0.0],
+                [2.0, 0.0],
+                [2.4, 0.0],
+                [10.0, 0.0],
+                [10.5, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+
+        split_members, split_sizes = (
+            jax_clustering._split_large_clusters_by_safe_local_reclustering(
+                cluster_members=cluster_members,
+                cluster_sizes=cluster_sizes,
+                coords=coords,
+                device_radius=2.5,
+                split_max_size=2,
+                min_subcluster_size=2,
+                budget_fraction=1.0,
+            )
+        )
+
+        self.assertEqual(np.asarray(split_sizes).tolist()[:3], [2, 2, 2])
+        self.assertEqual(np.asarray(split_members[0]).tolist(), [0, 1, -1, -1, -1, -1])
+        self.assertEqual(np.asarray(split_members[1]).tolist(), [2, 3, -1, -1, -1, -1])
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_safe_cluster_split_rejects_singleton_tail(self):
+        jnp = jax_clustering.jnp
+        cluster_members = jnp.asarray(
+            [
+                [0, 1, 2, 3, 4, -1],
+                [5, 6, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+            ],
+            dtype=jnp.int32,
+        )
+        cluster_sizes = jnp.asarray([5, 2, 0, 0, 0, 0, 0], dtype=jnp.int32)
+        coords = jnp.asarray(
+            [
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [1.2, 0.0],
+                [-1.0, 0.0],
+                [-1.2, 0.0],
+                [10.0, 0.0],
+                [10.5, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+
+        split_members, split_sizes = (
+            jax_clustering._split_large_clusters_by_safe_local_reclustering(
+                cluster_members=cluster_members,
+                cluster_sizes=cluster_sizes,
+                coords=coords,
+                device_radius=1.5,
+                split_max_size=2,
+                min_subcluster_size=2,
+                budget_fraction=1.0,
+            )
+        )
+
+        self.assertEqual(np.asarray(split_sizes).tolist()[:2], [5, 2])
+        self.assertEqual(np.asarray(split_members[0]).tolist(), [0, 1, 2, 3, 4, -1])
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_pressure_split_mask_prefers_risky_cluster_over_largest_cluster(self):
+        jnp = jax_clustering.jnp
+        cluster_members = jnp.asarray(
+            [
+                [0, 1, 2, 3, -1, -1],
+                [4, 5, 6, -1, -1, -1],
+                [7, 8, 9, 10, 11, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1, -1],
+            ],
+            dtype=jnp.int32,
+        )
+        cluster_sizes = jnp.asarray([4, 3, 5, 0, 0, 0], dtype=jnp.int32)
+        coords = jnp.asarray(
+            [
+                [0.0, 0.0],
+                [0.1, 0.0],
+                [0.2, 0.0],
+                [0.3, 0.0],
+                [10.0, 0.0],
+                [13.5, 0.0],
+                [14.0, 0.0],
+                [20.0, 0.0],
+                [20.1, 0.0],
+                [20.2, 0.0],
+                [20.3, 0.0],
+                [20.4, 0.0],
+            ],
+            dtype=jnp.float32,
+        )
+        distance_to_bs = jnp.asarray(
+            [5.0, 5.0, 5.0, 5.0, 90.0, 90.0, 90.0, 5.0, 5.0, 5.0, 5.0, 5.0],
+            dtype=jnp.float32,
+        )
+
+        source_mask = jax_clustering._pressure_cluster_split_source_mask(
+            cluster_members=cluster_members,
+            cluster_sizes=cluster_sizes,
+            coords=coords,
+            distance_to_bs=distance_to_bs,
+            device_radius=5.0,
+            split_max_size=2,
+            budget_fraction=0.20,
+            pathloss_exponent=2.0,
+            channel_score_mode="inverse_pathloss",
+            reference_snr=100000.0,
+            snr_threshold=1.0,
+            member_weight=1.0,
+            ch_weight=0.5,
+        )
+
+        self.assertEqual(np.asarray(source_mask).tolist(), [False, True, False, False, False, False])
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
     def test_jax_quality_ch_rotation_preserves_one_hop_coverage(self):
         jnp = jax_clustering.jnp
         cluster_members = jnp.asarray(
@@ -345,6 +487,61 @@ class EnhancedClusteringTests(unittest.TestCase):
             np.asarray(clusters.cluster_sizes) > 0
         ]
         self.assertTrue(np.all(active_sizes <= 3))
+        self.assertTrue(
+            validate_jax_cluster_result(
+                clusters,
+                devices.coords,
+                device_radius=15.0,
+                max_devices_per_cluster=8,
+                n_devices=48,
+            )
+        )
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_safe_cluster_split_mode_preserves_cluster_invariants(self):
+        devices = devices_generator_jax(48, 80, seed=14)
+        clusters = clusterizer_jax(
+            devices=devices,
+            device_radius=15.0,
+            max_devices_per_cluster=8,
+            min_devices_per_cluster=1,
+            clustering_mode="geometric",
+            cluster_split_mode="safe_max_size",
+            cluster_split_max_size=3,
+            cluster_split_min_subcluster_size=2,
+            cluster_split_budget_fraction=0.50,
+            cluster_head_selection_mode="quality",
+        )
+
+        self.assertTrue(
+            validate_jax_cluster_result(
+                clusters,
+                devices.coords,
+                device_radius=15.0,
+                max_devices_per_cluster=8,
+                n_devices=48,
+            )
+        )
+
+    @unittest.skipUnless(jax_clustering.jax is not None, "JAX is not installed in this interpreter")
+    def test_jax_pressure_safe_cluster_split_mode_preserves_cluster_invariants(self):
+        devices = devices_generator_jax(48, 80, seed=15)
+        clusters = clusterizer_jax(
+            devices=devices,
+            device_radius=15.0,
+            max_devices_per_cluster=8,
+            min_devices_per_cluster=1,
+            clustering_mode="geometric",
+            cluster_split_mode="pressure_safe_max_size",
+            cluster_split_max_size=3,
+            cluster_split_min_subcluster_size=2,
+            cluster_split_budget_fraction=0.50,
+            cluster_split_pressure_member_weight=1.0,
+            cluster_split_pressure_ch_weight=0.5,
+            cluster_head_selection_mode="quality",
+            cluster_head_channel_score_mode="rayleigh_outage",
+        )
+
         self.assertTrue(
             validate_jax_cluster_result(
                 clusters,
@@ -443,6 +640,57 @@ class EnhancedClusteringTests(unittest.TestCase):
                 max_devices_per_cluster=4,
                 cluster_split_mode="max_size",
                 cluster_split_max_size=0,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_split_mode="safe_max_size",
+                cluster_split_max_size=3,
+                cluster_split_min_subcluster_size=0,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_split_mode="safe_max_size",
+                cluster_split_max_size=3,
+                cluster_split_min_subcluster_size=4,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_split_mode="safe_max_size",
+                cluster_split_max_size=3,
+                cluster_split_budget_fraction=0.0,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_split_mode="pressure_safe_max_size",
+                cluster_split_max_size=3,
+                cluster_split_pressure_member_weight=-0.1,
+            )
+
+        with self.assertRaises(ValueError):
+            clusterizer_jax(
+                devices=devices,
+                device_radius=15.0,
+                max_devices_per_cluster=4,
+                cluster_split_mode="pressure_safe_max_size",
+                cluster_split_max_size=3,
+                cluster_split_pressure_member_weight=0.0,
+                cluster_split_pressure_ch_weight=0.0,
             )
 
         with self.assertRaises(ValueError):

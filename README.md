@@ -188,6 +188,24 @@ structural ALOHA-compatible ablation: after local repair/merge, any cluster
 larger than `N` is re-clustered internally into valid one-hop subclusters.
 This changes D2D membership, not the MAC; CHs still make local probabilistic
 ALOHA attempts and collisions are still modeled by multichannel contention.
+The safer follow-up is `--cluster-split-mode safe_max_size`, which keeps the
+same ALOHA abstraction but only considers the largest oversized source clusters
+inside `--cluster-split-budget-fraction` and rejects a proposed split whenever
+any emitted subcluster is smaller than
+`--cluster-split-min-subcluster-size`. The original `max_size` behavior is
+unchanged and remains the aggressive global split ablation used by earlier
+negative runs.
+The risk-guided follow-up is
+`--cluster-split-mode pressure_safe_max_size`. It applies the same safe split
+guard, but ranks oversized clusters by a pre-FL participation-risk proxy:
+member-to-CH distance pressure plus CH-to-BS channel pressure. This is still
+structural ALOHA probability access, not online scheduling or a reserved slot
+mechanism. The first K=3000 run,
+`member_pressure_split_k3000_s8_min2_b005_mw100_ch050_w015_physical_r100`,
+is better than size-only safe splitting for convergence, but still not a
+member-freshness winner: it reaches `1e-12` at round `95` and improves final
+error versus the quota baseline (`2.66e-13` versus `4.22e-13`), while member
+AoI/stale75/zero worsen slightly.
 Use `--cluster-head-selection-mode quality` as an enhanced ablation that keeps
 cluster membership fixed but elects, inside each cluster, the best valid CH
 according to D2D degree, BS channel quality, and battery. A member can become
@@ -432,6 +450,19 @@ splitting is too aggressive. The gentler
 negative: useful uploads fall by about `21%`, final energy efficiency by about
 `23%`, and member stale75/zero worsen by about `8-9%`. Future structural work
 should be selective rather than splitting all clusters above a fixed size.
+That selective path is now exposed as `safe_max_size`: it keeps clusters intact
+when local reclustering would create tiny tails, and it limits how many
+oversized clusters are split in a single clustering pass. The first selective
+K=3000 point,
+`member_safe_split_k3000_s8_min2_b005_w015_physical_r100`, confirms that these
+guards work structurally: cluster rows rise only from `627.45` to `631.47` and
+singletons do not increase. It is still not a new candidate, because final
+error worsens to `1.06e-11`, useful uploads fall by about `2.2%`, energy
+efficiency falls by about `1.6%`, and member stale75/zero worsen slightly.
+The pressure-guided safe split recovers convergence (`t<=1e-12` at round `95`)
+and keeps singleton count unchanged, but it still worsens member AoI, stale75,
+and zero participation versus the quota baseline. Treat it as a structural
+convergence ablation, not as a replacement for member-quota freshness.
 
 Current `K=1000`, `rounds=100` ideal-link tests show that
 `member_fair_utility` directly reduces member starvation. Against the default

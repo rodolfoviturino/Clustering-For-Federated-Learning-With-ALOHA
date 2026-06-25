@@ -115,6 +115,16 @@ pure probability-shaping member-freshness ablations. It re-clusters large D2D
 rows into valid one-hop subclusters before the FL simulation starts. This is
 not MAC scheduling: CHs still contend through multichannel ALOHA, but the
 member-to-CH grouping changes.
+`--cluster-split-mode safe_max_size` is the selective follow-up. It keeps the
+same pre-FL structural interpretation but only considers a budgeted fraction of
+oversized rows and rejects any local split that would emit a subcluster smaller
+than `--cluster-split-min-subcluster-size`. The first size-only safe split
+point is structurally controlled but not beneficial, so future structural
+selection should use member freshness/participation pressure rather than size
+alone.
+`--cluster-split-mode pressure_safe_max_size` is that next deployable proxy: it
+ranks oversized rows by member-to-CH distance pressure and CH-to-BS channel
+pressure before applying the same safe split guard.
 
 ### Real Deployment Interpretation
 

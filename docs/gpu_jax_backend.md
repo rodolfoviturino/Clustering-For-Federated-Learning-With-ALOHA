@@ -160,9 +160,14 @@ Dense strategy:
 - can optionally run local structural splitting with
   `--cluster-split-mode max_size --cluster-split-max-size N`: after local
   repair/merge and before quality CH election, clusters larger than `N` are
-  re-clustered internally into valid one-hop subclusters. This remains ALOHA
-  probability access; it does not reserve slots, add SIC/MPR, or centralize MAC
-  scheduling;
+  re-clustered internally into valid one-hop subclusters. The safer
+  `--cluster-split-mode safe_max_size` variant considers only a budgeted
+  fraction of oversized rows and rejects split proposals with subclusters below
+  `--cluster-split-min-subcluster-size`. The risk-guided
+  `--cluster-split-mode pressure_safe_max_size` variant keeps the same safe
+  split guard but ranks oversized rows by member-to-CH distance pressure and
+  CH-to-BS channel pressure. All variants remain ALOHA probability access; none
+  reserves slots, adds SIC/MPR, or centralizes MAC scheduling;
 - preserves one-hop CH coverage directly from the radius test;
 - is more expensive than grid clustering, but gives a clustering-rate behavior
   much closer to the old D2D-SRC notebook.
@@ -733,8 +738,21 @@ no-attempt attribution but created many more CH rows/singletons, increased
 collisions, reduced CH uploads, and worsened member freshness. Do not treat
 naive fixed max-size splitting as a new candidate. The gentler `max_size=8`
 run is also negative, though less severe: it still lowers uploads and energy
-efficiency and worsens member stale75/zero. Any follow-up should be selective,
-not another global max-size split.
+efficiency and worsens member stale75/zero. The selective follow-up is now
+implemented as `--cluster-split-mode safe_max_size`, with
+`--cluster-split-budget-fraction` limiting how many oversized rows are split
+and `--cluster-split-min-subcluster-size` rejecting tiny-tail split proposals.
+The first `safe_max_size=8`, `min_subcluster_size=2`, `budget_fraction=0.05`
+run is structurally controlled but still negative-to-neutral: it adds only
+`4.02` average CH rows and no singletons, but slightly worsens final error,
+uploads, energy efficiency, member AoI, stale75, and zero-participation against
+the quota baseline. Size-only splitting is therefore not enough. The next
+implemented structural test mode is `pressure_safe_max_size`, which uses a
+pre-FL risk proxy instead of cluster size alone before invoking the same safe
+splitter. Its first K=3000 run recovers convergence relative to size-only safe
+splitting, but still slightly worsens member AoI, stale75, and zero
+participation relative to the quota baseline. Keep it as a convergence
+ablation unless later work adds a stronger participation mechanism.
 
 The utility Pareto tuning runner is:
 

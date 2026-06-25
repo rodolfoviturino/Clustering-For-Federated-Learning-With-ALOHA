@@ -665,6 +665,14 @@ Policy differences:
   controlled by `--optimized-d2d-member-collision-gain`, with a lower bound set
   by `--optimized-d2d-member-collision-min-quota-scale`. This is the first
   collision-control candidate after the negative deficit result.
+- `member_collision_aware_queue_quota` keeps the quota and deficit tie-breaker,
+  but changes the virtual-queue update. No-attempt misses add full stale-member
+  pressure to the queue, CH-BS misses add a small amount, and collision-caused
+  misses do not add debt. It reuses
+  `--optimized-d2d-member-deficit-decay` and
+  `--optimized-d2d-member-deficit-weight`. The first K=3000 experiment was
+  negative: the queue reduced no-attempt attribution but increased collisions,
+  reduced useful uploads, and degraded member freshness.
 - `semi_scheduled_member_refresh` moves beyond global ALOHA probability
   shaping. It reserves
   `ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
@@ -708,8 +716,11 @@ winner. The first ALOHA-only structural load-cap candidate,
 round `87`, `+9.48%` final energy efficiency), but it worsens
 zero-participation. `cap=0.25` is the most freshness-balanced capped point, but
 its gains are below `0.15%` and it does not improve convergence. Treat capped
-quota as another ALOHA ablation, then move to collision-aware virtual queues or
-re-clustering.
+quota as another ALOHA ablation. The collision-aware virtual queue was then
+implemented as `member_collision_aware_queue_quota`, but its first K=3000 run
+is a negative ablation because it moved pressure into collisions and failed to
+converge. Move next to re-clustering or cluster splitting before adding more
+pure probability-shaping variants.
 
 The utility Pareto tuning runner is:
 

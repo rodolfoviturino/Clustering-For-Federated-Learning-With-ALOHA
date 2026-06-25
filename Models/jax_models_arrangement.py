@@ -1747,6 +1747,117 @@ def _member_collision_aware_quota_access_probability(
     )
 
 
+def _member_collision_aware_queue_quota_access_probability(
+    aggregate_norms,
+    cluster_sizes,
+    freshness,
+    member_aoi_by_cluster,
+    member_participation_by_cluster,
+    active_member_mask,
+    member_refresh_queue,
+    cluster_mask,
+    n_channels,
+    pcomp,
+    fixed_access_probability,
+    floor_fraction,
+    norm_exponent,
+    cluster_size_exponent,
+    freshness_exponent,
+    quota_weight,
+    quota_exponent,
+    quota_threshold_fraction,
+    refresh_floor_fraction,
+    queue_weight,
+    load_target_factor,
+    load_allocation_mode,
+    redistribution_fraction,
+    redistribution_trigger_ratio,
+    density_trigger_threshold,
+    dense_trigger_ratio,
+    clusterized_devices_fraction,
+    optimized_success_ewma,
+    fixed_success_target,
+):
+    """Quota mode ranked by a collision-aware stale-member virtual queue."""
+    return _member_deficit_utility_access_probability(
+        aggregate_norms=aggregate_norms,
+        cluster_sizes=cluster_sizes,
+        freshness=freshness,
+        member_aoi_by_cluster=member_aoi_by_cluster,
+        member_participation_by_cluster=member_participation_by_cluster,
+        active_member_mask=active_member_mask,
+        member_refresh_deficit=member_refresh_queue,
+        cluster_mask=cluster_mask,
+        n_channels=n_channels,
+        pcomp=pcomp,
+        fixed_access_probability=fixed_access_probability,
+        floor_fraction=floor_fraction,
+        norm_exponent=norm_exponent,
+        cluster_size_exponent=cluster_size_exponent,
+        freshness_exponent=freshness_exponent,
+        quota_weight=quota_weight,
+        quota_exponent=quota_exponent,
+        quota_threshold_fraction=quota_threshold_fraction,
+        refresh_floor_fraction=refresh_floor_fraction,
+        deficit_weight=queue_weight,
+        load_target_factor=load_target_factor,
+        load_allocation_mode=load_allocation_mode,
+        redistribution_fraction=redistribution_fraction,
+        redistribution_trigger_ratio=redistribution_trigger_ratio,
+        density_trigger_threshold=density_trigger_threshold,
+        dense_trigger_ratio=dense_trigger_ratio,
+        clusterized_devices_fraction=clusterized_devices_fraction,
+        optimized_success_ewma=optimized_success_ewma,
+        fixed_success_target=fixed_success_target,
+    )
+
+
+def _collision_aware_member_queue_update(
+    member_refresh_queue,
+    refresh_pressure,
+    success_mask,
+    attempt_mask,
+    collision_free_mask,
+    ch_bs_link_success_mask,
+    cluster_mask,
+    queue_decay,
+):
+    """Update stale-member queue without rewarding collision-caused misses."""
+    dtype = member_refresh_queue.dtype
+    eps = jnp.asarray(1e-12, dtype=dtype)
+    queue_decay = jnp.asarray(queue_decay, dtype=dtype)
+
+    refresh_active = cluster_mask & (refresh_pressure > eps)
+    no_attempt_miss = refresh_active & (~attempt_mask)
+    collision_miss = refresh_active & attempt_mask & (~collision_free_mask)
+    ch_bs_miss = (
+        refresh_active
+        & attempt_mask
+        & collision_free_mask
+        & (~ch_bs_link_success_mask)
+    )
+
+    # A missing attempt is the clearest signal that more local ALOHA
+    # opportunity may help.  CH-BS failures get a small queue increment because
+    # another attempt can draw a better fading/channel outcome.  Collision
+    # misses get no increment; adding more pressure to those clusters would
+    # reinforce the failure mode observed in member_deficit_utility.
+    no_attempt_weight = jnp.asarray(1.0, dtype=dtype)
+    ch_bs_weight = jnp.asarray(0.25, dtype=dtype)
+    collision_weight = jnp.asarray(0.0, dtype=dtype)
+    increment_scale = (
+        no_attempt_weight * no_attempt_miss.astype(dtype)
+        + ch_bs_weight * ch_bs_miss.astype(dtype)
+        + collision_weight * collision_miss.astype(dtype)
+    )
+    next_queue = (
+        queue_decay * member_refresh_queue
+        + refresh_pressure * increment_scale
+    )
+    next_queue = jnp.where(success_mask, 0.0, next_queue)
+    return jnp.where(cluster_mask, next_queue, 0.0)
+
+
 def _member_refresh_priority_scores(
     member_aoi_by_cluster,
     member_participation_by_cluster,
@@ -2600,6 +2711,7 @@ def error_calculator_trace_jax(
         "member_quota_utility",
         "member_capped_quota_utility",
         "member_deficit_utility",
+        "member_collision_aware_queue_quota",
         "member_collision_aware_quota",
         "semi_scheduled_member_refresh",
     }:
@@ -2610,6 +2722,7 @@ def error_calculator_trace_jax(
             "'aoi_quality_tail_utility'/'member_fair_utility'/"
             "'member_refresh_utility'/'member_quota_utility'/"
             "'member_capped_quota_utility'/'member_deficit_utility'/"
+            "'member_collision_aware_queue_quota'/"
             "'member_collision_aware_quota'/'semi_scheduled_member_refresh'"
         )
     if optimized_d2d_norm_exponent < 0.0:
@@ -4325,6 +4438,40 @@ def error_calculator_trace_jax(
                 optimized_success_ewma=optimized_d2d_success_ewma,
                 fixed_success_target=current_expected_fixed_d2d_ch_successes,
             )
+        elif optimized_d2d_access_mode == "member_collision_aware_queue_quota":
+            optimized_probability_d2d = _member_collision_aware_queue_quota_access_probability(
+                aggregate_norms=aggregate_norms_model_3,
+                cluster_sizes=active_member_counts_3,
+                freshness=optimized_d2d_freshness,
+                member_aoi_by_cluster=d2d_member_aoi[2][safe_members],
+                member_participation_by_cluster=(
+                    d2d_member_participation_counts[2][safe_members]
+                ),
+                active_member_mask=active_member_mask_3,
+                member_refresh_queue=optimized_d2d_member_deficit,
+                cluster_mask=cluster_mask,
+                n_channels=n_channels,
+                pcomp=pcomp,
+                fixed_access_probability=access_probability_d2d,
+                floor_fraction=d2d_access_floor_fraction,
+                norm_exponent=d2d_norm_exponent,
+                cluster_size_exponent=d2d_cluster_size_exponent,
+                freshness_exponent=d2d_freshness_exponent,
+                quota_weight=d2d_aoi_weight,
+                quota_exponent=d2d_aoi_exponent,
+                quota_threshold_fraction=d2d_aoi_threshold_fraction,
+                refresh_floor_fraction=d2d_member_refresh_floor_fraction,
+                queue_weight=d2d_member_deficit_weight,
+                load_target_factor=d2d_load_target_factor,
+                load_allocation_mode=optimized_d2d_load_allocation_mode,
+                redistribution_fraction=d2d_redistribution_fraction,
+                redistribution_trigger_ratio=d2d_redistribution_trigger_ratio,
+                density_trigger_threshold=d2d_density_trigger_threshold,
+                dense_trigger_ratio=d2d_dense_trigger_ratio,
+                clusterized_devices_fraction=clusterized_devices_fraction,
+                optimized_success_ewma=optimized_d2d_success_ewma,
+                fixed_success_target=current_expected_fixed_d2d_ch_successes,
+            )
         elif optimized_d2d_access_mode == "member_deficit_utility":
             optimized_probability_d2d = _member_deficit_utility_access_probability(
                 aggregate_norms=aggregate_norms_model_3,
@@ -4661,15 +4808,27 @@ def error_calculator_trace_jax(
         optimized_refresh_missed = optimized_refresh_pressure * (
             ~success_3_d2d
         ).astype(users_input__x.dtype)
-        next_optimized_d2d_member_deficit = (
-            d2d_member_deficit_decay * optimized_d2d_member_deficit
-            + optimized_refresh_missed
-        )
-        next_optimized_d2d_member_deficit = jnp.where(
-            success_3_d2d,
-            0.0,
-            next_optimized_d2d_member_deficit,
-        )
+        if optimized_d2d_access_mode == "member_collision_aware_queue_quota":
+            next_optimized_d2d_member_deficit = _collision_aware_member_queue_update(
+                member_refresh_queue=optimized_d2d_member_deficit,
+                refresh_pressure=optimized_refresh_pressure,
+                success_mask=success_3_d2d,
+                attempt_mask=candidates_3_d2d_detail,
+                collision_free_mask=collision_free_3_d2d,
+                ch_bs_link_success_mask=ch_bs_link_success_3_d2d,
+                cluster_mask=cluster_mask,
+                queue_decay=d2d_member_deficit_decay,
+            )
+        else:
+            next_optimized_d2d_member_deficit = (
+                d2d_member_deficit_decay * optimized_d2d_member_deficit
+                + optimized_refresh_missed
+            )
+            next_optimized_d2d_member_deficit = jnp.where(
+                success_3_d2d,
+                0.0,
+                next_optimized_d2d_member_deficit,
+            )
         next_optimized_d2d_member_deficit = jnp.where(
             cluster_mask,
             next_optimized_d2d_member_deficit,

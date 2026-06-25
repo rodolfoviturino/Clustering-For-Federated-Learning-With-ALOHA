@@ -56,6 +56,15 @@ an EWMA of optimized-D2D CH collisions exceeds a configured target. This is the
 first follow-up after the negative deficit result and should be compared against
 `member_quota_w015_floor000_physical_r100`.
 
+`member_collision_aware_queue_quota`
+
+Keeps the same quota/deficit access structure, but changes the persistent
+state update: no-attempt misses add full stale-member pressure, CH-BS misses
+add only a small increment, and collision-caused misses add no debt. This keeps
+the policy inside pure local ALOHA probability shaping. The first K=3000 run is
+negative because the queue still concentrates access enough to increase
+collisions and degrade convergence/freshness.
+
 `semi_scheduled_member_refresh`
 
 Reserves a small number of D2D channels for the highest active member-pressure
@@ -270,6 +279,7 @@ The next pure-ALOHA matrix was run at `K=3000`, `rounds=100`,
 `iterations=100`, and the same physical/Rayleigh setup. It compared stronger
 member quota weights, small quota floors, and less aggressive
 collision-aware damping against `member_quota_k3000_w015_floor000_physical_r100`.
+The later capped-quota and collision-aware-queue runs are also included below.
 The coordinated semi-scheduled point is kept only as an upper-bound row.
 
 | Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
@@ -291,6 +301,7 @@ The coordinated semi-scheduled point is kept only as an upper-bound row.
 | `member_capped_quota_k3000_w015_cap025_physical_r100` | `member_capped_quota_utility` | `4.185e-13` | `100` | `74.191` | `0.617` | `0.553` | `653.5` |
 | `member_capped_quota_k3000_w020_cap010_physical_r100` | `member_capped_quota_utility` | `1.030e-11` | n/a | `74.410` | `0.623` | `0.565` | `726.6` |
 | `member_capped_quota_k3000_w020_cap012_physical_r100` | `member_capped_quota_utility` | `1.170e-13` | `93` | `74.317` | `0.621` | `0.561` | `722.7` |
+| `member_queue_quota_k3000_w015_qw005_decay095_physical_r100` | `member_collision_aware_queue_quota` | `3.126e-01` | n/a | `84.230` | `0.753` | `0.689` | `394.3` |
 | `member_semischedule_k3000_s030_cc0010_physical_r100` | `semi_scheduled_member_refresh` | `2.093e-16` | `59` | `63.863` | `0.437` | `0.312` | `825.7` |
 
 The conclusion is conservative. Increasing the pure quota from `w=0.15` to
@@ -320,12 +331,23 @@ not improve the time to `1e-12`. Increasing the quota to `w=0.20` with caps
 `0.10`/`0.12` worsens member freshness and, for `cap010`, fails to reach
 `1e-12`.
 
+The collision-aware queue follow-up is a clear negative ablation. The tested
+point, `member_queue_quota_k3000_w015_qw005_decay095_physical_r100`, lowers
+the stale-member `CH no attempt` attribution from `0.983` to `0.942`, but moves
+that pressure into ALOHA collisions: collision attribution rises from `0.014`
+to `0.057`. Final useful uploads fall from `2269.8` to `1517.6`, final error
+stalls at `0.313`, member stale75 rises from `0.618` to `0.753`, and
+zero-participation rises from `0.554` to `0.689`. Excluding collision-caused
+misses from the queue update was not enough; stateful debt ranking still
+over-concentrates attempts in dense K=3000 ALOHA.
+
 ## Next Research Direction
 
 The current pure-ALOHA probability-shaping branch has likely reached its useful
-limit: quota, collision-aware damping, and capped quota improve convergence or
-energy but do not materially solve zero-participation. The next ALOHA-compatible
-steps should be more structural:
+limit: quota, collision-aware damping, capped quota, deficit, and
+collision-aware queue variants either improve convergence/energy only or move
+the bottleneck into collisions. The next ALOHA-compatible steps should be more
+structural:
 
 1. Keep `member_quota_k3000_w015_floor000_physical_r100` as the clean
    member-freshness baseline.
@@ -333,13 +355,10 @@ steps should be more structural:
    pure-ALOHA convergence/energy capped-quota ablation.
 3. Keep `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` as the
    simpler collision-aware convergence/energy ablation.
-4. Move next to collision-aware virtual queues: increase stale-member debt only
-   when missed refresh is caused by no attempt or link/energy feasibility, and
-   avoid increasing debt when extra pressure mainly produces collisions.
-5. Consider re-clustering or cluster splitting as the later ALOHA-compatible
-   path, because persistent zero-participation suggests that some members are
-   hidden behind sparse CH opportunities rather than merely under-weighted CH
-   access probabilities.
+4. Keep `member_collision_aware_queue_quota` as a negative pure-ALOHA ablation.
+5. Move next to re-clustering or cluster splitting, because persistent
+   zero-participation suggests that some members are structurally hidden behind
+   overloaded or unlucky CHs.
 
 The immediate paper-defensible claim is now two-tiered: member-level D2D
 freshness reveals starvation hidden by cluster-level AoI; a quota-based refresh
@@ -347,4 +366,6 @@ overlay improves that member freshness under physical energy/Rayleigh
 assumptions while staying in pure ALOHA probability shaping. The semi-scheduled
 results are useful only as an upper-bound reference showing that additional
 coordination could improve further, while the deficit experiments show the
-boundary where pure ALOHA access opportunity becomes collision limited.
+boundary where pure ALOHA access opportunity becomes collision limited. The
+collision-aware queue result reinforces that the remaining problem is likely
+structural cluster membership, not just a missing access-probability weight.

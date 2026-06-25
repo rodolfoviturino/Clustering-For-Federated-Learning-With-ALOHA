@@ -1370,6 +1370,7 @@ def build_parser():
             "member_quota_utility",
             "member_capped_quota_utility",
             "member_deficit_utility",
+            "member_collision_aware_queue_quota",
             "member_collision_aware_quota",
             "semi_scheduled_member_refresh",
         ),
@@ -1395,7 +1396,9 @@ def build_parser():
             "member_capped_quota_utility keeps that split but caps each "
             "cluster's extra refresh-quota probability; "
             "member_deficit_utility ranks that quota by persistent missed "
-            "refresh opportunity deficit; member_collision_aware_quota keeps "
+            "refresh opportunity deficit; member_collision_aware_queue_quota "
+            "uses a failure-aware virtual queue that does not grow after "
+            "collision-caused misses; member_collision_aware_quota keeps "
             "the quota but dampens it when optimized-D2D collisions exceed a "
             "target; semi_scheduled_member_refresh reserves a small number of "
             "collision-free CH opportunities for the most member-starved "
@@ -1590,8 +1593,9 @@ def build_parser():
             "utility contender target; member_capped_quota_utility uses the "
             "same quota before applying the per-cluster overlay cap; for "
             "member_deficit_utility it is the same quota, ranked by current "
-            "member pressure plus deficit; for member_collision_aware_quota it "
-            "is the maximum quota before "
+            "member pressure plus deficit; member_collision_aware_queue_quota "
+            "uses the same quota but ranks it with a failure-aware queue; for "
+            "member_collision_aware_quota it is the maximum quota before "
             "collision feedback damping; semi_scheduled_member_refresh ignores "
             "this weight and uses --optimized-d2d-member-schedule-fraction "
             "to size its reserved refresh budget."
@@ -1663,10 +1667,11 @@ def build_parser():
         type=float,
         default=0.90,
         help=(
-            "member_deficit_utility decay for the persistent per-cluster "
-            "missed-refresh deficit. 0.0 forgets after one round; values near "
-            "1.0 keep older missed opportunities as a tie-breaker among stale "
-            "or zero-participation active member aggregates."
+            "member_deficit_utility/member_collision_aware_queue_quota decay "
+            "for the persistent per-cluster missed-refresh deficit or queue. "
+            "0.0 forgets after one round; values near 1.0 keep older missed "
+            "opportunities as a tie-breaker among stale or zero-participation "
+            "active member aggregates."
         ),
     )
     parser.add_argument(
@@ -1674,11 +1679,12 @@ def build_parser():
         type=float,
         default=0.25,
         help=(
-            "member_deficit_utility weight for the normalized persistent "
-            "missed-refresh deficit. 0.0 matches member_quota_utility; larger "
-            "values make old missed opportunities a stronger tie-breaker. "
-            "Keep this small in dense regimes because excessive concentration "
-            "can trade CH no-attempt failures for ALOHA collisions."
+            "member_deficit_utility/member_collision_aware_queue_quota weight "
+            "for the normalized persistent missed-refresh deficit or queue. "
+            "0.0 matches member_quota_utility; larger values make old missed "
+            "opportunities a stronger tie-breaker. Keep this small in dense "
+            "regimes because excessive concentration can trade CH no-attempt "
+            "failures for ALOHA collisions."
         ),
     )
     parser.add_argument(

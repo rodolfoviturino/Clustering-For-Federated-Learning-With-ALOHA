@@ -915,8 +915,15 @@ point is `member_capped_quota_k3000_w015_cap010_physical_r100`, which reaches
 worsens zero-participation by `1.22%`; the most freshness-balanced point,
 `cap025`, improves member AoI/stale75/zero by less than `0.15%` and does not
 improve convergence. Treat capped quota as an ablation, not as a new
-member-freshness winner. The next ALOHA-compatible implementation should be
-collision-aware virtual queues or re-clustering/cluster splitting.
+member-freshness winner. The collision-aware queue follow-up has also been run:
+`member_queue_quota_k3000_w015_qw005_decay095_physical_r100` reduced
+stale-member `CH no attempt` attribution, but raised collision attribution from
+about `0.014` to `0.057`, reduced useful uploads, failed to reach `1e-12`, and
+worsened member stale75/zero participation. Treat
+`member_collision_aware_queue_quota` as another negative pure-ALOHA ablation.
+The next ALOHA-compatible path should be structural: re-clustering, cluster
+splitting, or another local cluster-membership repair that reduces persistent
+member hiding behind overloaded or unlucky CHs.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

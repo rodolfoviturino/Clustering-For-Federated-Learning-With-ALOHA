@@ -351,6 +351,21 @@ floor `--optimized-d2d-member-collision-min-quota-scale`. This is the direct
 response to the deficit experiments: keep stale-member refresh pressure, but
 avoid moving the bottleneck from `CH no attempt` into ALOHA collisions.
 
+The collision-aware queue variant is
+`--optimized-d2d-access-mode member_collision_aware_queue_quota`. It keeps the
+quota/deficit structure but changes how the virtual queue is updated: a missed
+active stale-member opportunity caused by no CH attempt increases the queue, a
+collision-caused miss does not, and a CH-BS failure receives only a small
+increment. The queue then ranks the member-refresh overlay through the existing
+`--optimized-d2d-member-deficit-decay` and
+`--optimized-d2d-member-deficit-weight` parameters. This remains pure ALOHA
+probability shaping. The first K=3000 run,
+`member_queue_quota_k3000_w015_qw005_decay095_physical_r100`, is a negative
+ablation: it reduced `CH no attempt`, but raised collision attribution from
+about `0.014` to `0.057`, failed to reach `1e-12`, and worsened member
+stale75/zero participation. Keep this mode as evidence that stateful local
+debt still over-concentrates ALOHA pressure.
+
 The semi-scheduled refresh variant is
 `--optimized-d2d-access-mode semi_scheduled_member_refresh`. It reserves
 `ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
@@ -397,6 +412,10 @@ ablations, not new member-freshness winners.
 `member_deficit_utility` is retained as a negative ablation: it
 reduces `CH no attempt`, but it moves the bottleneck into ALOHA collisions and
 badly degrades convergence and energy efficiency.
+`member_collision_aware_queue_quota` is also a negative ALOHA ablation after
+the first K=3000 test: even with collision-caused misses excluded from the
+queue update, the queue ranking still concentrated access enough to increase
+collisions, reduce useful uploads, and worsen member freshness.
 
 Current `K=1000`, `rounds=100` ideal-link tests show that
 `member_fair_utility` directly reduces member starvation. Against the default
@@ -1052,8 +1071,8 @@ skip cleanly when JAX is not installed in the local interpreter.
   aggregate. The member-level columns are diagnostics and do not change
   scheduling by default. Optional member-aware access policies such as
   `member_fair_utility`, `member_refresh_utility`, `member_quota_utility`,
-  `member_capped_quota_utility`, `member_collision_aware_quota`,
-  `member_deficit_utility`, and
+  `member_capped_quota_utility`, `member_collision_aware_queue_quota`,
+  `member_collision_aware_quota`, `member_deficit_utility`, and
   `semi_scheduled_member_refresh` consume those
   diagnostics only when explicitly selected.
 - The optimized ALOHA model uses aggregate CH update norms by default, matching

@@ -206,6 +206,14 @@ This document records the simulation defaults after the code cleanup.
   smoothly reduced by `--optimized-d2d-member-collision-gain` toward
   `--optimized-d2d-member-collision-min-quota-scale` above the target. This is
   the collision-control response to the `member_deficit_utility` result.
+- `member_collision_aware_queue_quota` keeps the same local ALOHA quota
+  structure but changes the state update behind the deficit term. A missed
+  active stale-member opportunity caused by no CH attempt increases the queue;
+  a collision-caused miss does not increase it; a CH-BS decoding miss receives
+  only a small increment. The queue is then used as the same normalized
+  tie-breaker controlled by `--optimized-d2d-member-deficit-decay` and
+  `--optimized-d2d-member-deficit-weight`. This mode is still probability
+  shaping, not scheduling.
 - `semi_scheduled_member_refresh` is the first member-aware policy that is not
   pure ALOHA probability shaping. It reserves
   `ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
@@ -237,7 +245,10 @@ This document records the simulation defaults after the code cleanup.
   ablation, but it is not a new member-freshness winner because its best
   convergence point worsens zero-participation and its balanced freshness point
   has only sub-`0.15%` gains. `member_deficit_utility` is a negative
-  collision-dominated ablation.
+  collision-dominated ablation. `member_collision_aware_queue_quota` is also a
+  negative ALOHA ablation after the first K=3000 test: suppressing
+  collision-caused queue increments was not enough to prevent stateful debt
+  ranking from over-concentrating CH attempts and increasing collisions.
   `semi_scheduled_member_refresh` is the strongest current enhanced candidate
   when a small explicit refresh schedule is allowed. With `M=10`, the two-slot
   point (`schedule_fraction` `0.15`/`0.20`) is the balanced candidate and the

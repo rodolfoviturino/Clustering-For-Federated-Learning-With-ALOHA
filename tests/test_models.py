@@ -1904,6 +1904,38 @@ class JaxModelTests(unittest.TestCase):
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
         )
 
+    def test_member_collision_aware_queue_quota_trace_returns_finite_outputs(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=6,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.5,
+            max_iterations_t=4,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=108,
+            optimized_d2d_access_mode="member_collision_aware_queue_quota",
+            optimized_d2d_norm_exponent=2.0,
+            optimized_d2d_cluster_size_exponent=1.0,
+            optimized_d2d_freshness_exponent=0.25,
+            optimized_d2d_aoi_weight=0.15,
+            optimized_d2d_aoi_exponent=1.0,
+            optimized_d2d_aoi_threshold_fraction=0.70,
+            optimized_d2d_member_refresh_floor_fraction=0.0,
+            optimized_d2d_member_deficit_decay=0.85,
+            optimized_d2d_member_deficit_weight=0.25,
+            checkpoints=[1, 4],
+        )
+
+        self.assertEqual(np.asarray(result.error_norms).shape, (2, 6))
+        self.assertEqual(np.asarray(result.d2d_member_mean_aoi).shape, (2, 3))
+        self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
+        self.assertTrue(
+            np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
     def test_member_collision_aware_quota_trace_returns_finite_outputs(self):
         clusters = prepare_clusters_for_jax([[0, 1], [2, 3], [4, 5]])
         result = error_calculator_trace_jax(
@@ -2117,6 +2149,25 @@ class JaxModelTests(unittest.TestCase):
         self.assertGreater(probability[1], probability[2])
         self.assertGreater(probability[2], probability[0])
         self.assertTrue(np.all(probability <= 0.9))
+
+    def test_collision_aware_member_queue_does_not_reward_collisions(self):
+        next_queue = jax_models._collision_aware_member_queue_update(
+            member_refresh_queue=jax_models.jnp.asarray([1.0, 1.0, 1.0, 4.0]),
+            refresh_pressure=jax_models.jnp.asarray([1.0, 1.0, 1.0, 1.0]),
+            success_mask=jax_models.jnp.asarray([False, False, False, True]),
+            attempt_mask=jax_models.jnp.asarray([False, True, True, True]),
+            collision_free_mask=jax_models.jnp.asarray([False, False, True, True]),
+            ch_bs_link_success_mask=jax_models.jnp.asarray(
+                [False, False, False, True]
+            ),
+            cluster_mask=jax_models.jnp.asarray([True, True, True, True]),
+            queue_decay=0.5,
+        )
+        next_queue = np.asarray(next_queue)
+
+        self.assertGreater(next_queue[0], next_queue[2])
+        self.assertGreater(next_queue[2], next_queue[1])
+        self.assertEqual(next_queue[3], 0.0)
 
     def test_member_collision_aware_quota_damps_refresh_quota_when_collisions_are_high(self):
         common_kwargs = dict(

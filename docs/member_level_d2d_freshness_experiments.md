@@ -325,6 +325,9 @@ step over the comparison CSV and does not rerun JAX.
 The paper-facing interpretation text is collected in
 `docs/paper_results_section.md`. Use it as the starting point for the manuscript
 results section after regenerating the comparison, table, and figures above.
+The full manuscript outline is in `docs/paper_manuscript_outline.md`, and the
+reproducibility/claim audit checklist is in
+`docs/reproducibility_checklist.md`.
 
 | Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
 |---|---:|---:|---:|---:|---:|---:|---:|

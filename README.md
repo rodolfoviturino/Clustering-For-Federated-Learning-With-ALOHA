@@ -52,7 +52,9 @@ docs/
   modeling_assumptions.md                   Thesis defaults and realism switches
   member_level_d2d_freshness_experiments.md Member-level D2D freshness results
   optimized_d2d_strategy_report.md          Strategy evolution, results, and deployment notes
+  paper_manuscript_outline.md               Paper structure and text plan
   paper_results_section.md                  Draft results text for the canonical K=3000 matrix
+  reproducibility_checklist.md              Canonical run, artifact, and claim audit checklist
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
   run_research_matrix.py                    Canonical paper/research matrix runner

@@ -702,9 +702,14 @@ energy efficiency. The pure-ALOHA K=3000 matrix with larger
 `member_collision_aware_quota` damping has now been run: stronger quota weights
 did not help, while `member_collision_quota_k3000_w015_t002_g2_min050` is best
 kept as a convergence/energy ablation rather than a new member-freshness
-winner. The first ALOHA-only structural load-cap candidate is now
-`member_capped_quota_utility`; compare cap fractions before moving to
-collision-aware virtual queues or re-clustering.
+winner. The first ALOHA-only structural load-cap candidate,
+`member_capped_quota_utility`, has also been run. Wide caps did not bind;
+`w=0.15, cap=0.10` is the best capped convergence/energy point (`t<=1e-12` at
+round `87`, `+9.48%` final energy efficiency), but it worsens
+zero-participation. `cap=0.25` is the most freshness-balanced capped point, but
+its gains are below `0.15%` and it does not improve convergence. Treat capped
+quota as another ALOHA ablation, then move to collision-aware virtual queues or
+re-clustering.
 
 The utility Pareto tuning runner is:
 

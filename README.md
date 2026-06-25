@@ -383,15 +383,17 @@ The current physical/Rayleigh member-level conclusion is documented in
 `docs/member_level_d2d_freshness_experiments.md`. The short version is that
 `member_quota_utility` remains the strongest pure ALOHA/probability-shaping
 member-freshness policy, with `w=0.15`, `floor=0` as its strongest tested
-point. The next implemented pure-ALOHA candidate is
-`member_capped_quota_utility`, which tests whether limiting per-cluster overlay
-concentration can reduce stale-member tails without crossing into scheduling.
+point. The capped-quota follow-up is implemented and documented as an ALOHA
+ablation: `cap010` improves convergence and energy, but it worsens
+zero-participation, while `cap025` barely improves freshness and does not
+improve convergence. Therefore `member_capped_quota_utility` is not a new
+member-freshness winner.
 `semi_scheduled_member_refresh` is a coordinated upper-bound ablation, not part
 of the main ALOHA claim: it shows how much is left if some refresh slots are
 reserved, but it changes the protocol class. The K=3000 pure-ALOHA matrix showed
 that stronger quota weights do not help and that the best less aggressive
-collision-aware setting is mainly a convergence/energy ablation, not a new
-member-freshness winner.
+collision-aware and capped-quota settings are mainly convergence/energy
+ablations, not new member-freshness winners.
 `member_deficit_utility` is retained as a negative ablation: it
 reduces `CH no attempt`, but it moves the bottleneck into ALOHA collisions and
 badly degrades convergence and energy efficiency.

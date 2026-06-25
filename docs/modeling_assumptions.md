@@ -232,9 +232,11 @@ This document records the simulation defaults after the code cleanup.
   overlay; it is not centralized scheduling.
   See `docs/member_level_d2d_freshness_experiments.md` for the current
   physical/Rayleigh conclusion: `member_quota_utility` is the useful pure
-  ALOHA/probability-shaping member-freshness baseline, while
-  `member_capped_quota_utility` is the next pure-ALOHA load-cap candidate to
-  compare against it. `member_deficit_utility` is a negative
+  ALOHA/probability-shaping member-freshness baseline.
+  `member_capped_quota_utility` is implemented and useful as a convergence/energy
+  ablation, but it is not a new member-freshness winner because its best
+  convergence point worsens zero-participation and its balanced freshness point
+  has only sub-`0.15%` gains. `member_deficit_utility` is a negative
   collision-dominated ablation.
   `semi_scheduled_member_refresh` is the strongest current enhanced candidate
   when a small explicit refresh schedule is allowed. With `M=10`, the two-slot

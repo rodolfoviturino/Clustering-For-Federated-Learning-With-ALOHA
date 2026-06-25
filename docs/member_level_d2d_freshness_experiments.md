@@ -283,6 +283,14 @@ The coordinated semi-scheduled point is kept only as an upper-bound row.
 | `member_collision_quota_k3000_w015_t002_g1_min075_physical_r100` | `member_collision_aware_quota` | `5.388e-14` | `92` | `74.164` | `0.619` | `0.557` | `668.4` |
 | `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` | `member_collision_aware_quota` | `1.816e-14` | `88` | `73.968` | `0.614` | `0.556` | `688.7` |
 | `member_collision_quota_k3000_w015_t002_g2_min075_physical_r100` | `member_collision_aware_quota` | `6.388e-14` | `92` | `74.234` | `0.620` | `0.557` | `670.5` |
+| `member_capped_quota_k3000_w015_cap005_physical_r100` | `member_capped_quota_utility` | `1.730e-14` | `88` | `74.265` | `0.621` | `0.565` | `742.1` |
+| `member_capped_quota_k3000_w015_cap008_physical_r100` | `member_capped_quota_utility` | `1.269e-14` | `86` | `74.159` | `0.618` | `0.563` | `722.2` |
+| `member_capped_quota_k3000_w015_cap010_physical_r100` | `member_capped_quota_utility` | `1.893e-14` | `87` | `74.068` | `0.616` | `0.561` | `715.7` |
+| `member_capped_quota_k3000_w015_cap012_physical_r100` | `member_capped_quota_utility` | `2.019e-14` | `88` | `74.063` | `0.617` | `0.558` | `711.5` |
+| `member_capped_quota_k3000_w015_cap015_physical_r100` | `member_capped_quota_utility` | `3.978e-14` | `89` | `74.161` | `0.618` | `0.557` | `689.7` |
+| `member_capped_quota_k3000_w015_cap025_physical_r100` | `member_capped_quota_utility` | `4.185e-13` | `100` | `74.191` | `0.617` | `0.553` | `653.5` |
+| `member_capped_quota_k3000_w020_cap010_physical_r100` | `member_capped_quota_utility` | `1.030e-11` | n/a | `74.410` | `0.623` | `0.565` | `726.6` |
+| `member_capped_quota_k3000_w020_cap012_physical_r100` | `member_capped_quota_utility` | `1.170e-13` | `93` | `74.317` | `0.621` | `0.561` | `722.7` |
 | `member_semischedule_k3000_s030_cc0010_physical_r100` | `semi_scheduled_member_refresh` | `2.093e-16` | `59` | `63.863` | `0.437` | `0.312` | `825.7` |
 
 The conclusion is conservative. Increasing the pure quota from `w=0.15` to
@@ -297,30 +305,41 @@ member stale75 by `0.51%`. However, zero-participation is slightly worse
 (`0.556` versus `0.554`), so this is a convergence/energy ablation rather than
 a new member-freshness winner.
 
+The capped quota follow-up is informative but not a new member-freshness
+winner. Wide caps (`0.50`, `0.75`, `1.00`) were byte-identical to
+`member_quota_k3000_w015_floor000_physical_r100`, so the cap did not bind. Low
+caps do bind. The best convergence point is
+`member_capped_quota_k3000_w015_cap010_physical_r100`: it reaches `1e-12` 13
+rounds earlier than the quota baseline, improves final energy efficiency by
+`9.48%`, lowers member AoI by `0.22%`, and lowers stale75 by `0.19%`. However,
+it worsens zero-participation by `1.22%`, so it is a convergence/energy
+ablation, not a replacement for the member-freshness baseline. The most
+freshness-balanced capped point is `cap025`, which slightly improves member AoI,
+stale75, and zero-participation, but the gains are all below `0.15%` and it does
+not improve the time to `1e-12`. Increasing the quota to `w=0.20` with caps
+`0.10`/`0.12` worsens member freshness and, for `cap010`, fails to reach
+`1e-12`.
+
 ## Next Research Direction
 
-The first structural pure-ALOHA load-cap candidate is now implemented as
-`member_capped_quota_utility`. It should be tested before adding another access
-mechanism, because it is the smallest change that addresses quota
-concentration while preserving the same ALOHA comparison axis:
+The current pure-ALOHA probability-shaping branch has likely reached its useful
+limit: quota, collision-aware damping, and capped quota improve convergence or
+energy but do not materially solve zero-participation. The next ALOHA-compatible
+steps should be more structural:
 
-1. Run `member_capped_quota_utility` with `w=0.15`, `floor=0`, and cap
-   fractions `0.50`, `0.75`, and `1.00` against
-   `member_quota_k3000_w015_floor000_physical_r100`.
-2. Optionally run `w=0.20`, `cap=0.50` only if the `w=0.15` cap points show a
-   real member-freshness gain without collision blow-up.
-3. Add virtual queues with collision-aware debt updates only after the capped
-   quota result is known: increase debt for
-   missed stale members, but avoid increasing the same debt when the added
-   pressure only caused collisions.
-4. Consider re-clustering or cluster splitting as a separate ALOHA-compatible
-   path, because the remaining zero-participation tail suggests some members
-   are hidden behind sparse CH opportunities.
-5. Keep `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` as the
-   best current pure-ALOHA convergence/energy ablation, but keep
-   `member_quota_k3000_w015_floor000_physical_r100` as the cleaner
-   member-freshness baseline unless a later candidate improves both stale75 and
-   zero participation.
+1. Keep `member_quota_k3000_w015_floor000_physical_r100` as the clean
+   member-freshness baseline.
+2. Keep `member_capped_quota_k3000_w015_cap010_physical_r100` as the best
+   pure-ALOHA convergence/energy capped-quota ablation.
+3. Keep `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` as the
+   simpler collision-aware convergence/energy ablation.
+4. Move next to collision-aware virtual queues: increase stale-member debt only
+   when missed refresh is caused by no attempt or link/energy feasibility, and
+   avoid increasing debt when extra pressure mainly produces collisions.
+5. Consider re-clustering or cluster splitting as the later ALOHA-compatible
+   path, because persistent zero-participation suggests that some members are
+   hidden behind sparse CH opportunities rather than merely under-weighted CH
+   access probabilities.
 
 The immediate paper-defensible claim is now two-tiered: member-level D2D
 freshness reveals starvation hidden by cluster-level AoI; a quota-based refresh

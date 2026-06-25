@@ -908,9 +908,15 @@ ALOHA-only implementation path is now structural. The first step,
 extension of `member_quota_utility`: it caps only the extra member-refresh
 overlay using `--optimized-d2d-member-quota-cap-fraction`, then adds the capped
 overlay to the base utility probability. It does not reserve slots or add SIC,
-MPR, NOMA, TDMA/OFDMA, or scheduling. The next runs should compare cap fractions
-`0.50`, `0.75`, and `1.00` at `K=3000` before moving to collision-aware virtual
-queues or re-clustering/cluster splitting.
+MPR, NOMA, TDMA/OFDMA, or scheduling. The capped-quota matrix has now been run:
+wide caps (`0.50`, `0.75`, `1.00`) did not bind; the best convergence/energy
+point is `member_capped_quota_k3000_w015_cap010_physical_r100`, which reaches
+`1e-12` at round `87` and improves final energy efficiency by `9.48%`, but
+worsens zero-participation by `1.22%`; the most freshness-balanced point,
+`cap025`, improves member AoI/stale75/zero by less than `0.15%` and does not
+improve convergence. Treat capped quota as an ablation, not as a new
+member-freshness winner. The next ALOHA-compatible implementation should be
+collision-aware virtual queues or re-clustering/cluster splitting.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

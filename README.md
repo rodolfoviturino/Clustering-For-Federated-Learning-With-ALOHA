@@ -54,6 +54,7 @@ docs/
   optimized_d2d_strategy_report.md          Strategy evolution, results, and deployment notes
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
+  run_research_matrix.py                    Canonical paper/research matrix runner
   run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
   run_ch_quality_weight_sweep.py            Focused quality-CH weight comparison and plots
   merge_utility_pareto_summaries.py         Merge utility Pareto partial runs
@@ -842,6 +843,21 @@ The comparator writes `run_comparison_summary.csv` and
 `run_comparison_summary.md` with target times, log-error AUC, final energy,
 energy efficiency, AoI percentiles, and stale-tail fractions for
 `optimized_aloha_d2d` by default.
+
+For the current paper-facing K=3000 matrix, use the canonical research runner:
+
+```bash
+python -m experiments.run_research_matrix --matrix k3000_core --compare-only
+```
+
+This writes `Runs/comparison_k3000_core/run_comparison_summary.csv`,
+`Runs/comparison_k3000_core/run_comparison_summary.md`, and
+`Runs/comparison_k3000_core/paper_claim_summary.md`. The matrix classifies the
+member-quota run as the pure-ALOHA baseline, capped/collision/pressure split as
+ablations, global/size-only split as negative structural ablations, and
+`semi_scheduled_member_refresh` as a coordinated upper-bound. Add
+`--execute-missing` only when you intentionally want the runner to launch any
+missing long K=3000 simulations.
 
 To compare all CH-rotation energy profiles with the same controlled setup, use
 the dedicated sweep runner:

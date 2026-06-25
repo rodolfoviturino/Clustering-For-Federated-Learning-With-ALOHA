@@ -812,6 +812,11 @@ member-freshness candidate.
 The full member-level D2D freshness experiment record is in
 `docs/member_level_d2d_freshness_experiments.md`, including the final table,
 negative-deficit interpretation, and recommended next research directions.
+The paper-facing K=3000 comparison is now centralized in
+`experiments.run_research_matrix`: run
+`python -m experiments.run_research_matrix --matrix k3000_core --compare-only`
+to regenerate `Runs/comparison_k3000_core/run_comparison_summary.*` and
+`paper_claim_summary.md` without rerunning JAX.
 
 Implemented collision-control follow-up: `--optimized-d2d-access-mode
 member_collision_aware_quota`. It keeps the useful `member_quota_utility`

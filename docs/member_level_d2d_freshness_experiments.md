@@ -282,6 +282,16 @@ collision-aware damping against `member_quota_k3000_w015_floor000_physical_r100`
 The later capped-quota and collision-aware-queue runs are also included below.
 The coordinated semi-scheduled point is kept only as an upper-bound row.
 
+The canonical comparison can be regenerated without rerunning JAX with:
+
+```bash
+python -m experiments.run_research_matrix --matrix k3000_core --compare-only
+```
+
+This writes `Runs/comparison_k3000_core/run_comparison_summary.*` and
+`paper_claim_summary.md`. Use `--execute-missing` only when a listed K=3000 run
+is absent and should be launched intentionally.
+
 | Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `member_quota_k3000_w015_floor000_physical_r100` | `member_quota_utility` | `4.216e-13` | `100` | `74.230` | `0.618` | `0.554` | `653.8` |

@@ -322,6 +322,10 @@ member-stale75/energy-efficiency tradeoff. It uses CI95 error bars when the
 comparison CSV contains them. Like the table export, this is a post-processing
 step over the comparison CSV and does not rerun JAX.
 
+The paper-facing interpretation text is collected in
+`docs/paper_results_section.md`. Use it as the starting point for the manuscript
+results section after regenerating the comparison, table, and figures above.
+
 | Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `member_quota_k3000_w015_floor000_physical_r100` | `member_quota_utility` | `4.216e-13` | `100` | `74.230` | `0.618` | `0.554` | `653.8` |

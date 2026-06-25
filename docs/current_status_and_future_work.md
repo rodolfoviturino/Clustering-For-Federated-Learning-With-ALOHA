@@ -831,6 +831,10 @@ The matching figure export is `experiments.plot_research_matrix`: run
 to write canonical bar and Pareto figures from the same CSV. This keeps the
 paper figures tied to the exact comparison table, including CI95 error bars
 when available, and avoids notebook-only manual plotting.
+The draft manuscript text for these artifacts is in
+`docs/paper_results_section.md`. It summarizes the K=3000 setup, metrics,
+pure-ALOHA baseline, ablations, coordinated upper-bound, limitations, and next
+work using the current canonical comparison numbers.
 
 Implemented collision-control follow-up: `--optimized-d2d-access-mode
 member_collision_aware_quota`. It keeps the useful `member_quota_utility`

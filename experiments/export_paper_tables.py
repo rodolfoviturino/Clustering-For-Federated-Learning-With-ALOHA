@@ -92,22 +92,37 @@ def build_export_rows(rows, baseline):
     export_rows = []
     for row in rows:
         member_aoi = _float_or_none(row.get("final_member_aoi"))
+        member_aoi_ci95 = _float_or_none(row.get("final_member_aoi_ci95"))
         stale75 = _float_or_none(row.get("final_member_stale_fraction_75"))
+        stale75_ci95 = _float_or_none(
+            row.get("final_member_stale_fraction_75_ci95")
+        )
         zero = _float_or_none(row.get("final_member_zero_participation_fraction"))
+        zero_ci95 = _float_or_none(
+            row.get("final_member_zero_participation_fraction_ci95")
+        )
         energy = _float_or_none(row.get("final_energy_efficiency"))
+        energy_ci95 = _float_or_none(row.get("final_energy_efficiency_ci95"))
+        final_error = _float_or_none(row.get("final_error_norm"))
+        final_error_ci95 = _float_or_none(row.get("final_error_norm_ci95"))
         export_rows.append(
             {
                 "label": short_label(row),
                 "run": row.get("run", ""),
                 "role": short_role(row),
                 "t_to_1e-12": _format_t(row.get("t_to_1e-12")),
-                "final_error": _format_scientific(
-                    _float_or_none(row.get("final_error_norm"))
+                "final_error": _format_scientific_with_ci(
+                    final_error,
+                    final_error_ci95,
                 ),
-                "member_aoi": _format_fixed(member_aoi, 3),
-                "member_stale75": _format_fixed(stale75, 3),
-                "member_zero": _format_fixed(zero, 3),
-                "energy_efficiency": _format_fixed(energy, 1),
+                "member_aoi": _format_fixed_with_ci(member_aoi, member_aoi_ci95, 3),
+                "member_stale75": _format_fixed_with_ci(stale75, stale75_ci95, 3),
+                "member_zero": _format_fixed_with_ci(zero, zero_ci95, 3),
+                "energy_efficiency": _format_fixed_with_ci(
+                    energy,
+                    energy_ci95,
+                    1,
+                ),
                 "member_aoi_delta": _format_delta_percent(
                     _relative_delta(member_aoi, baseline_member_aoi)
                 ),
@@ -132,7 +147,9 @@ def write_markdown_table(export_rows, baseline, output_path):
         handle.write(
             "Canonical K=3000 physical/Rayleigh comparison. Deltas are relative "
             f"to `{baseline.get('run', '')}`. Lower member AoI, stale75, and "
-            "zero-participation are better; higher energy efficiency is better.\n\n"
+            "zero-participation are better; higher energy efficiency is better. "
+            "Metric cells use `mean +/- ci95` when the comparison CSV contains "
+            "CI95 columns.\n\n"
         )
         handle.write(
             "| Variant | Role | t<=1e-12 | Final error | Member AoI | "
@@ -182,11 +199,11 @@ def write_latex_table(export_rows, output_path, *, caption, table_label):
                 _latex_escape(row["label"]),
                 _latex_escape(row["role"]),
                 row["t_to_1e-12"],
-                row["final_error"],
-                row["member_aoi"],
-                row["member_stale75"],
-                row["member_zero"],
-                row["energy_efficiency"],
+                _latex_value(row["final_error"]),
+                _latex_value(row["member_aoi"]),
+                _latex_value(row["member_stale75"]),
+                _latex_value(row["member_zero"]),
+                _latex_value(row["energy_efficiency"]),
                 _latex_escape(row["member_stale75_delta"]),
                 _latex_escape(row["member_zero_delta"]),
             ]
@@ -390,10 +407,26 @@ def _format_fixed(value, digits):
     return f"{value:.{digits}f}"
 
 
+def _format_fixed_with_ci(value, ci95, digits):
+    formatted_value = _format_fixed(value, digits)
+    formatted_ci95 = _format_fixed(ci95, digits)
+    if formatted_value and formatted_ci95:
+        return f"{formatted_value} +/- {formatted_ci95}"
+    return formatted_value
+
+
 def _format_scientific(value):
     if value is None:
         return ""
     return f"{value:.3e}"
+
+
+def _format_scientific_with_ci(value, ci95):
+    formatted_value = _format_scientific(value)
+    formatted_ci95 = _format_scientific(ci95)
+    if formatted_value and formatted_ci95:
+        return f"{formatted_value} +/- {formatted_ci95}"
+    return formatted_value
 
 
 def _format_t(value):
@@ -429,6 +462,11 @@ def _latex_escape(text):
         "^": r"\textasciicircum{}",
     }
     return "".join(replacements.get(char, char) for char in str(text))
+
+
+def _latex_value(text):
+    """Escape a numeric table cell while preserving +/- as a LaTeX pm symbol."""
+    return _latex_escape(text).replace("+/-", r"$\pm$")
 
 
 def build_parser():

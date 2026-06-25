@@ -302,9 +302,11 @@ python -m experiments.export_paper_tables \
 This post-processing step writes `paper_results_table.md`,
 `paper_results_table.tex`, and `paper_claim_bullets.md` next to the comparison
 CSV. The exported table keeps the baseline-relative deltas visible for member
-AoI, member stale75, zero-participation, and energy efficiency, and the claim
-bullets preserve the current interpretation: `member_quota_utility` is the
-main pure-ALOHA baseline, collision/capped/pressure variants are ablations, and
+AoI, member stale75, zero-participation, and energy efficiency. When
+`run_comparison_summary.csv` contains `final_*_ci95` fields, the table renders
+metric cells as `mean +/- ci95`. The claim bullets preserve the current
+interpretation: `member_quota_utility` is the main pure-ALOHA baseline,
+collision/capped/pressure variants are ablations, and
 `semi_scheduled_member_refresh` is a coordinated upper-bound.
 
 Generate the paired paper figures with:
@@ -316,8 +318,9 @@ python -m experiments.plot_research_matrix \
 
 The plotter writes canonical matrix figures for member stale75,
 zero-participation, energy efficiency, rounds to `1e-12`, and the
-member-stale75/energy-efficiency tradeoff. Like the table export, this is a
-post-processing step over the comparison CSV and does not rerun JAX.
+member-stale75/energy-efficiency tradeoff. It uses CI95 error bars when the
+comparison CSV contains them. Like the table export, this is a post-processing
+step over the comparison CSV and does not rerun JAX.
 
 | Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
 |---|---:|---:|---:|---:|---:|---:|---:|

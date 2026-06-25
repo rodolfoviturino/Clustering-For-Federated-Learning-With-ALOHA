@@ -119,20 +119,29 @@ def _plot_bar_metric(
     formats,
 ):
     values = [_float_or_none(row.get(metric)) for row in rows]
-    indexed = [(index, row, value) for index, (row, value) in enumerate(zip(rows, values)) if value is not None]
+    ci95_values = [_float_or_none(row.get(f"{metric}_ci95")) for row in rows]
+    indexed = [
+        (index, row, value, ci95)
+        for index, (row, value, ci95) in enumerate(zip(rows, values, ci95_values))
+        if value is not None
+    ]
     if not indexed:
         return []
 
-    labels = [_plot_label(row) for _, row, _ in indexed]
-    plotted_values = [value for _, _, value in indexed]
-    colors = [_style_for_row(row)[0] for _, row, _ in indexed]
-    hatches = [_style_for_row(row)[1] for _, row, _ in indexed]
+    labels = [_plot_label(row) for _, row, _, _ in indexed]
+    plotted_values = [value for _, _, value, _ in indexed]
+    error_values = [0.0 if ci95 is None else ci95 for _, _, _, ci95 in indexed]
+    yerr = error_values if any(value > 0.0 for value in error_values) else None
+    colors = [_style_for_row(row)[0] for _, row, _, _ in indexed]
+    hatches = [_style_for_row(row)[1] for _, row, _, _ in indexed]
 
     fig_width = max(8.0, 0.82 * len(labels) + 2.0)
     fig, axis = plt.subplots(figsize=(fig_width, 4.9))
     bars = axis.bar(
         range(len(labels)),
         plotted_values,
+        yerr=yerr,
+        capsize=4 if yerr is not None else 0,
         color=colors,
         edgecolor="#333333",
         linewidth=0.6,
@@ -165,7 +174,8 @@ def _plot_bar_metric(
     axis.set_xticks(range(len(labels)))
     axis.set_xticklabels(labels, rotation=32, ha="right")
     axis.set_ylabel(ylabel)
-    axis.set_title(f"{title} ({direction} is better)")
+    title_suffix = "with CI95" if yerr is not None else "no CI95 in CSV"
+    axis.set_title(f"{title} ({direction} is better; {title_suffix})")
     axis.grid(True, axis="y", alpha=0.22)
     axis.legend(
         handles=_legend_handles(rows),
@@ -183,17 +193,31 @@ def _plot_pareto(rows, baseline, output_stem, *, formats):
     points = []
     for row in rows:
         x_value = _float_or_none(row.get(x_metric))
+        x_ci95 = _float_or_none(row.get(f"{x_metric}_ci95"))
         y_value = _float_or_none(row.get(y_metric))
+        y_ci95 = _float_or_none(row.get(f"{y_metric}_ci95"))
         if x_value is not None and y_value is not None:
-            points.append((row, x_value, y_value))
+            points.append((row, x_value, x_ci95, y_value, y_ci95))
     if not points:
         return []
 
     fig, axis = plt.subplots(figsize=(8.2, 5.4))
-    for index, (row, x_value, y_value) in enumerate(points):
+    for index, (row, x_value, x_ci95, y_value, y_ci95) in enumerate(points):
         color, _ = _style_for_row(row)
         marker = "*" if short_role(row) == "upper-bound" else "o"
         size = 165 if row is baseline else 105
+        axis.errorbar(
+            [x_value],
+            [y_value],
+            xerr=None if x_ci95 is None else [[x_ci95], [x_ci95]],
+            yerr=None if y_ci95 is None else [[y_ci95], [y_ci95]],
+            fmt="none",
+            ecolor=color,
+            elinewidth=1.0,
+            capsize=3,
+            alpha=0.75,
+            zorder=2,
+        )
         axis.scatter(
             [x_value],
             [y_value],
@@ -228,7 +252,7 @@ def _plot_pareto(rows, baseline, output_stem, *, formats):
     axis.set_title("Member freshness vs energy-efficiency tradeoff")
     axis.grid(True, alpha=0.22)
     axis.legend(
-        handles=_legend_handles([row for row, _, _ in points]),
+        handles=_legend_handles([row for row, _, _, _, _ in points]),
         loc="best",
         fontsize=8.5,
         frameon=True,

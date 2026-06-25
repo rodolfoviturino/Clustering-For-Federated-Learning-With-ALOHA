@@ -844,7 +844,9 @@ python -m experiments.compare_runs \
 The comparator writes `run_comparison_summary.csv` and
 `run_comparison_summary.md` with target times, log-error AUC, final energy,
 energy efficiency, AoI percentiles, and stale-tail fractions for
-`optimized_aloha_d2d` by default.
+`optimized_aloha_d2d` by default. When the source run CSV contains CI columns,
+the comparison summary also propagates final `*_ci95` values for the same
+metrics.
 
 For the current paper-facing K=3000 matrix, use the canonical research runner:
 
@@ -871,8 +873,9 @@ python -m experiments.export_paper_tables \
 This writes `paper_results_table.md`, `paper_results_table.tex`, and
 `paper_claim_bullets.md` in the same comparison folder. These files report
 baseline-relative deltas for member AoI, member stale75, zero-participation,
-and energy efficiency, while keeping the semi-scheduled result labeled as a
-coordinated upper-bound rather than an ALOHA contribution.
+and energy efficiency, rendering `mean +/- ci95` where the comparison CSV
+contains CI95 values. The semi-scheduled result stays labeled as a coordinated
+upper-bound rather than an ALOHA contribution.
 
 To generate the matching paper figures:
 
@@ -883,9 +886,9 @@ python -m experiments.plot_research_matrix \
 
 This writes bar figures for member stale75, zero-participation, energy
 efficiency, and rounds to `1e-12`, plus a member-stale75 versus
-energy-efficiency tradeoff figure. Colors separate the pure-ALOHA baseline,
-pure-ALOHA ablations, structural/negative ablations, and the coordinated
-upper-bound.
+energy-efficiency tradeoff figure. The plots draw CI95 error bars when those
+columns are present. Colors separate the pure-ALOHA baseline, pure-ALOHA
+ablations, structural/negative ablations, and the coordinated upper-bound.
 
 To compare all CH-rotation energy profiles with the same controlled setup, use
 the dedicated sweep runner:

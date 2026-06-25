@@ -289,7 +289,8 @@ def write_paper_claim_summary(summaries, matrix_by_name, output_dir):
             "This summary classifies canonical K=3000 physical/Rayleigh runs "
             "for paper writing. Lower member AoI/stale/zero is better; "
             "`semi_scheduled_member_refresh` is an upper-bound reference, not "
-            "a pure-ALOHA contribution.\n\n"
+            "a pure-ALOHA contribution. Metric cells use `mean +/- ci95` when "
+            "the comparison CSV contains CI95 columns.\n\n"
         )
         handle.write(
             "| Run | Claim role | t<=1e-12 | final error | member AoI | "
@@ -304,15 +305,17 @@ def write_paper_claim_summary(summaries, matrix_by_name, output_dir):
                     run=row["run"],
                     role=entry.claim_role,
                     t12=_format_value(row.get("t_to_1e-12")),
-                    error=_format_value(row.get("final_error_norm")),
-                    member_aoi=_format_value(row.get("final_member_aoi")),
-                    stale75=_format_value(
-                        row.get("final_member_stale_fraction_75")
+                    error=_format_value_with_ci(row, "final_error_norm"),
+                    member_aoi=_format_value_with_ci(row, "final_member_aoi"),
+                    stale75=_format_value_with_ci(
+                        row,
+                        "final_member_stale_fraction_75",
                     ),
-                    zero=_format_value(
-                        row.get("final_member_zero_participation_fraction")
+                    zero=_format_value_with_ci(
+                        row,
+                        "final_member_zero_participation_fraction",
                     ),
-                    eff=_format_value(row.get("final_energy_efficiency")),
+                    eff=_format_value_with_ci(row, "final_energy_efficiency"),
                     summary=entry.claim_summary,
                 )
             )
@@ -334,6 +337,14 @@ def _format_value(value):
     if isinstance(value, float):
         return f"{value:.6g}"
     return str(value)
+
+
+def _format_value_with_ci(row, metric):
+    value = _format_value(row.get(metric))
+    ci95 = _format_value(row.get(f"{metric}_ci95"))
+    if value and ci95:
+        return f"{value} +/- {ci95}"
+    return value
 
 
 def build_parser():

@@ -25,20 +25,30 @@ class ResearchMatrixTests(unittest.TestCase):
             {
                 "t": 1,
                 "optimized_aloha_d2d_error_norm_mean": 1.0,
+                "optimized_aloha_d2d_error_norm_ci95": 0.1,
                 "optimized_aloha_d2d_aoi_mean": 2.0,
                 "optimized_aloha_d2d_member_aoi_mean": 3.0,
+                "optimized_aloha_d2d_member_aoi_ci95": 0.3,
                 "optimized_aloha_d2d_member_stale_fraction_75_mean": 0.5,
+                "optimized_aloha_d2d_member_stale_fraction_75_ci95": 0.05,
                 "optimized_aloha_d2d_member_zero_participation_fraction_mean": 0.4,
+                "optimized_aloha_d2d_member_zero_participation_fraction_ci95": 0.04,
                 "optimized_aloha_d2d_energy_efficiency_mean": 10.0,
+                "optimized_aloha_d2d_energy_efficiency_ci95": 1.0,
             },
             {
                 "t": 2,
                 "optimized_aloha_d2d_error_norm_mean": final_error,
+                "optimized_aloha_d2d_error_norm_ci95": final_error / 10.0,
                 "optimized_aloha_d2d_aoi_mean": 1.5,
                 "optimized_aloha_d2d_member_aoi_mean": 2.5,
+                "optimized_aloha_d2d_member_aoi_ci95": 0.25,
                 "optimized_aloha_d2d_member_stale_fraction_75_mean": 0.3,
+                "optimized_aloha_d2d_member_stale_fraction_75_ci95": 0.03,
                 "optimized_aloha_d2d_member_zero_participation_fraction_mean": 0.2,
+                "optimized_aloha_d2d_member_zero_participation_fraction_ci95": 0.02,
                 "optimized_aloha_d2d_energy_efficiency_mean": 12.0,
+                "optimized_aloha_d2d_energy_efficiency_ci95": 1.2,
             },
         ]
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -84,6 +94,7 @@ class ResearchMatrixTests(unittest.TestCase):
             text = paper_summary.read_text(encoding="utf-8")
             self.assertIn("main pure-ALOHA baseline", text)
             self.assertIn("coordinated upper-bound", text)
+            self.assertIn("+/-", text)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 

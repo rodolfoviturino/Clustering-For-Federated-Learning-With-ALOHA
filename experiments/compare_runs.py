@@ -163,6 +163,10 @@ def summarize_run(csv_path, scenario=DEFAULT_SCENARIO):
         value = _float_or_none(final_row.get(column_name))
         if value is not None:
             summary[f"final_{metric_name}"] = value
+        ci95_column_name = f"{scenario}_{metric_name}_ci95"
+        ci95_value = _float_or_none(final_row.get(ci95_column_name))
+        if ci95_value is not None:
+            summary[f"final_{metric_name}_ci95"] = ci95_value
         values = _column(rows, column_name)
         if values is not None:
             summary[f"{metric_name}_auc"] = _trapezoid_auc(t_values, values)
@@ -243,11 +247,17 @@ def _fieldnames(rows):
         "t_to_1e-09",
         "t_to_1e-12",
         "final_error_norm",
+        "final_error_norm_ci95",
         "final_uploads",
+        "final_uploads_ci95",
         "final_clusterhead_uploads",
+        "final_clusterhead_uploads_ci95",
         "final_energy_used",
+        "final_energy_used_ci95",
         "final_energy_efficiency",
+        "final_energy_efficiency_ci95",
         "final_aoi",
+        "final_aoi_ci95",
         "final_p75_aoi",
         "final_p90_aoi",
         "final_p95_aoi",
@@ -256,11 +266,14 @@ def _fieldnames(rows):
         "final_stale_fraction_75",
         "final_stale_fraction_100",
         "final_member_aoi",
+        "final_member_aoi_ci95",
         "final_member_p75_aoi",
         "final_member_p90_aoi",
         "final_member_p95_aoi",
         "final_member_stale_fraction_75",
+        "final_member_stale_fraction_75_ci95",
         "final_member_zero_participation_fraction",
+        "final_member_zero_participation_fraction_ci95",
         "final_member_participation_p05",
         "csv_path",
     ]
@@ -313,21 +326,42 @@ def write_comparison(summaries, output_dir):
                     mode=row.get("optimized_d2d_access_mode", ""),
                     auc=_format_markdown_number(row.get("log_error_auc")),
                     t12=row.get("t_to_1e-12", ""),
-                    error=_format_markdown_number(row.get("final_error_norm")),
-                    aoi=_format_markdown_number(row.get("final_aoi")),
-                    member_aoi=_format_markdown_number(
-                        row.get("final_member_aoi")
+                    error=_format_markdown_number_with_ci(
+                        row.get("final_error_norm"),
+                        row.get("final_error_norm_ci95"),
                     ),
-                    member_stale75=_format_markdown_number(
-                        row.get("final_member_stale_fraction_75")
+                    aoi=_format_markdown_number_with_ci(
+                        row.get("final_aoi"),
+                        row.get("final_aoi_ci95"),
                     ),
-                    member_zero=_format_markdown_number(
-                        row.get("final_member_zero_participation_fraction")
+                    member_aoi=_format_markdown_number_with_ci(
+                        row.get("final_member_aoi"),
+                        row.get("final_member_aoi_ci95"),
                     ),
-                    eff=_format_markdown_number(row.get("final_energy_efficiency")),
+                    member_stale75=_format_markdown_number_with_ci(
+                        row.get("final_member_stale_fraction_75"),
+                        row.get("final_member_stale_fraction_75_ci95"),
+                    ),
+                    member_zero=_format_markdown_number_with_ci(
+                        row.get("final_member_zero_participation_fraction"),
+                        row.get("final_member_zero_participation_fraction_ci95"),
+                    ),
+                    eff=_format_markdown_number_with_ci(
+                        row.get("final_energy_efficiency"),
+                        row.get("final_energy_efficiency_ci95"),
+                    ),
                 )
             )
     return csv_path, markdown_path
+
+
+def _format_markdown_number_with_ci(value, ci95):
+    """Format an optional mean and CI95 pair for Markdown reports."""
+    formatted_value = _format_markdown_number(value)
+    formatted_ci95 = _format_markdown_number(ci95)
+    if formatted_value and formatted_ci95:
+        return f"{formatted_value} +/- {formatted_ci95}"
+    return formatted_value
 
 
 def _format_markdown_number(value):

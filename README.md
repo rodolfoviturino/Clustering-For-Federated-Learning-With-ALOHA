@@ -55,6 +55,7 @@ docs/
 experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
   run_research_matrix.py                    Canonical paper/research matrix runner
+  export_paper_tables.py                    Markdown/LaTeX exports from comparison CSVs
   run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
   run_ch_quality_weight_sweep.py            Focused quality-CH weight comparison and plots
   merge_utility_pareto_summaries.py         Merge utility Pareto partial runs
@@ -858,6 +859,19 @@ ablations, global/size-only split as negative structural ablations, and
 `semi_scheduled_member_refresh` as a coordinated upper-bound. Add
 `--execute-missing` only when you intentionally want the runner to launch any
 missing long K=3000 simulations.
+
+To export paper-ready tables and claim bullets from that comparison CSV:
+
+```bash
+python -m experiments.export_paper_tables \
+  --comparison-csv Runs/comparison_k3000_core/run_comparison_summary.csv
+```
+
+This writes `paper_results_table.md`, `paper_results_table.tex`, and
+`paper_claim_bullets.md` in the same comparison folder. These files report
+baseline-relative deltas for member AoI, member stale75, zero-participation,
+and energy efficiency, while keeping the semi-scheduled result labeled as a
+coordinated upper-bound rather than an ALOHA contribution.
 
 To compare all CH-rotation energy profiles with the same controlled setup, use
 the dedicated sweep runner:

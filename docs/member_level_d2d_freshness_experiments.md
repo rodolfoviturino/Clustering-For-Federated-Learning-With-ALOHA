@@ -292,6 +292,21 @@ This writes `Runs/comparison_k3000_core/run_comparison_summary.*` and
 `paper_claim_summary.md`. Use `--execute-missing` only when a listed K=3000 run
 is absent and should be launched intentionally.
 
+After regenerating the comparison, export manuscript-facing tables with:
+
+```bash
+python -m experiments.export_paper_tables \
+  --comparison-csv Runs/comparison_k3000_core/run_comparison_summary.csv
+```
+
+This post-processing step writes `paper_results_table.md`,
+`paper_results_table.tex`, and `paper_claim_bullets.md` next to the comparison
+CSV. The exported table keeps the baseline-relative deltas visible for member
+AoI, member stale75, zero-participation, and energy efficiency, and the claim
+bullets preserve the current interpretation: `member_quota_utility` is the
+main pure-ALOHA baseline, collision/capped/pressure variants are ablations, and
+`semi_scheduled_member_refresh` is a coordinated upper-bound.
+
 | Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `member_quota_k3000_w015_floor000_physical_r100` | `member_quota_utility` | `4.216e-13` | `100` | `74.230` | `0.618` | `0.554` | `653.8` |

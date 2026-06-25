@@ -817,6 +817,13 @@ The paper-facing K=3000 comparison is now centralized in
 `python -m experiments.run_research_matrix --matrix k3000_core --compare-only`
 to regenerate `Runs/comparison_k3000_core/run_comparison_summary.*` and
 `paper_claim_summary.md` without rerunning JAX.
+The paper-table export is separated into `experiments.export_paper_tables`:
+run
+`python -m experiments.export_paper_tables --comparison-csv Runs/comparison_k3000_core/run_comparison_summary.csv`
+after the comparison step to write `paper_results_table.md`,
+`paper_results_table.tex`, and `paper_claim_bullets.md`. This keeps manuscript
+tables and claim bullets reproducible without adding any new model or MAC
+variant.
 
 Implemented collision-control follow-up: `--optimized-d2d-access-mode
 member_collision_aware_quota`. It keeps the useful `member_quota_utility`

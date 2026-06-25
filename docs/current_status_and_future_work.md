@@ -824,6 +824,11 @@ after the comparison step to write `paper_results_table.md`,
 `paper_results_table.tex`, and `paper_claim_bullets.md`. This keeps manuscript
 tables and claim bullets reproducible without adding any new model or MAC
 variant.
+The matching figure export is `experiments.plot_research_matrix`: run
+`python -m experiments.plot_research_matrix --comparison-csv Runs/comparison_k3000_core/run_comparison_summary.csv`
+to write canonical bar and Pareto figures from the same CSV. This keeps the
+paper figures tied to the exact comparison table and avoids notebook-only
+manual plotting.
 
 Implemented collision-control follow-up: `--optimized-d2d-access-mode
 member_collision_aware_quota`. It keeps the useful `member_quota_utility`

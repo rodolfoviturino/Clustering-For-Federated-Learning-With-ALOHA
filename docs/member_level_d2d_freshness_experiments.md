@@ -307,6 +307,18 @@ bullets preserve the current interpretation: `member_quota_utility` is the
 main pure-ALOHA baseline, collision/capped/pressure variants are ablations, and
 `semi_scheduled_member_refresh` is a coordinated upper-bound.
 
+Generate the paired paper figures with:
+
+```bash
+python -m experiments.plot_research_matrix \
+  --comparison-csv Runs/comparison_k3000_core/run_comparison_summary.csv
+```
+
+The plotter writes canonical matrix figures for member stale75,
+zero-participation, energy efficiency, rounds to `1e-12`, and the
+member-stale75/energy-efficiency tradeoff. Like the table export, this is a
+post-processing step over the comparison CSV and does not rerun JAX.
+
 | Run | Mode | Error | t <= 1e-12 | Member AoI | Member Stale75 | Member Zero | Energy Efficiency |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `member_quota_k3000_w015_floor000_physical_r100` | `member_quota_utility` | `4.216e-13` | `100` | `74.230` | `0.618` | `0.554` | `653.8` |

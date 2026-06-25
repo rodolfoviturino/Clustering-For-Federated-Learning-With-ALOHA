@@ -56,6 +56,7 @@ experiments/
   run_gpu_sweep.py                          Batched JAX experiment runner
   run_research_matrix.py                    Canonical paper/research matrix runner
   export_paper_tables.py                    Markdown/LaTeX exports from comparison CSVs
+  plot_research_matrix.py                   Canonical matrix figures from comparison CSVs
   run_utility_pareto_sweep.py               Utility parameter Pareto tuning runner
   run_ch_quality_weight_sweep.py            Focused quality-CH weight comparison and plots
   merge_utility_pareto_summaries.py         Merge utility Pareto partial runs
@@ -872,6 +873,19 @@ This writes `paper_results_table.md`, `paper_results_table.tex`, and
 baseline-relative deltas for member AoI, member stale75, zero-participation,
 and energy efficiency, while keeping the semi-scheduled result labeled as a
 coordinated upper-bound rather than an ALOHA contribution.
+
+To generate the matching paper figures:
+
+```bash
+python -m experiments.plot_research_matrix \
+  --comparison-csv Runs/comparison_k3000_core/run_comparison_summary.csv
+```
+
+This writes bar figures for member stale75, zero-participation, energy
+efficiency, and rounds to `1e-12`, plus a member-stale75 versus
+energy-efficiency tradeoff figure. Colors separate the pure-ALOHA baseline,
+pure-ALOHA ablations, structural/negative ablations, and the coordinated
+upper-bound.
 
 To compare all CH-rotation energy profiles with the same controlled setup, use
 the dedicated sweep runner:

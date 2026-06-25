@@ -167,6 +167,10 @@ local repairs:
 - two-device CH rotation repair;
 - CH-to-CH merge repair when the target CH can cover all source members and the
   merged cluster still fits `Cmax`.
+- optional local cluster splitting with `--cluster-split-mode max_size`, which
+  re-clusters oversized rows into valid one-hop subclusters before FL rounds.
+  This changes D2D membership but keeps the CH-to-BS access mechanism as pure
+  multichannel ALOHA.
 
 This increased cluster coverage in the tested deployments:
 

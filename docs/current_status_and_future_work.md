@@ -64,6 +64,7 @@ dense pair-first clustering
 + singleton join repair
 + pair CH-rotation repair
 + CH-to-CH merge repair
++ optional local max-size split
 ```
 
 Invariants:
@@ -921,9 +922,22 @@ stale-member `CH no attempt` attribution, but raised collision attribution from
 about `0.014` to `0.057`, reduced useful uploads, failed to reach `1e-12`, and
 worsened member stale75/zero participation. Treat
 `member_collision_aware_queue_quota` as another negative pure-ALOHA ablation.
-The next ALOHA-compatible path should be structural: re-clustering, cluster
-splitting, or another local cluster-membership repair that reduces persistent
-member hiding behind overloaded or unlucky CHs.
+The next ALOHA-compatible path is structural and the first implementation is
+now available as `--cluster-split-mode max_size`: after local repair/merge,
+clusters larger than `--cluster-split-max-size` are re-clustered internally
+into valid one-hop subclusters before optional quality CH election. This
+changes local D2D membership while preserving pure multichannel ALOHA access.
+The first test, `member_split_k3000_s5_w015_physical_r100`, is negative:
+clusterized-device rate fell from `99.319%` to `94.719%`, singleton count rose
+from `20.44` to `158.43`, final useful optimized+D2D uploads fell from
+`2269.79` to `554.25`, collision attribution rose from `0.014` to `0.055`,
+and member stale75/zero worsened from `0.618`/`0.554` to `0.891`/`0.835`.
+The gentler `member_split_k3000_s8_w015_physical_r100` run is less damaging
+but still negative: uploads fall to `1797.06`, final error reaches only
+`1.25e-7`, energy efficiency falls to `506.26`, and member stale75/zero worsen
+to `0.670`/`0.604`. Naive global max-size splitting is therefore the wrong
+structural direction. Future structural work should use selective
+splitting/re-clustering instead of splitting every cluster above a fixed size.
 
 ### Step 2: Calibrate The First-Order Energy Model
 

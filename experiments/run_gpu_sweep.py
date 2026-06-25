@@ -170,6 +170,8 @@ def run_gpu_sweep(args):
             cluster_head_channel_score_mode=args.cluster_head_channel_score_mode,
             cluster_head_reference_snr=args.d2d_ch_bs_reference_snr,
             cluster_head_snr_threshold=args.d2d_ch_bs_snr_threshold,
+            cluster_split_mode=args.cluster_split_mode,
+            cluster_split_max_size=args.cluster_split_max_size,
         )
         cluster_quality = _cluster_quality_vector(clusters, compute_dtype)
         trace = error_calculator_trace_jax(
@@ -638,6 +640,8 @@ def run_gpu_sweep(args):
         "cluster_head_channel_weight": float(args.cluster_head_channel_weight),
         "cluster_head_battery_weight": float(args.cluster_head_battery_weight),
         "cluster_head_channel_score_mode": args.cluster_head_channel_score_mode,
+        "cluster_split_mode": args.cluster_split_mode,
+        "cluster_split_max_size": int(args.cluster_split_max_size),
         "cluster_quality_metrics": list(CLUSTER_QUALITY_METRICS),
         "d2d_member_compute_probability": float(
             args.d2d_member_compute_probability
@@ -943,6 +947,26 @@ def build_parser():
         help=(
             "Number of local CH-to-CH merge passes after singleton/rotation repair. "
             "A merge is accepted only when the target CH can cover the union and Cmax holds."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-split-mode",
+        choices=("none", "max_size"),
+        default="none",
+        help=(
+            "Optional structural D2D cluster splitting before FL rounds. none "
+            "preserves previous clustering; max_size locally re-clusters any "
+            "cluster larger than --cluster-split-max-size into valid one-hop "
+            "subclusters without changing the ALOHA MAC."
+        ),
+    )
+    parser.add_argument(
+        "--cluster-split-max-size",
+        type=int,
+        default=0,
+        help=(
+            "Maximum subcluster size when --cluster-split-mode=max_size. "
+            "Must be in [1, --max-cluster-size] when splitting is enabled."
         ),
     )
     parser.add_argument(

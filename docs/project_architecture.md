@@ -124,6 +124,9 @@ outputs.
 - Produces fixed-shape padded cluster arrays.
 - Dense mode includes local singleton repair, pair CH-rotation repair, and
   CH-to-CH merge repair while preserving one-hop CH coverage and `Cmax`.
+- Optional cluster splitting re-clusters large rows locally into valid one-hop
+  subclusters before the FL simulation, preserving ALOHA access while changing
+  D2D membership.
 - Optional quality CH election keeps cluster membership fixed but rotates the
   CH role to the best valid member according to D2D degree, BS channel quality,
   and battery.

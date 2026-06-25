@@ -183,6 +183,11 @@ reproduction when optimized ALOHA curves need to go below about `1e-7`. Add
 `--repair-passes 0 --rotation-repair-passes 0 --merge-passes 0` to disable
 local repair, `--initial-cluster-size 10` to recover the earlier greedy-fill
 behavior, or `--normalize-by-k` for the smaller normalized SGD update.
+Use `--cluster-split-mode max_size --cluster-split-max-size N` as an opt-in
+structural ALOHA-compatible ablation: after local repair/merge, any cluster
+larger than `N` is re-clustered internally into valid one-hop subclusters.
+This changes D2D membership, not the MAC; CHs still make local probabilistic
+ALOHA attempts and collisions are still modeled by multichannel contention.
 Use `--cluster-head-selection-mode quality` as an enhanced ablation that keeps
 cluster membership fixed but elects, inside each cluster, the best valid CH
 according to D2D degree, BS channel quality, and battery. A member can become
@@ -416,6 +421,17 @@ badly degrades convergence and energy efficiency.
 the first K=3000 test: even with collision-caused misses excluded from the
 queue update, the queue ranking still concentrated access enough to increase
 collisions, reduce useful uploads, and worsen member freshness.
+The first ALOHA-compatible structural split test,
+`member_split_k3000_s5_w015_physical_r100`, is a negative ablation. A
+`max_size=5` split reduced stale `CH no attempt` attribution, but it also
+created many more CH rows/singletons, raised collision attribution from about
+`0.014` to `0.055`, reduced useful uploads, failed to reach `1e-12`, and
+worsened member stale75/zero participation. This suggests that naive max-size
+splitting is too aggressive. The gentler
+`member_split_k3000_s8_w015_physical_r100` run is less damaging but still
+negative: useful uploads fall by about `21%`, final energy efficiency by about
+`23%`, and member stale75/zero worsen by about `8-9%`. Future structural work
+should be selective rather than splitting all clusters above a fixed size.
 
 Current `K=1000`, `rounds=100` ideal-link tests show that
 `member_fair_utility` directly reduces member starvation. Against the default

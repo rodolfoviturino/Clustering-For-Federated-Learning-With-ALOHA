@@ -302,6 +302,8 @@ The coordinated semi-scheduled point is kept only as an upper-bound row.
 | `member_capped_quota_k3000_w020_cap010_physical_r100` | `member_capped_quota_utility` | `1.030e-11` | n/a | `74.410` | `0.623` | `0.565` | `726.6` |
 | `member_capped_quota_k3000_w020_cap012_physical_r100` | `member_capped_quota_utility` | `1.170e-13` | `93` | `74.317` | `0.621` | `0.561` | `722.7` |
 | `member_queue_quota_k3000_w015_qw005_decay095_physical_r100` | `member_collision_aware_queue_quota` | `3.126e-01` | n/a | `84.230` | `0.753` | `0.689` | `394.3` |
+| `member_split_k3000_s8_w015_physical_r100` | `member_quota_utility` + `cluster_split_max_size=8` | `1.253e-07` | n/a | `78.167` | `0.670` | `0.604` | `506.3` |
+| `member_split_k3000_s5_w015_physical_r100` | `member_quota_utility` + `cluster_split_max_size=5` | `3.120e-02` | n/a | `93.788` | `0.891` | `0.835` | `103.9` |
 | `member_semischedule_k3000_s030_cc0010_physical_r100` | `semi_scheduled_member_refresh` | `2.093e-16` | `59` | `63.863` | `0.437` | `0.312` | `825.7` |
 
 The conclusion is conservative. Increasing the pure quota from `w=0.15` to
@@ -341,6 +343,21 @@ zero-participation rises from `0.554` to `0.689`. Excluding collision-caused
 misses from the queue update was not enough; stateful debt ranking still
 over-concentrates attempts in dense K=3000 ALOHA.
 
+The first structural cluster split test is also negative. With
+`--cluster-split-mode max_size --cluster-split-max-size 5`, the number of
+cluster rows rises from `627.45` to `905.66`, singletons rise from `20.44` to
+`158.43`, and mean non-singleton cluster size falls from `4.91` to `3.80`.
+This reduces stale `CH no attempt` attribution from `0.983` to `0.944`, but it
+creates too many ALOHA contenders: collision attribution rises to `0.055`, CH
+uploads fall from `300.73` to `124.28`, final error stalls at `3.12e-2`, and
+member stale75/zero worsen sharply. Naive fixed max-size splitting is therefore
+not a member-freshness solution. The gentler `max_size=8` run is less damaging
+but still negative: cluster rows rise to `706.45`, singletons to `47.41`,
+optimized+D2D uploads fall by `20.8%`, final energy efficiency falls by
+`22.6%`, final error only reaches `1.25e-7`, and member stale75/zero still
+worsen from `0.618`/`0.554` to `0.670`/`0.604`. This effectively rules out
+global fixed-threshold splitting as the next main path.
+
 ## Next Research Direction
 
 The current pure-ALOHA probability-shaping branch has likely reached its useful
@@ -359,6 +376,12 @@ structural:
 5. Move next to re-clustering or cluster splitting, because persistent
    zero-participation suggests that some members are structurally hidden behind
    overloaded or unlucky CHs.
+   The first implemented structural ablation is
+   `--cluster-split-mode max_size`, which locally re-clusters large D2D rows
+   into valid one-hop subclusters before FL rounds while keeping ALOHA access
+   unchanged. The first `max_size=5` and `max_size=8` runs are negative, so
+   the next structural attempt should be selective rather than globally
+   splitting every large cluster.
 
 The immediate paper-defensible claim is now two-tiered: member-level D2D
 freshness reveals starvation hidden by cluster-level AoI; a quota-based refresh

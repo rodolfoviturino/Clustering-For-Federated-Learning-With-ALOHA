@@ -21,6 +21,13 @@ This document records the simulation defaults after the code cleanup.
   rotation repair. A source D2D cluster can merge into a target D2D cluster
   only when the target CH can directly cover every source member and the union
   still fits within `Cmax`.
+- Enhanced runs can enable local cluster splitting with
+  `--cluster-split-mode max_size`. This is a pre-FL structural ablation, not a
+  scheduling policy: clusters larger than `--cluster-split-max-size` are
+  re-clustered internally into valid one-hop subclusters. Devices that cannot
+  safely join a subcluster become singleton rows. The MAC remains pure
+  multichannel ALOHA, so the expected tradeoff is lower member hiding inside
+  large clusters versus more CH rows contending on the BS uplink.
 - Enhanced runs can enable quality CH election with
   `--cluster-head-selection-mode quality`. This does not change cluster
   membership. It only moves the CH role to the highest-scoring member that can

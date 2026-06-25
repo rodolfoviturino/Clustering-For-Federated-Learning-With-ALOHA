@@ -157,6 +157,12 @@ Dense strategy:
   the CH position rotates to the highest-scoring member that can still directly
   cover all members. The score combines normalized D2D degree, normalized BS
   channel quality, and battery;
+- can optionally run local structural splitting with
+  `--cluster-split-mode max_size --cluster-split-max-size N`: after local
+  repair/merge and before quality CH election, clusters larger than `N` are
+  re-clustered internally into valid one-hop subclusters. This remains ALOHA
+  probability access; it does not reserve slots, add SIC/MPR, or centralize MAC
+  scheduling;
 - preserves one-hop CH coverage directly from the radius test;
 - is more expensive than grid clustering, but gives a clustering-rate behavior
   much closer to the old D2D-SRC notebook.
@@ -721,6 +727,14 @@ implemented as `member_collision_aware_queue_quota`, but its first K=3000 run
 is a negative ablation because it moved pressure into collisions and failed to
 converge. Move next to re-clustering or cluster splitting before adding more
 pure probability-shaping variants.
+That structural path is now exposed through `--cluster-split-mode max_size`.
+The first `max_size=5` K=3000 run is a negative ablation: it reduced
+no-attempt attribution but created many more CH rows/singletons, increased
+collisions, reduced CH uploads, and worsened member freshness. Do not treat
+naive fixed max-size splitting as a new candidate. The gentler `max_size=8`
+run is also negative, though less severe: it still lowers uploads and energy
+efficiency and worsens member stale75/zero. Any follow-up should be selective,
+not another global max-size split.
 
 The utility Pareto tuning runner is:
 
@@ -1022,6 +1036,7 @@ Every thesis-scale result should preserve:
 - local repair pass count;
 - local CH-rotation repair pass count;
 - local CH-to-CH merge repair pass count;
+- local cluster split mode and max split size;
 - initial dense cluster size;
 - channel-aware direct/CH decoding mode and battery exponents;
 - energy drain mode and normalized per-attempt energy costs;

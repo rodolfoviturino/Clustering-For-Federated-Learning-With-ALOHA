@@ -97,6 +97,7 @@ dense pair-first clustering
 + singleton join repair
 + pair CH-rotation repair
 + CH-to-CH merge repair
++ optional local max-size split
 ```
 
 The invariant is:
@@ -108,6 +109,12 @@ cluster size must be <= Cmax
 
 This is deliberately one-hop.  It avoids assuming a multi-hop D2D routing
 protocol that the thesis did not model.
+
+`--cluster-split-mode max_size` is the first structural follow-up after the
+pure probability-shaping member-freshness ablations. It re-clusters large D2D
+rows into valid one-hop subclusters before the FL simulation starts. This is
+not MAC scheduling: CHs still contend through multichannel ALOHA, but the
+member-to-CH grouping changes.
 
 ### Real Deployment Interpretation
 

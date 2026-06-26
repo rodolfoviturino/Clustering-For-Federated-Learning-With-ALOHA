@@ -279,12 +279,21 @@ member-stale failure attribution family for D2D scenarios:
 `<scenario>_member_stale_link_failure_fraction_*`,
 `<scenario>_member_stale_member_energy_failure_fraction_*`,
 `<scenario>_member_stale_ch_no_attempt_fraction_*`,
+`<scenario>_member_stale_ch_compute_failure_fraction_*`,
+`<scenario>_member_stale_ch_energy_failure_fraction_*`,
+`<scenario>_member_stale_ch_access_no_draw_fraction_*`,
+`<scenario>_member_stale_ch_not_scheduled_fraction_*`,
+`<scenario>_member_stale_ch_other_no_attempt_fraction_*`,
 `<scenario>_member_stale_collision_fraction_*`,
 `<scenario>_member_stale_ch_bs_failure_fraction_*`, and
 `<scenario>_member_stale_other_failure_fraction_*`. These fractions are
 conditioned on devices in non-singleton D2D clusters that remain stale at the
-checkpoint. The plotter emits these families when the columns are present,
-including `results_member_failure_breakdown.*` for optimized D2D.
+checkpoint. `member_stale_ch_no_attempt_fraction` remains the aggregate
+no-attempt bucket; the `member_stale_ch_*` subfields split it into CH compute
+unavailability, CH energy infeasibility, failed local access draw, missing
+required scheduled grant, and residual no-attempt cases. The plotter emits these
+families when the columns are present, including
+`results_member_failure_breakdown.*` for optimized D2D.
 
 AoI can also be used as an explicit optimized-D2D scheduling objective with
 `--optimized-d2d-access-mode aoi_aware_utility`. This mode keeps the same
@@ -399,8 +408,10 @@ The semi-scheduled refresh variant is
 `--optimized-d2d-access-mode semi_scheduled_member_refresh`. It reserves
 `ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
 clusters with the highest active member AoI/zero-participation pressure. Those
-reserved CH attempts are collision-free but still require CH energy and
-CH-to-BS decoding success. All remaining channels stay under the normal
+reserved CH attempts are collision-free but still require the CH compute draw
+to pass `pcomp`, CH energy, and CH-to-BS decoding success. If the scheduled CH
+is not compute-ready, the reserved slot is wasted; this is a blind scheduler,
+not a ready-aware grant. All remaining channels stay under the normal
 utility-controlled ALOHA allocator. The optional
 `--optimized-d2d-member-schedule-deficit-weight` lets persistent missed-refresh
 deficit act as a tie-breaker without turning the whole policy into probability
@@ -409,7 +420,7 @@ decision for the reserved refresh slots and should be reported as a coordinated
 semi-scheduled ablation, not pure distributed ALOHA. The optional
 `--optimized-d2d-member-schedule-control-cost` charges a normalized per-slot
 coordination overhead to the scheduled CH battery/energy accounting; its
-default is `0.0` so previously published runs remain reproducible.
+default is `0.0` to isolate the overhead-sensitivity ablation.
 
 The stateful deficit variant is
 `--optimized-d2d-access-mode member_deficit_utility`. It keeps the explicit

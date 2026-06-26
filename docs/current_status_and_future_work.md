@@ -691,10 +691,10 @@ The most important current results are:
 ### Step 1: Diagnose And Attack Member Stale Causes
 
 The code now includes member-stale failure attribution columns and member-aware
-CH-rotation triggers. The refreshed physical `utility` baseline with member
-metrics is available, and the current access-only member-fair Pareto candidate
-is `w=0.05 / threshold=0.70`. The immediate research step is to run that access
-candidate beside a structural CH-rotation candidate, then compare:
+CH-rotation triggers. The refreshed physical `utility` baseline, member-aware
+access policies, CH rotation, corrected semi-scheduled refresh, and the
+`comparison_chdiag_core` subcause matrix are available. The current diagnostic
+view should compare:
 
 ```text
 mean AoI
@@ -708,21 +708,17 @@ energy efficiency
 CH uploads
 ```
 
-Expected benefit:
+Diagnostic purpose:
 
-- confirms whether the moderate freshness gain at `w=0.05` survives higher
-  Monte Carlo precision;
-- checks whether the roughly 2x final-error cost is stable or just seed noise;
 - identifies whether stale members are dominated by member compute, member link,
   member energy, CH no-attempt, ALOHA collision, or CH-to-BS physical decoding;
+  the CH no-attempt bucket is now split into CH compute, CH energy, local access
+  no-draw, missing required schedule, and residual no-attempt subcauses;
 - documents that the severe p90/p95 AoI tail already exists in the tuned
-  physical utility baseline and is not solved by light member-fair access
-  reweighting;
-- tests whether `--d2d-ch-rotation-trigger-mode interval_or_member_aoi` can
-  reduce the stale tail by changing the CH rather than only changing access
-  probability;
-- provides a clean reference before implementing deeper structural changes such
-  as re-clustering or data-aware D2D discovery.
+  physical utility baseline and is not solved by light access reweighting,
+  CH rotation, blind semi-scheduling, or static splitting;
+- separates access-limited behavior from compute-limited behavior before adding
+  more access policies.
 
 Latest member-rotation result (`K=1000`, `rounds=100`, physical
 energy/Rayleigh, `performance` CH rotation profile):
@@ -758,20 +754,33 @@ curve, probably by moving to stronger CH-to-BS candidates, but it does not
 materially improve member freshness. The failure attribution shows that stale
 members are almost never blocked by member compute, member-to-CH Rayleigh links,
 member energy, or CH-to-BS decoding. The dominant cause is that the CH carrying
-those stale members does not attempt in that round. Therefore the next
-implementation should target stale-member access opportunity directly: a
-virtual-queue/member-refresh access mode, a bounded scheduled refresh overlay,
-or local re-clustering that reduces the number of stale members competing for
-the same sparse CH access opportunities.
+those stale members does not attempt in that round.
+
+Latest CH no-attempt subcause diagnosis (`comparison_chdiag_core`, after the
+semi-scheduled `pcomp` gating fix):
+
+```text
+Across K=1000 and K=3000:
+  CH no-attempt              ~= 0.983 to 0.992 of severe-stale members
+  CH compute subcause        ~= 91.1% to 92.6% of CH no-attempt
+  local access no-draw       ~=  7.4% to  8.9% of CH no-attempt
+  CH energy / not scheduled  ~= 0%
+```
+
+Interpretation: the dominant bottleneck is CH compute readiness under
+`pcomp=0.1`, not access probability, battery, physical CH-BS decoding, or lack
+of a scheduled grant. Therefore the next high-value experiment is a `pcomp`
+sensitivity sweep before adding more ALOHA access policies.
 
 Implemented next access test: `--optimized-d2d-access-mode
 member_refresh_utility`. It uses the same base utility and active
 stale/zero-member pressure as `member_fair_utility`, but adds a local refresh
 floor through `--optimized-d2d-member-refresh-floor-fraction`. This directly
-tests the `CH no attempt` diagnosis by raising the minimum attempt probability
-only for refresh-eligible clusters. It is still an ALOHA probability policy, not
-a centralized scheduler; the floor should be swept conservatively because it can
-increase collisions when many clusters are stale at once.
+tested the earlier aggregate `CH no attempt` diagnosis by raising the minimum
+attempt probability only for refresh-eligible clusters. It remains useful as a
+historical access-shaping ablation, but the CH subcause diagnosis shows that
+most remaining no-attempt cases are CH compute unavailability, not missing
+local access draw.
 
 Implemented explicit quota follow-up: `--optimized-d2d-access-mode
 member_quota_utility`. This mode uses `--optimized-d2d-aoi-weight` as a reserved
@@ -779,9 +788,10 @@ stale-member refresh quota instead of only blending two full-load allocations:
 the base utility allocator receives `1 - weight` of the CH contender target, and
 refresh-eligible clusters receive a separate overlay with `weight` of the
 target. It is designed to test the most recent diagnosis directly: if
-`CH no attempt` remains near the previous `~0.986-0.992` level, then the next
-research step should move beyond local ALOHA probability shaping toward virtual
-queues, explicit refresh scheduling, or re-clustering.
+`CH no attempt` remains near the previous `~0.986-0.992` level, then pure local
+ALOHA probability shaping has likely reached its useful limit under `pcomp=0.1`.
+The new subcause diagnosis confirms that the next priority is a `pcomp`
+sensitivity sweep rather than another access-probability variant.
 
 Implemented stateful deficit follow-up: `--optimized-d2d-access-mode
 member_deficit_utility`. It keeps the quota split but ranks the refresh overlay

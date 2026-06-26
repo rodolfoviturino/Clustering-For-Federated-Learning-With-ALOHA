@@ -78,9 +78,21 @@ class JaxModelTests(unittest.TestCase):
             np.asarray(result.d2d_member_stale_link_failure_fraction),
             np.asarray(result.d2d_member_stale_member_energy_failure_fraction),
             np.asarray(result.d2d_member_stale_ch_no_attempt_fraction),
+            np.asarray(result.d2d_member_stale_ch_compute_failure_fraction),
+            np.asarray(result.d2d_member_stale_ch_energy_failure_fraction),
+            np.asarray(result.d2d_member_stale_ch_access_no_draw_fraction),
+            np.asarray(result.d2d_member_stale_ch_not_scheduled_fraction),
+            np.asarray(result.d2d_member_stale_ch_other_no_attempt_fraction),
             np.asarray(result.d2d_member_stale_collision_fraction),
             np.asarray(result.d2d_member_stale_ch_bs_failure_fraction),
             np.asarray(result.d2d_member_stale_other_failure_fraction),
+        ]
+        d2d_member_ch_no_attempt_subcauses = [
+            np.asarray(result.d2d_member_stale_ch_compute_failure_fraction),
+            np.asarray(result.d2d_member_stale_ch_energy_failure_fraction),
+            np.asarray(result.d2d_member_stale_ch_access_no_draw_fraction),
+            np.asarray(result.d2d_member_stale_ch_not_scheduled_fraction),
+            np.asarray(result.d2d_member_stale_ch_other_no_attempt_fraction),
         ]
 
         self.assertEqual(error_norms.shape, (2, 6))
@@ -155,6 +167,11 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(d2d_member_zero_participation_fraction <= 1.0))
         for fraction in d2d_member_failure_fractions:
             self.assertTrue(np.all(fraction <= 1.0))
+        np.testing.assert_allclose(
+            sum(d2d_member_ch_no_attempt_subcauses),
+            np.asarray(result.d2d_member_stale_ch_no_attempt_fraction),
+            atol=1e-6,
+        )
 
     def test_legacy_error_calculator_tuple_shape(self):
         result = error_calculator(
@@ -1998,6 +2015,51 @@ class JaxModelTests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(np.asarray(result.error_norms))))
         self.assertTrue(
             np.all(np.isfinite(np.asarray(result.d2d_member_mean_aoi)))
+        )
+
+    def test_semi_scheduled_member_refresh_respects_zero_pcomp(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=0.0,
+            max_iterations_t=5,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=123,
+            optimized_d2d_access_mode="semi_scheduled_member_refresh",
+            optimized_d2d_member_schedule_fraction=1.0,
+            checkpoints=[5],
+        )
+
+        self.assertEqual(int(np.asarray(result.successful_uploads)[-1, 5]), 0)
+        self.assertEqual(
+            int(np.asarray(result.successful_clusterhead_uploads)[-1, 2]),
+            0,
+        )
+
+    def test_semi_scheduled_member_refresh_works_when_pcomp_one(self):
+        clusters = prepare_clusters_for_jax([[0, 1], [2, 3]])
+        result = error_calculator_trace_jax(
+            number_of_mobile_devices__k=4,
+            data_dimension__L=2,
+            number_of_parallel_channels__M=2,
+            probability_that_user_can_compute_its_local_update__pcomp=1.0,
+            max_iterations_t=5,
+            learning_rate__u1=0.01,
+            step_size__u=0.1,
+            clusters=clusters,
+            seed=123,
+            optimized_d2d_access_mode="semi_scheduled_member_refresh",
+            optimized_d2d_member_schedule_fraction=1.0,
+            checkpoints=[5],
+        )
+
+        self.assertGreater(
+            int(np.asarray(result.successful_clusterhead_uploads)[-1, 2]),
+            0,
         )
 
     def test_semi_scheduled_control_cost_increases_optimized_d2d_energy(self):

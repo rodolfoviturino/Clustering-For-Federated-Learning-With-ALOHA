@@ -347,6 +347,11 @@ def run_gpu_sweep(args):
             trace.d2d_member_stale_link_failure_fraction,
             trace.d2d_member_stale_member_energy_failure_fraction,
             trace.d2d_member_stale_ch_no_attempt_fraction,
+            trace.d2d_member_stale_ch_compute_failure_fraction,
+            trace.d2d_member_stale_ch_energy_failure_fraction,
+            trace.d2d_member_stale_ch_access_no_draw_fraction,
+            trace.d2d_member_stale_ch_not_scheduled_fraction,
+            trace.d2d_member_stale_ch_other_no_attempt_fraction,
             trace.d2d_member_stale_collision_fraction,
             trace.d2d_member_stale_ch_bs_failure_fraction,
             trace.d2d_member_stale_other_failure_fraction,
@@ -388,6 +393,11 @@ def run_gpu_sweep(args):
         d2d_member_stale_link_failure_fraction,
         d2d_member_stale_member_energy_failure_fraction,
         d2d_member_stale_ch_no_attempt_fraction,
+        d2d_member_stale_ch_compute_failure_fraction,
+        d2d_member_stale_ch_energy_failure_fraction,
+        d2d_member_stale_ch_access_no_draw_fraction,
+        d2d_member_stale_ch_not_scheduled_fraction,
+        d2d_member_stale_ch_other_no_attempt_fraction,
         d2d_member_stale_collision_fraction,
         d2d_member_stale_ch_bs_failure_fraction,
         d2d_member_stale_other_failure_fraction,
@@ -436,6 +446,21 @@ def run_gpu_sweep(args):
     )
     d2d_member_stale_ch_no_attempt_fraction = np.asarray(
         d2d_member_stale_ch_no_attempt_fraction
+    )
+    d2d_member_stale_ch_compute_failure_fraction = np.asarray(
+        d2d_member_stale_ch_compute_failure_fraction
+    )
+    d2d_member_stale_ch_energy_failure_fraction = np.asarray(
+        d2d_member_stale_ch_energy_failure_fraction
+    )
+    d2d_member_stale_ch_access_no_draw_fraction = np.asarray(
+        d2d_member_stale_ch_access_no_draw_fraction
+    )
+    d2d_member_stale_ch_not_scheduled_fraction = np.asarray(
+        d2d_member_stale_ch_not_scheduled_fraction
+    )
+    d2d_member_stale_ch_other_no_attempt_fraction = np.asarray(
+        d2d_member_stale_ch_other_no_attempt_fraction
     )
     d2d_member_stale_collision_fraction = np.asarray(
         d2d_member_stale_collision_fraction
@@ -594,6 +619,26 @@ def run_gpu_sweep(args):
                 (
                     "member_stale_ch_no_attempt_fraction",
                     d2d_member_stale_ch_no_attempt_fraction,
+                ),
+                (
+                    "member_stale_ch_compute_failure_fraction",
+                    d2d_member_stale_ch_compute_failure_fraction,
+                ),
+                (
+                    "member_stale_ch_energy_failure_fraction",
+                    d2d_member_stale_ch_energy_failure_fraction,
+                ),
+                (
+                    "member_stale_ch_access_no_draw_fraction",
+                    d2d_member_stale_ch_access_no_draw_fraction,
+                ),
+                (
+                    "member_stale_ch_not_scheduled_fraction",
+                    d2d_member_stale_ch_not_scheduled_fraction,
+                ),
+                (
+                    "member_stale_ch_other_no_attempt_fraction",
+                    d2d_member_stale_ch_other_no_attempt_fraction,
                 ),
                 (
                     "member_stale_collision_fraction",

@@ -838,10 +838,17 @@ The returned `JaxTraceResult` contains:
   `d2d_member_stale_link_failure_fraction`,
   `d2d_member_stale_member_energy_failure_fraction`,
   `d2d_member_stale_ch_no_attempt_fraction`,
+  `d2d_member_stale_ch_compute_failure_fraction`,
+  `d2d_member_stale_ch_energy_failure_fraction`,
+  `d2d_member_stale_ch_access_no_draw_fraction`,
+  `d2d_member_stale_ch_not_scheduled_fraction`,
+  `d2d_member_stale_ch_other_no_attempt_fraction`,
   `d2d_member_stale_collision_fraction`,
   `d2d_member_stale_ch_bs_failure_fraction`, and
   `d2d_member_stale_other_failure_fraction`: `float[checkpoints, 3]`,
-  severe-stale member failure attribution fractions for D2D scenarios.
+  severe-stale member failure attribution fractions for D2D scenarios. The CH
+  no-attempt subfields sum to the aggregate
+  `d2d_member_stale_ch_no_attempt_fraction`.
 - `d2d_member_stale_fraction_50`, `d2d_member_stale_fraction_75`,
   `d2d_member_stale_fraction_100`: `float[checkpoints, 3]`, member-level
   stale-tail fractions using the same thresholds as the cluster/device AoI

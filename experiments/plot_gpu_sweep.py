@@ -64,6 +64,24 @@ MEMBER_FAILURE_BREAKDOWN = (
     ("member_stale_other_failure_fraction", "Other", "#bab0ac"),
 )
 
+MEMBER_FAILURE_BREAKDOWN_WITH_CH_DETAIL = (
+    ("member_stale_compute_failure_fraction", "Member compute", "#4c78a8"),
+    ("member_stale_link_failure_fraction", "Member link", "#f58518"),
+    (
+        "member_stale_member_energy_failure_fraction",
+        "Member energy",
+        "#54a24b",
+    ),
+    ("member_stale_ch_compute_failure_fraction", "CH compute", "#9467bd"),
+    ("member_stale_ch_energy_failure_fraction", "CH energy", "#8c564b"),
+    ("member_stale_ch_access_no_draw_fraction", "CH access draw", "#b279a2"),
+    ("member_stale_ch_not_scheduled_fraction", "CH not scheduled", "#ff9da6"),
+    ("member_stale_ch_other_no_attempt_fraction", "CH no-attempt other", "#9d755d"),
+    ("member_stale_collision_fraction", "ALOHA collision", "#e45756"),
+    ("member_stale_ch_bs_failure_fraction", "CH-BS decode", "#72b7b2"),
+    ("member_stale_other_failure_fraction", "Other", "#bab0ac"),
+)
+
 
 def _clean_formats(formats):
     """Normalize plot format strings passed by the CLI or another script."""
@@ -277,9 +295,15 @@ def _plot_member_failure_breakdown(
     scenario="optimized_aloha_d2d",
 ):
     """Plot the reason stale D2D members were not refreshed."""
+    breakdown = MEMBER_FAILURE_BREAKDOWN
+    if all(
+        f"{scenario}_{metric_name}_mean" in frame.columns
+        for metric_name, _, _ in MEMBER_FAILURE_BREAKDOWN_WITH_CH_DETAIL
+    ):
+        breakdown = MEMBER_FAILURE_BREAKDOWN_WITH_CH_DETAIL
     available_metrics = [
         (metric_name, label, color)
-        for metric_name, label, color in MEMBER_FAILURE_BREAKDOWN
+        for metric_name, label, color in breakdown
         if f"{scenario}_{metric_name}_mean" in frame.columns
     ]
     if not available_metrics:

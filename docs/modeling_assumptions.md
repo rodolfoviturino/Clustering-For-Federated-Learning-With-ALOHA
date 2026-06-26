@@ -236,16 +236,18 @@ This document records the simulation defaults after the code cleanup.
   `ceil(M * --optimized-d2d-member-schedule-fraction)` D2D channels for the
   clusters with the highest active member AoI/zero-participation pressure, then
   runs utility ALOHA on the remaining channels. A scheduled CH attempt is
-  collision-free, but it still requires CH battery feasibility and CH-to-BS
-  decoding success. The optional
+  collision-free, but it still requires the CH compute draw to pass `pcomp`, CH
+  battery feasibility, and CH-to-BS decoding success. If the scheduled CH is not
+  compute-ready, the reserved slot is wasted; this is a blind scheduler, not a
+  ready-aware grant. The optional
   `--optimized-d2d-member-schedule-deficit-weight` only breaks ties in the
   ranking; it does not create extra scheduled slots. This mode assumes a small
   BS/CH control decision for the reserved refresh slots, so it is a
   coordinated semi-scheduled ablation rather than fully distributed random
   ALOHA. `--optimized-d2d-member-schedule-control-cost` optionally charges a
   normalized per-scheduled-CH coordination overhead to the optimized+D2D CH
-  battery and energy accounting. The default is `0.0` to preserve prior runs;
-  positive values are intended for overhead-sensitivity ablations.
+  battery and energy accounting. The default is `0.0`; positive values are
+  intended for overhead-sensitivity ablations.
 - `member_deficit_utility` adds one piece of memory to the explicit quota
   policy. The optimized-D2D scenario keeps a per-cluster missed-refresh deficit
   that increases when active stale or zero-participation members are available
@@ -296,7 +298,10 @@ This document records the simulation defaults after the code cleanup.
   member-to-CH link failure, member energy infeasibility, CH no-attempt, ALOHA
   collision, CH-to-BS decode failure, and an `other` residual bucket. These
   columns identify whether stale-tail AoI is mostly local member availability,
-  medium access, physical uplink, or an instrumentation gap.
+  medium access, physical uplink, or an instrumentation gap. The aggregate CH
+  no-attempt bucket is also split into CH compute unavailability, CH energy
+  infeasibility, failed local access draw, missing required scheduled grant, and
+  residual no-attempt cases.
 - AoI affects scheduling only when an explicit AoI-enhanced policy is selected.
 
 These defaults are intended to preserve the thesis figure behavior while fixing

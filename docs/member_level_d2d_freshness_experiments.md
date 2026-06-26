@@ -17,7 +17,10 @@ device's update is active inside a delivered CH aggregate.
 The physical/Rayleigh runs showed that stale member samples are usually not
 blocked by member compute, member-to-CH link, member energy, or CH-to-BS decode.
 The dominant attribution is that the CH carrying those stale members does not
-attempt in that round.
+attempt in that round. New runs also split that aggregate CH no-attempt bucket
+into CH compute, CH energy, access no-draw, missing required schedule, and
+residual no-attempt subcauses, so the next comparison should report both the
+aggregate bucket and its subcomposition.
 
 ## Policies Tested
 
@@ -69,10 +72,14 @@ collisions and degrade convergence/freshness.
 
 Reserves a small number of D2D channels for the highest active member-pressure
 clusters and runs utility ALOHA on the remaining channels. The scheduled CH
-attempts are collision-free, but they still require CH battery feasibility and
-CH-to-BS link success. This is the first implemented step beyond global ALOHA
+attempts are collision-free, but they still require the CH compute draw to pass
+`pcomp`, CH battery feasibility, and CH-to-BS link success. If the scheduled CH
+is not compute-ready, the reserved slot is wasted; this is a blind scheduler,
+not a ready-aware grant. This is the first implemented step beyond global ALOHA
 probability shaping, so it is treated as a coordinated upper-bound/future-work
-ablation, not as the main ALOHA contribution.
+ablation, not as the main ALOHA contribution. Semi-scheduled result rows in this
+note that were generated before this `pcomp` gating fix should be treated as
+pre-correction diagnostics and re-run before being used as claims.
 `--optimized-d2d-member-schedule-control-cost` can charge a normalized
 per-scheduled-CH coordination overhead,
 so the semi-scheduled bound can be stress-tested against nonzero control-plane
@@ -477,13 +484,40 @@ Pressure guidance lowers CH-no-attempt attribution slightly (`0.98344` to
 `0.98274`) but raises collision attribution (`0.01436` to `0.01513`), so the
 member-starvation bottleneck is not solved by static split selection.
 
+## CH No-Attempt Subcause Diagnosis
+
+The `comparison_chdiag_core` runs were generated after the `pcomp` gating fix
+and after adding subcauses for the aggregate CH no-attempt bucket. The result is
+consistent across `K=1000` and `K=3000`: severe-stale members are still mostly
+blocked by CH no-attempt, and roughly 91-93% of that no-attempt bucket is CH
+compute unavailability.
+
+| Run | K | CH No Attempt | CH Compute | Access No-Draw | Collision | CH-BS |
+|---|---:|---:|---:|---:|---:|---:|
+| `chdiag_k1000_member_quota_w015` | 1000 | `0.9842` | `0.9116` | `0.0726` | `0.0119` | `0.0032` |
+| `chdiag_k1000_collision_quota` | 1000 | `0.9899` | `0.9050` | `0.0848` | `0.0068` | `0.0026` |
+| `chdiag_k1000_capped_quota_cap010` | 1000 | `0.9915` | `0.9056` | `0.0859` | `0.0052` | `0.0026` |
+| `chdiag_k1000_semischedule_s020` | 1000 | `0.9922` | `0.9043` | `0.0879` | `0.0055` | `0.0014` |
+| `chdiag_k3000_member_quota_w015` | 3000 | `0.9834` | `0.9037` | `0.0797` | `0.0144` | `0.0014` |
+| `chdiag_k3000_collision_quota` | 3000 | `0.9839` | `0.9047` | `0.0790` | `0.0138` | `0.0016` |
+| `chdiag_k3000_capped_quota_cap010` | 3000 | `0.9851` | `0.9049` | `0.0800` | `0.0127` | `0.0015` |
+| `chdiag_k3000_semischedule_s020_cc0010` | 3000 | `0.9875` | `0.9028` | `0.0847` | `0.0105` | `0.0012` |
+
+Within the CH no-attempt bucket, CH compute accounts for `91.1%` to `92.6%`
+and local access no-draw accounts for only `7.4%` to `8.9%`. CH energy and
+missing required schedule are effectively zero in these runs. This means that
+additional ALOHA access-probability shaping has limited headroom under
+`pcomp=0.1`: most stale members are waiting on CHs that did not have a computed
+aggregate ready, not CHs that were ready but denied channel access.
+
 ## Next Research Direction
 
 The current pure-ALOHA probability-shaping branch has likely reached its useful
-limit: quota, collision-aware damping, capped quota, deficit, and
-collision-aware queue variants either improve convergence/energy only or move
-the bottleneck into collisions. The next ALOHA-compatible steps should be more
-structural:
+limit under `pcomp=0.1`: quota, collision-aware damping, capped quota, deficit,
+and collision-aware queue variants either improve convergence/energy only or
+move the bottleneck into collisions. The CH subcause diagnosis shows that the
+dominant member-stale mechanism is CH compute unavailability, not CH energy,
+not physical CH-BS failure, and not a missing access draw.
 
 1. Keep `member_quota_k3000_w015_floor000_physical_r100` as the clean
    member-freshness baseline.
@@ -492,30 +526,23 @@ structural:
 3. Keep `member_collision_quota_k3000_w015_t002_g2_min050_physical_r100` as the
    simpler collision-aware convergence/energy ablation.
 4. Keep `member_collision_aware_queue_quota` as a negative pure-ALOHA ablation.
-5. Move next to re-clustering or cluster splitting, because persistent
-   zero-participation suggests that some members are structurally hidden behind
-   overloaded or unlucky CHs.
-   The first implemented structural ablation is
-   `--cluster-split-mode max_size`, which locally re-clusters large D2D rows
-   into valid one-hop subclusters before FL rounds while keeping ALOHA access
-   unchanged. The first `max_size=5` and `max_size=8` runs are negative. The
-   next implemented structural attempt is `safe_max_size`, which limits split
-   budget and rejects tiny-tail split proposals instead of globally splitting
-   every large cluster. Its first K=3000 point is safer but still
-   neutral-to-negative, so the next structural idea should select clusters by
-   member stale/zero pressure rather than by size alone. The current deployable
-   approximation is `pressure_safe_max_size`, which ranks candidates by
-   member-link and CH-BS risk before applying the same safe splitter. Its first
-   result helps convergence but not member freshness, so further split tuning
-   should not be the main next path unless it includes a stronger
-   participation-oriented mechanism.
+5. Run a focused `pcomp` sensitivity sweep before adding more access policies:
+   `pcomp=0.05, 0.10, 0.20, 0.50` for `member_quota_utility`,
+   `member_collision_aware_quota`, and the corrected semi-scheduled point.
+6. Treat current blind `semi_scheduled_member_refresh` as a negative/diagnostic
+   coordination ablation for freshness. If coordination is pursued, implement a
+   separate ready-aware request/grant protocol that schedules only CHs with a
+   ready aggregate and charges explicit control overhead.
+7. Keep structural splitting as lower priority. The max-size, safe split, and
+   pressure-safe split runs already show that splitting alone does not solve
+   member freshness under the current access and compute assumptions.
 
 The immediate paper-defensible claim is now two-tiered: member-level D2D
 freshness reveals starvation hidden by cluster-level AoI; a quota-based refresh
 overlay improves that member freshness under physical energy/Rayleigh
 assumptions while staying in pure ALOHA probability shaping. The semi-scheduled
-results are useful only as an upper-bound reference showing that additional
-coordination could improve further, while the deficit experiments show the
-boundary where pure ALOHA access opportunity becomes collision limited. The
-collision-aware queue result reinforces that the remaining problem is likely
-structural cluster membership, not just a missing access-probability weight.
+results are useful as a coordinated diagnostic only after the `pcomp` fix; they
+do not replace the quota baseline for member freshness. The deficit experiments
+show the boundary where pure ALOHA access opportunity becomes collision
+limited, while the CH subcause diagnosis shows that the remaining dominant
+constraint is CH compute readiness.

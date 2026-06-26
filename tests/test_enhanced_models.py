@@ -296,6 +296,26 @@ class GpuSweepTests(unittest.TestCase):
             rows[0],
         )
         self.assertIn(
+            "optimized_aloha_d2d_member_stale_ch_compute_failure_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_ch_energy_failure_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_ch_access_no_draw_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_ch_not_scheduled_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
+            "optimized_aloha_d2d_member_stale_ch_other_no_attempt_fraction_mean",
+            rows[0],
+        )
+        self.assertIn(
             "optimized_aloha_d2d_member_stale_collision_fraction_mean",
             rows[0],
         )

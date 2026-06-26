@@ -120,6 +120,11 @@ class JaxTraceResult(NamedTuple):
     d2d_member_stale_link_failure_fraction: Any
     d2d_member_stale_member_energy_failure_fraction: Any
     d2d_member_stale_ch_no_attempt_fraction: Any
+    d2d_member_stale_ch_compute_failure_fraction: Any
+    d2d_member_stale_ch_energy_failure_fraction: Any
+    d2d_member_stale_ch_access_no_draw_fraction: Any
+    d2d_member_stale_ch_not_scheduled_fraction: Any
+    d2d_member_stale_ch_other_no_attempt_fraction: Any
     d2d_member_stale_collision_fraction: Any
     d2d_member_stale_ch_bs_failure_fraction: Any
     d2d_member_stale_other_failure_fraction: Any
@@ -4633,7 +4638,12 @@ def error_calculator_trace_jax(
                     cluster_mask.shape,
                     dtype=jnp.bool_,
                 )
-            scheduled_d2d_attempt = semi_scheduled_refresh_mask & ch_can_attempt_3
+            scheduled_d2d_compute_success = optimized_cluster_draws < pcomp
+            scheduled_d2d_attempt = (
+                semi_scheduled_refresh_mask
+                & scheduled_d2d_compute_success
+                & ch_can_attempt_3
+            )
             scheduled_d2d_link_draws = jax.random.uniform(
                 jax.random.fold_in(optimized_d2d_link_key, 313),
                 cluster_mask.shape,
@@ -5087,6 +5097,11 @@ def error_calculator_trace_jax(
             cluster_attempt_mask,
             collision_free_mask,
             ch_bs_link_success_mask,
+            ch_compute_success_mask,
+            ch_energy_ready_mask,
+            ch_access_selected_mask,
+            ch_scheduled_opportunity_mask,
+            ch_schedule_required_mask,
             next_member_aoi,
             current_iteration,
         ):
@@ -5129,7 +5144,40 @@ def error_calculator_trace_jax(
             cluster_attempt = cluster_attempt_mask[:, None]
             collision_free = collision_free_mask[:, None]
             ch_bs_link_success = ch_bs_link_success_mask[:, None]
+            ch_compute_ready = ch_compute_success_mask[:, None]
+            ch_energy_ready = ch_energy_ready_mask[:, None]
+            ch_access_selected = ch_access_selected_mask[:, None]
+            ch_scheduled_opportunity = ch_scheduled_opportunity_mask[:, None]
+            ch_schedule_required = ch_schedule_required_mask[:, None]
             ch_no_attempt = stale_positions & locally_active & (~cluster_attempt)
+            ch_compute_failure = ch_no_attempt & (~ch_compute_ready)
+            ch_energy_failure = (
+                ch_no_attempt
+                & ch_compute_ready
+                & (~ch_energy_ready)
+            )
+            ch_not_scheduled = (
+                ch_no_attempt
+                & ch_compute_ready
+                & ch_energy_ready
+                & ch_schedule_required
+                & (~ch_scheduled_opportunity)
+            )
+            ch_access_no_draw = (
+                ch_no_attempt
+                & ch_compute_ready
+                & ch_energy_ready
+                & (~ch_not_scheduled)
+                & (~ch_access_selected)
+            )
+            ch_other_no_attempt = ch_no_attempt & (
+                ~(
+                    ch_compute_failure
+                    | ch_energy_failure
+                    | ch_not_scheduled
+                    | ch_access_no_draw
+                )
+            )
             collision_failure = (
                 stale_positions
                 & locally_active
@@ -5161,6 +5209,11 @@ def error_calculator_trace_jax(
                     fraction(link_failure),
                     fraction(member_energy_failure),
                     fraction(ch_no_attempt),
+                    fraction(ch_compute_failure),
+                    fraction(ch_energy_failure),
+                    fraction(ch_access_no_draw),
+                    fraction(ch_not_scheduled),
+                    fraction(ch_other_no_attempt),
                     fraction(collision_failure),
                     fraction(ch_bs_failure),
                     fraction(other_failure),
@@ -5189,6 +5242,12 @@ def error_calculator_trace_jax(
             d2d_member_participation_counts
             + d2d_member_success.astype(d2d_member_participation_counts.dtype)
         )
+        polling_d2d_scheduled_by_cluster = (
+            jnp.zeros(cluster_mask.shape, dtype=jnp.int32)
+            .at[scheduled_clusters]
+            .add(jnp.ones_like(scheduled_clusters, dtype=jnp.int32))
+            > 0
+        )
         polling_d2d_attempt_by_cluster = (
             jnp.zeros(cluster_mask.shape, dtype=jnp.int32)
             .at[scheduled_clusters]
@@ -5205,6 +5264,36 @@ def error_calculator_trace_jax(
             )
             > 0
         )
+        polling_d2d_ch_compute_success_by_cluster = (
+            device_draws[polling_d2d_heads] < pcomp
+        )
+        fixed_d2d_ch_compute_success = fixed_cluster_draws < pcomp
+        fixed_d2d_access_selected = fixed_cluster_draws < threshold_d2d
+        optimized_d2d_ch_compute_success = optimized_cluster_draws < pcomp
+        if optimized_d2d_access_mode == "semi_scheduled_member_refresh":
+            optimized_d2d_access_selected = semi_scheduled_refresh_mask | (
+                optimized_cluster_draws < optimized_probability_d2d
+            )
+            optimized_d2d_scheduled_opportunity = semi_scheduled_refresh_mask
+            if aloha_refresh_channels == 0:
+                optimized_d2d_schedule_required = cluster_mask
+            else:
+                optimized_d2d_schedule_required = jnp.zeros(
+                    cluster_mask.shape,
+                    dtype=jnp.bool_,
+                )
+        else:
+            optimized_d2d_access_selected = (
+                optimized_cluster_draws < optimized_probability_d2d
+            )
+            optimized_d2d_scheduled_opportunity = jnp.zeros(
+                cluster_mask.shape,
+                dtype=jnp.bool_,
+            )
+            optimized_d2d_schedule_required = jnp.zeros(
+                cluster_mask.shape,
+                dtype=jnp.bool_,
+            )
         d2d_member_stale_failure_breakdown = jnp.stack(
             [
                 member_stale_failure_breakdown(
@@ -5216,6 +5305,11 @@ def error_calculator_trace_jax(
                     polling_d2d_attempt_by_cluster,
                     polling_d2d_attempt_by_cluster,
                     polling_d2d_ch_bs_link_success_by_cluster,
+                    polling_d2d_ch_compute_success_by_cluster,
+                    ch_can_attempt_1,
+                    polling_d2d_scheduled_by_cluster,
+                    polling_d2d_scheduled_by_cluster,
+                    cluster_mask,
                     next_d2d_member_aoi[0],
                     iteration_index + jnp.asarray(1, dtype=jnp.int32),
                 ),
@@ -5228,6 +5322,11 @@ def error_calculator_trace_jax(
                     candidates_2_d2d_detail,
                     collision_free_2_d2d,
                     ch_bs_link_success_2_d2d,
+                    fixed_d2d_ch_compute_success,
+                    ch_can_attempt_2,
+                    fixed_d2d_access_selected,
+                    jnp.zeros(cluster_mask.shape, dtype=jnp.bool_),
+                    jnp.zeros(cluster_mask.shape, dtype=jnp.bool_),
                     next_d2d_member_aoi[1],
                     iteration_index + jnp.asarray(1, dtype=jnp.int32),
                 ),
@@ -5240,6 +5339,11 @@ def error_calculator_trace_jax(
                     candidates_3_d2d_detail,
                     collision_free_3_d2d,
                     ch_bs_link_success_3_d2d,
+                    optimized_d2d_ch_compute_success,
+                    ch_can_attempt_3,
+                    optimized_d2d_access_selected,
+                    optimized_d2d_scheduled_opportunity,
+                    optimized_d2d_schedule_required,
                     next_d2d_member_aoi[2],
                     iteration_index + jnp.asarray(1, dtype=jnp.int32),
                 ),
@@ -5251,6 +5355,11 @@ def error_calculator_trace_jax(
             d2d_member_stale_link_failure_fraction,
             d2d_member_stale_member_energy_failure_fraction,
             d2d_member_stale_ch_no_attempt_fraction,
+            d2d_member_stale_ch_compute_failure_fraction,
+            d2d_member_stale_ch_energy_failure_fraction,
+            d2d_member_stale_ch_access_no_draw_fraction,
+            d2d_member_stale_ch_not_scheduled_fraction,
+            d2d_member_stale_ch_other_no_attempt_fraction,
             d2d_member_stale_collision_fraction,
             d2d_member_stale_ch_bs_failure_fraction,
             d2d_member_stale_other_failure_fraction,
@@ -5386,6 +5495,11 @@ def error_calculator_trace_jax(
             d2d_member_stale_link_failure_fraction,
             d2d_member_stale_member_energy_failure_fraction,
             d2d_member_stale_ch_no_attempt_fraction,
+            d2d_member_stale_ch_compute_failure_fraction,
+            d2d_member_stale_ch_energy_failure_fraction,
+            d2d_member_stale_ch_access_no_draw_fraction,
+            d2d_member_stale_ch_not_scheduled_fraction,
+            d2d_member_stale_ch_other_no_attempt_fraction,
             d2d_member_stale_collision_fraction,
             d2d_member_stale_ch_bs_failure_fraction,
             d2d_member_stale_other_failure_fraction,
@@ -5466,6 +5580,11 @@ def error_calculator_trace_jax(
             d2d_member_stale_link_failure_fraction,
             d2d_member_stale_member_energy_failure_fraction,
             d2d_member_stale_ch_no_attempt_fraction,
+            d2d_member_stale_ch_compute_failure_fraction,
+            d2d_member_stale_ch_energy_failure_fraction,
+            d2d_member_stale_ch_access_no_draw_fraction,
+            d2d_member_stale_ch_not_scheduled_fraction,
+            d2d_member_stale_ch_other_no_attempt_fraction,
             d2d_member_stale_collision_fraction,
             d2d_member_stale_ch_bs_failure_fraction,
             d2d_member_stale_other_failure_fraction,
@@ -5532,6 +5651,21 @@ def error_calculator_trace_jax(
         ),
         d2d_member_stale_ch_no_attempt_fraction=(
             d2d_member_stale_ch_no_attempt_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_ch_compute_failure_fraction=(
+            d2d_member_stale_ch_compute_failure_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_ch_energy_failure_fraction=(
+            d2d_member_stale_ch_energy_failure_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_ch_access_no_draw_fraction=(
+            d2d_member_stale_ch_access_no_draw_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_ch_not_scheduled_fraction=(
+            d2d_member_stale_ch_not_scheduled_fraction[checkpoint_indices]
+        ),
+        d2d_member_stale_ch_other_no_attempt_fraction=(
+            d2d_member_stale_ch_other_no_attempt_fraction[checkpoint_indices]
         ),
         d2d_member_stale_collision_fraction=(
             d2d_member_stale_collision_fraction[checkpoint_indices]
